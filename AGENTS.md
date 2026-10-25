@@ -1868,3 +1868,26 @@ Relinking taught one habit: `--clean-first` printed `FAILED: clean` because the 
 timestamp, not the exit code. No device claim changes: no send, deletion, eject or playback was
 triggered, the self-test opens no device handle, and the self-test button has no gate case of its
 own, so its evidence is the `transcodetool` encode legs plus a hand press.
+
+**README bilingual, and every capture is a Windows window, 2026-10-25:** `README.md` and the
+new `README.zh-CN.md` are one document in two languages, section for section, with a language
+nav line above the title in both. Every image in either file now comes from `zuuned.exe` built
+from this tree on Windows with a Zune HD attached, which retires the two upstream Linux
+captures `getting-started.png` and `customize.png` - removed rather than re-shot, because
+Customize is right-click-only and no command-line hook reaches it. The set is 16 named captures
+under `docs/readme-screenshots/` plus the same 16 Chinese renders under
+`docs/readme-screenshots/zh/`: welcome, the three music pivots, videos, photos, podcasts,
+audiobooks, the two device grids, the now-playing island and the five settings tabs, at
+1728x1080. Capturing them is a driver outside the tree (`build\shots\shoot.ps1`): one launch
+per case into an isolated `ZUUNED_PROFILE_DIR`, a per-language `ZUUNED_LOCK_SUFFIX`,
+`ZUUNED_MPV_AO=null` so nothing is audible, `--page`/`--music-pivot`/`--settings-tab` to
+navigate, and `--qa-probe` read from the log to prove which page the app itself chose before
+`winshot` is allowed to write a pixel - the now-playing shot uses `--qa-play`, which is why that
+capture is labelled `QA tone` in both languages instead of naming a file. `--qa-device`,
+`--qa-photo` and `--qa-video` were deliberately never run: they write to the player. Because a
+shot needs a library with artwork in it, the fixtures were copied from the development profile,
+so the pictures carry that machine's own data, including the player name and one
+`%USERPROFILE%` watch-folder path. No gate assertion changed and no claim changed: nothing in
+this sitting sent, deleted, ejected or played anything, the device is in these pictures only
+because the app's own hotplug browsed it, and every not-proven-on-Windows list in both READMEs
+stays as long as it was.

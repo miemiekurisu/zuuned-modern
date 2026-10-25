@@ -1,5 +1,7 @@
 > **Public source snapshot:** read [PUBLIC_SOURCE.md](PUBLIC_SOURCE.md) for credential requirements and differences from private builds.
 
+**English** · [简体中文](README.zh-CN.md)
+
 # Zuuned Modern
 
 **Bring your Zune back into the rebellion - on Windows.**
@@ -16,14 +18,69 @@ written against, a Windows device-presence path, and native path and encoding ha
 throughout. The Linux line is upstream's, and this repository exists to carry the port
 until upstream wants it.
 
-![The music library with album artwork and a connected player](docs/readme-screenshots/music-library.png)
+Every picture in this file and in [README.zh-CN.md](README.zh-CN.md) was captured from
+`zuuned.exe` built on this repository, on Windows, with a Zune HD plugged in.
 
-*The interface is shared with upstream Zuuned Linux; the capture above is from the
-upstream app.*
+![The local album grid with artwork, and a connected Zune HD](docs/readme-screenshots/music-library.png)
+
+*The music page on the album pivot: cover art read out of the local files, song rows
+carrying the same art, and a Pavo-generation Zune HD connected over WinUSB in the panel
+at the right.*
 
 [Status of the port](docs/WINDOWS_PORT.md) - **read that page before trusting any
 hardware claim in this repository.** It records, per capability, what has been done on a
 Windows machine against a real player and what has only ever been done on Linux.
+
+## What you can do with Zuuned
+
+Browse a Zune's library and transfer media to it over USB; enjoy a local music library
+with artists, albums, playlists and playback; organize videos, podcasts and audiobooks;
+edit metadata and artwork; build photo albums. Local playback and organization work with
+no player connected, and each kind of media has exactly one default destination folder -
+that folder shows the fact as a status on its row, the others offer it as a button. The
+Windows port carries music in both directions against a player; photos and video have been
+sent from Windows without a byte of either coming back, and no Windows deletion has ever
+been done - see the status page.
+
+## The pages
+
+| | |
+| --- | --- |
+| ![A Zune's music library read over USB](docs/readme-screenshots/device-albums.png) | **The device page.** What is actually on the player - artists, albums, songs and genres browsed off the Zune, with album pictures fetched over USB rather than looked up anywhere. |
+| ![The song list](docs/readme-screenshots/music-songs.png) | **The song list.** One row per track with its own thumbnail, sortable, searchable, and the same rows the queue is built from. |
+| ![Now playing](docs/readme-screenshots/now-playing.png) | **Now playing.** The vinyl island over the library. The playing row here comes from the app's own QA hook, so it is labelled `QA tone` rather than by its tags. |
+| ![Videos](docs/readme-screenshots/video-library.png) | **Videos**, with the profile each movie will be converted to before it can go onto a player. |
+| ![Photos](docs/readme-screenshots/photo-library.png) | **Photos**, and the photo albums you build out of them for the player. |
+| ![Settings, Library](docs/readme-screenshots/settings-library.png) | **Settings - Library.** Watch folders spelled the way Windows spells them, one default destination per media kind, podcast and audiobook import. |
+
+The rest of the captures, if you want to see them at full size:
+[welcome](docs/readme-screenshots/welcome.png),
+[artists](docs/readme-screenshots/music-artists.png),
+[the device artist grid](docs/readme-screenshots/device-music.png),
+[podcasts](docs/readme-screenshots/podcasts.png),
+[audiobooks](docs/readme-screenshots/audiobooks.png),
+[Settings - Appearance](docs/readme-screenshots/settings-appearance.png),
+[Settings - Device](docs/readme-screenshots/settings-device.png),
+[Settings - Mixtapes](docs/readme-screenshots/settings-mixtapes.png),
+[Settings - Health](docs/readme-screenshots/settings-health.png).
+Chinese copies of all of them live in
+[docs/readme-screenshots/zh/](docs/readme-screenshots/zh).
+
+## Interface language
+
+**Settings -> Appearance -> Language** writes the interface in English or
+简体中文, or follows the Windows display language. It is read once, at launch, and the
+card says so and tells you which one is on screen right now.
+
+The wording is a file, not a code change: `i18n/zh_CN.tsv` holds every message and its
+Chinese, `i18n/zuuned_zh_CN.ts` is the Qt translation source built from it, and
+`python i18n/audit.py` fails the tree when a piece of interface text is typed straight
+into QML or C++ where no translation could ever reach it. So rewording the interface is
+an edit and a restart, and a third language is a new file rather than a refactor. See
+[docs/I18N.md](docs/I18N.md).
+
+Names, tags, file paths and what the Zune itself displays are never translated - only
+what zuuned says.
 
 ## What has actually been done on Windows
 
@@ -101,10 +158,10 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File tests\win-usability\run.ps1
 
 They cover the POSIX-compatibility layer and launch every page, every settings tab, the
 filename and library probes, and the command-line tools against isolated profiles. A green
-run on 2026-10-24 reported `201 checks, 0 failures, 0 skips` and
-`launches=18 checks=132 failures=0`. Those counters move with the tree, so read them as a
-floor rather than an expectation. Neither gate says anything at all about a Zune - that is
-deliberate, and is why the hardware evidence lives on
+run on 2026-10-25 reported `201 checks, 0 failures, 0 skips` and
+`launches=18 checks=132 failures=0 skips=0 killed=0`. Those counters move with the tree,
+so read them as a floor rather than an expectation. Neither gate says anything at all
+about a Zune - that is deliberate, and is why the hardware evidence lives on
 [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) instead.
 
 ## Building on Linux
@@ -132,26 +189,18 @@ src/            C++; DeviceService (libzune bridge), app entry
 qml/            UI; Theme.qml design tokens
 compat/win/     the Windows POSIX surface, built once as zuuned_wincompat
 libzune/        included source; shared C protocol library
+i18n/           the interface wording; zh_CN.tsv is the editable source
 packaging/      Linux USB rule, PKGBUILD and AppImage builder
 packaging/windows/  WinUSB driver guide and check-driver.ps1
 tests/win-compat/    Windows compatibility gate (no device)
 tests/win-usability/ Windows launch and UI gate (no device)
+docs/readme-screenshots/  these captures, and the zh/ set
 docs/WINDOWS_PORT.md what is and is not proven on Windows
 docs/WINDOWS_COMPAT_AUDIT.md the whole-tree Windows compatibility sweeps
+docs/SETTINGS_INVENTORY.md every switch, and the feature behind each one
 docs/FEATURE_COMPLETION.md the implementation backlog
 docs/ZUNE_CLIENT_FEATURES.md the original Zune software, feature by feature
 ```
-
-## What you can do with Zuuned
-
-Browse a Zune's library and transfer media to it over USB; enjoy a local music library
-with artists, albums, playlists and playback; organize videos, podcasts and audiobooks;
-edit metadata and artwork; build photo albums. Local playback and organization work with
-no player connected, and each kind of media has exactly one default destination folder -
-that folder shows the fact as a status on its row, the others offer it as a button. The
-Windows port carries music in both directions against a player; photos and video have been
-sent from Windows without a byte of either coming back, and no Windows deletion has ever
-been done - see the status page.
 
 ## License
 

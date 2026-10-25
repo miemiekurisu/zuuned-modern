@@ -7,6 +7,13 @@ build works with a Zune".  Build steps and dependency locations live in
 `BUILDING.md`; the two gates are documented in `tests/win-compat/README.md` and
 `tests/win-usability/README.md`.
 
+  Documentation note, 2026-10-25: ``README.md`` and the new ``README.zh-CN.md`` are the
+same page in two languages, and every picture in either one is a window of a ``zuuned.exe``
+built from this tree, captured on Windows with a Zune HD attached; the two upstream Linux
+screenshots that used to sit in ``docs/readme-screenshots/`` are gone.  That says nothing new
+about hardware.  This page still owns every device fact, and the READMEs still point here for
+it.
+
 ## The first Windows device contact
 
 **A Zune HD has now been connected to a Windows build, opened, and read.**  What
