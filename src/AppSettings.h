@@ -78,6 +78,35 @@ public:
     // re-encode, which is what the original client always did.
     ZUNE_SETTING(bool, copyNativeAudio, setCopyNativeAudio,
                  "copyNativeAudio", true, toBool)
+    // LAME's own 0-9 effort scale, where 0 spends the most CPU for the best
+    // output and 9 the least.  Default 2 is the constant this build always
+    // used, so an ini without the key encodes exactly as before.  It changes
+    // how carefully the encoder spends the bits, not how many it gets: bit
+    // rate is syncAudioBitrate above.  Clamped here and again in the encoder
+    // because both ends are reachable on their own.
+    Q_PROPERTY(int mp3Quality READ mp3Quality WRITE setMp3Quality NOTIFY changed)
+public:
+    int mp3Quality() const {
+        bool valid = false;
+        const int q = m_store.value("mp3Quality", 2).toInt(&valid);
+        return valid ? qBound(0, q, 9) : 2;
+    }
+    void setMp3Quality(int value) {
+        const int q = qBound(0, value, 9);
+        if (mp3Quality() == q) return;
+        m_store.setValue("mp3Quality", q);
+        emit changed();
+    }
+    // Where the ffmpeg/ffprobe command-line tools live, when they are not on
+    // PATH.  A folder rather than two file pickers because a Windows FFmpeg
+    // download is one bin directory that carries both, and because the one
+    // remaining shell-out (a device photo thumbnail, through libzune) asks the
+    // OS for a bare `ffmpeg` and can only be answered by PATH -- src/main.cpp
+    // prepends this folder there at launch.  Empty means "use whatever PATH
+    // already has", which is every machine that installed FFmpeg properly.
+    // Transcoding inside the app needs none of this: it links libav* itself.
+    ZUNE_SETTING(QString, ffmpegDir, setFfmpegDir,
+                 "ffmpegDir", QString(), toString)
     Q_PROPERTY(int podcastAutoQueueCount READ podcastAutoQueueCount WRITE setPodcastAutoQueueCount NOTIFY changed)
 public:
     int podcastAutoQueueCount() const {

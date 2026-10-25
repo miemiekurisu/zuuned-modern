@@ -1721,6 +1721,97 @@ Chinese, because a Qt menu is its own top-level window and this app\'s DWM blur 
 artifacts under ``CopyFromScreen``, which would make such a screenshot inconclusive rather than
 evidence.
 
+## The twenty-fourth pass: two cards that have to answer for themselves (2026-10-25)
+
+Two complaints about `Settings -> Device`, both honest, and both the same weakness: a card that
+reports something the user cannot check and offers no knob.  "这台Zune没有信息" -
+the This Zune card was gated on `DeviceService.connected`, so on every screen the user actually
+opened Settings from it was not blank, it was absent, and absent is exactly what an unwired
+feature looks like.  "音频转换真的可用吗？你既没有lame设置，也没ffmpeg设置，实用不便"
+- the Audio conversion card named the linked encoders and then asked to be believed.
+
+**The identity card outlives the cable.**  `DeviceHistory::latest()` (`src/DeviceHistory.cpp:139`)
+hands back the newest row of the history in the same map shape the history list uses, so the card
+and the list under it speak one vocabulary.  A live player still wins, and the two rows only a
+live read can answer - Contents (`%1 tracks · %2 albums · %3 artists`) and Battery -
+exist only while connected.  With the cable out the identity rows fall back to what the last
+session read and the subtitle says so, with the date, instead of showing a number that is a
+minute into a lie: storage becomes `%1 GB total, read on the last session`, and per-category
+bytes become "read while connected" rather than an old reading.  The `PhaseNote` stays for the
+case it was written for - nothing connected *and* nothing ever remembered.  Still no firmware
+row, because `libzune/include/zune.h` offers `zune_get_serial` and no firmware getter.
+
+**The knob LAME has and this app never passed.**  `mp3Quality` is one ini key behind a Detail
+0/2/4/6 pill that hides itself when the target is WMA, because `wmav2` takes a bit rate and
+nothing else.  It is read with the format and the bit rate, once per run, in
+`readAudioSyncPolicy()` (`src/sync/SyncEngine.cpp:292`) so a queue cannot change the effort
+halfway through an album, and the layer that owns the encoder clamps again in
+`zuuned_mp3_set_quality()` (`transcode/libav_transcode.c:81`) because both ends are reachable on
+their own.  Both `lame_set_quality()` sites honour it - the album encode at `:255` and the
+chapter-range encode at `:773`, which is the path an audiobook part takes.  Default 2 is what the
+code always passed, so the control changes nothing until somebody moves it.  The card also names
+the build it is talking about now: `mp3EncoderVersion` is `get_lame_version()` read out of the
+linked library rather than a string this repository believes.
+
+**A folder instead of a lecture about PATH.**  `ffmpegDir` names a directory and `src/main.cpp:254`
+puts it in front of `PATH` for the process, once, before any worker starts.  A folder rather than
+two file pickers because a Windows FFmpeg download *is* one `bin` directory, and because the one
+shell-out this application cannot hand a path to - `zune_grab_photo_thumb()`, through libzune,
+running a bare `ffmpeg` through `cmd.exe` - can only be answered through `PATH`.
+`conversionTools()` reports where each program was found (`folder` / `PATH` / `none`) and whether
+the named folder is a folder at all, so the card says "found on folder" instead of the
+unactionable "found on PATH", beside `choose folder`, `check again`, `clear` and a download link.
+Measured on an isolated profile with a `PATH` carrying no FFmpeg at all: with
+`ffmpegDir=D:\\dev\\zuuned-deps\\...\\bin` the launch logs
+`[ffmpeg] Settings folder "..." put in front of PATH; ffmpeg resolves to
+"D:/dev/.../bin/ffmpeg.exe"`, and the forward-slash spelling answers the same; a folder that does
+not exist logs `is not a folder; falling back to PATH` and changes nothing.  That probe also
+turned up a fact about the file itself: **`QSettings`' INI reader unescapes backslashes**, so a
+path typed into `Zuuned.ini` by hand as `D:\dev\x` reaches the program as `D:evx` and is
+reported as not a folder.  Qt writes the doubled form itself, and the picker writes forward
+slashes, so only somebody editing the ini by hand meets it - which is worth knowing the next time
+a settings value "does not stick".
+
+**"Is it really usable" is answered by doing it.**  `DiagnosticsService::runAudioSelfTest()`
+(`src/diagnostics/DiagnosticsService.cpp:271`) writes a two-second 440 Hz tone, sends it through
+`zuuned_transcode_audio_ex()` at the stored bit rate and detail - the same entry point a sync uses -
+reads the first four bytes back to check the container they claim (an ID3 tag or a bare MPEG sync
+for MP3, the ASF GUID for WMA), probes the result for a length inside 85-115 % of the tone and a
+size above half the nominal constant-bit-rate payload, and deletes everything it made.  The answer
+is codes (`no-encoder`, `refused`, `cancelled`, `container`, `unprobeable`, `duration`, `size`,
+`ok`) and the sentence belongs to QML, so a self-test reads in the language the user is reading.
+It refuses while a transfer or a device job is running, because one transcode at a time is a
+property of the encoder layer rather than a preference, and the abort flag is read, cleared for
+the measurement and put back so a cancellation the user asked for is never eaten by a test.  The
+two legs it runs are the two legs `transcodetool` already gates, and that phase passed on this
+build in the run below (`the audio encoder produced an mp3 and named it`, `wrote an ID3 tag or a
+frame sync header`, `the encoded audio is as long as the tone it came from`, `profile 0 wrote an
+ASF container`); what is new is that the running application can be asked the question without a
+harness.
+
+**One defect the twenty-third pass recorded and deliberately left is closed.**  The AMD pill is
+`disabled: Qt.platform.os === "windows"` and the 转码加速 note is branched by platform, so the
+page no longer offers VAAPI to somebody who cannot use it.  Software and NVDEC stay selectable
+because NVDEC was measured engaging here.
+
+**Gates.**  `tests\win-compat` `201 checks, 0 failures, 0 skips`; `tests\win-usability`
+`launches=18 checks=132 failures=0 skips=0 killed=0` and `OVERALL=ok`; `python i18n\audit.py`
+`AUDIT=ok` with the catalogue at 1524 sources, 1524 with Chinese, `lrelease` 0 unfinished.  Both
+counters end exactly where the twenty-third pass left them because nothing was added to what
+either harness asserts, and both ran against the relinked tree.  One harness lesson carried out of
+the relink: `cmake --build build --clean-first` printed `FAILED: clean` at the head of the log -
+the running application held `build\zuuned.exe` - continued anyway, rebuilt all 336 targets and
+exited `0`.  What proved the artefact was new was the executable's timestamp, not the exit code.
+
+**What this pass did not do.**  No send, deletion, eject or audio playback was triggered; the
+self-test touches libav and the temp directory and opens no device handle; the attached Zune HD
+was browsed by the application's own hotplug and every recorded diagnostic is a read, so device
+evidence is unchanged at the one hand-tested Pavo Zune HD.  Not proven by anything here: that what
+the self-test accepts is a file a player will play - it judges container magic, length and size,
+not sound, and nobody has listened; the new rows in Chinese, for which there is no capture yet;
+and there is no gate case for the self-test button itself, so today the only record of it is the
+`transcodetool` legs above plus a hand press.
+
 ## What is not proven here
 
 1. Everything past audio.  Deletion and purge, the firmware categories and

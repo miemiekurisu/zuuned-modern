@@ -2720,6 +2720,34 @@ or select photos and choose Add.</source>
 <context>
     <name>SettingsPage</name>
     <message>
+        <source>music</source>
+        <translation>音乐</translation>
+    </message>
+    <message>
+        <source>movies</source>
+        <translation>电影</translation>
+    </message>
+    <message>
+        <source>tv</source>
+        <translation>剧集</translation>
+    </message>
+    <message>
+        <source>anime</source>
+        <translation>动漫</translation>
+    </message>
+    <message>
+        <source>photos</source>
+        <translation>照片</translation>
+    </message>
+    <message>
+        <source>all</source>
+        <translation>全部</translation>
+    </message>
+    <message>
+        <source>video</source>
+        <translation>视频</translation>
+    </message>
+    <message>
         <source>hide</source>
         <translation>隐藏</translation>
     </message>
@@ -2932,6 +2960,10 @@ or select photos and choose Add.</source>
         <translation>打开“设置 → Zune → USB 访问”以安装或修复权限规则。</translation>
     </message>
     <message>
+        <source>%1 tracks</source>
+        <translation>%1 首曲目</translation>
+    </message>
+    <message>
         <source>%1 movies</source>
         <translation>%1 部电影</translation>
     </message>
@@ -2948,6 +2980,10 @@ or select photos and choose Add.</source>
         <translation>%1 项</translation>
     </message>
     <message>
+        <source>default · %1</source>
+        <translation>默认 · %1</translation>
+    </message>
+    <message>
         <source>default</source>
         <translation>默认</translation>
     </message>
@@ -2962,38 +2998,6 @@ or select photos and choose Add.</source>
     <message>
         <source>add a folder</source>
         <translation>添加文件夹</translation>
-    </message>
-    <message>
-        <source>music</source>
-        <translation>音乐</translation>
-    </message>
-    <message>
-        <source>movies</source>
-        <translation>电影</translation>
-    </message>
-    <message>
-        <source>tv</source>
-        <translation>剧集</translation>
-    </message>
-    <message>
-        <source>anime</source>
-        <translation>动漫</translation>
-    </message>
-    <message>
-        <source>photos</source>
-        <translation>照片</translation>
-    </message>
-    <message>
-        <source>all</source>
-        <translation>全部</translation>
-    </message>
-    <message>
-        <source>video</source>
-        <translation>视频</translation>
-    </message>
-    <message>
-        <source>default · %1</source>
-        <translation>默认 · %1</translation>
     </message>
     <message>
         <source>browse…</source>
@@ -3176,6 +3180,10 @@ or select photos and choose Add.</source>
         <translation>CPU</translation>
     </message>
     <message>
+        <source>Auto tries NVDEC, then software. VAAPI, the way an AMD or Intel card decodes on Linux, does not exist on Windows, so AMD is inert here and those GPUs transcode on the CPU.</source>
+        <translation>自动会先尝试 NVDEC，失败则使用软件解码。VAAPI 是 AMD 或 Intel 显卡在 Linux 上的解码方式，在 Windows 上并不存在，因此这里的 AMD 选项是禁用的，这类显卡都会在 CPU 上转码。</translation>
+    </message>
+    <message>
         <source>Auto tries NVDEC, then VAAPI, then software. A missing GPU falls back to software either way.</source>
         <translation>自动会先尝试 NVDEC，再尝试 VAAPI，最后是软件解码。没有相应显卡时，两种选择最终都会落到软件解码。</translation>
     </message>
@@ -3312,12 +3320,24 @@ or select photos and choose Add.</source>
         <translation>已在本次连接中从播放器读取。</translation>
     </message>
     <message>
+        <source>nothing is connected right now. What follows is what the last session read, seen %1.</source>
+        <translation>当前没有连接任何设备。下面是上次连接时读到的信息，最后见于 %1。</translation>
+    </message>
+    <message>
+        <source>nothing is connected right now. What follows is what the last session read.</source>
+        <translation>当前没有连接任何设备。下面是上次连接时读到的信息。</translation>
+    </message>
+    <message>
         <source>nothing is connected right now.</source>
         <translation>当前没有连接任何设备。</translation>
     </message>
     <message>
         <source>Name</source>
         <translation>名称</translation>
+    </message>
+    <message>
+        <source>not reported</source>
+        <translation>未报告</translation>
     </message>
     <message>
         <source>Model</source>
@@ -3336,12 +3356,24 @@ or select photos and choose Add.</source>
         <translation>共 %2 GB，剩余 %1 GB</translation>
     </message>
     <message>
-        <source>not reported</source>
-        <translation>未报告</translation>
+        <source>%1 GB total, read on the last session</source>
+        <translation>共 %1 GB，上次连接时读取</translation>
     </message>
     <message>
         <source>Music / video / photos</source>
         <translation>音乐 / 视频 / 照片</translation>
+    </message>
+    <message>
+        <source>read while connected</source>
+        <translation>仅连接时读取</translation>
+    </message>
+    <message>
+        <source>Contents</source>
+        <translation>内容</translation>
+    </message>
+    <message>
+        <source>%1 tracks · %2 albums · %3 artists</source>
+        <translation>%1 首曲目 · %2 张专辑 · %3 位艺人</translation>
     </message>
     <message>
         <source>Battery</source>
@@ -3416,8 +3448,24 @@ or select photos and choose Add.</source>
         <translation>最佳 320</translation>
     </message>
     <message>
-        <source>LAME, constant bit rate, ID3v2.3</source>
-        <translation>LAME，恒定码率，ID3v2.3</translation>
+        <source>Detail 0 (slowest)</source>
+        <translation>细节 0（最慢）</translation>
+    </message>
+    <message>
+        <source>Detail 2 (default)</source>
+        <translation>细节 2（默认）</translation>
+    </message>
+    <message>
+        <source>Detail 4</source>
+        <translation>细节 4</translation>
+    </message>
+    <message>
+        <source>Detail 6 (fastest)</source>
+        <translation>细节 6（最快）</translation>
+    </message>
+    <message>
+        <source>LAME %1, constant bit rate, ID3v2.3, detail %2</source>
+        <translation>LAME %1，恒定码率，ID3v2.3，细节等级 %2</translation>
     </message>
     <message>
         <source>no encoder in this build</source>
@@ -3426,6 +3474,14 @@ or select photos and choose Add.</source>
     <message>
         <source>libavcodec wmav2 in ASF — lossy</source>
         <translation>libavcodec 的 wmav2，封装为 ASF —— 有损</translation>
+    </message>
+    <message>
+        <source>Conversion library</source>
+        <translation>转换库</translation>
+    </message>
+    <message>
+        <source>FFmpeg %1 (built in)</source>
+        <translation>FFmpeg %1（内置）</translation>
     </message>
     <message>
         <source>Already the right format</source>
@@ -3452,32 +3508,100 @@ or select photos and choose Add.</source>
         <translation>码率只能是恒定的。本版本不会写入可变码率的 MP3 头 —— 实测缺少 LAME/Xing 帧，播放器随后会把曲目时长少报三分钟 —— 因此不提供 VBR。</translation>
     </message>
     <message>
-        <source>Conversion library</source>
-        <translation>转换库</translation>
-    </message>
-    <message>
-        <source>FFmpeg %1 (built in)</source>
-        <translation>FFmpeg %1（内置）</translation>
-    </message>
-    <message>
         <source>FFmpeg command-line tools</source>
         <translation>FFmpeg 命令行工具</translation>
     </message>
     <message>
-        <source>found on PATH</source>
-        <translation>已在 PATH 中找到</translation>
+        <source>nothing usable inside the folder you chose</source>
+        <translation>所选文件夹中没有可用的程序</translation>
     </message>
     <message>
-        <source>not found</source>
-        <translation>未找到</translation>
+        <source>not found on PATH</source>
+        <translation>未在 PATH 中找到</translation>
     </message>
     <message>
-        <source>Converting inside the app needs nothing else installed. The command-line ffmpeg and ffprobe are used for two jobs only: video thumbnails for the device page, and reading a file the built-in library cannot open. Without them those two things quietly do not happen.</source>
-        <translation>应用内转换无需再安装任何东西。命令行的 ffmpeg 与 ffprobe 只用于两件事：设备页的视频缩略图，以及读取内置库打不开的文件。缺少它们时，这两件事就会悄然不发生。</translation>
+        <source>found on %1</source>
+        <translation>来自 %1</translation>
+    </message>
+    <message>
+        <source>choose folder</source>
+        <translation>选择文件夹</translation>
+    </message>
+    <message>
+        <source>Converting audio inside the app needs nothing else installed. The command-line ffmpeg and ffprobe are used for two jobs only: video thumbnails for the device page, and reading a file the built-in library cannot open. Without them those two things quietly do not happen. A folder chosen here is tried before PATH; a program already running keeps the PATH it started with, so restart Zuuned if a thumbnail is still missing.</source>
+        <translation>应用内转换无需再安装任何东西。命令行的 ffmpeg 与 ffprobe 只用于两件事：设备页的视频缩略图，以及读取内置库打不开的文件。缺少它们时，这两件事就会悄然不发生。这里选择的文件夹会先于 PATH 被尝试；已在运行的程序会沿用它启动时的 PATH，因此缩略图仍然缺失时请重启 Zuuned。</translation>
+    </message>
+    <message>
+        <source>check again</source>
+        <translation>重新检测</translation>
+    </message>
+    <message>
+        <source>clear</source>
+        <translation>清除</translation>
     </message>
     <message>
         <source>download FFmpeg ↗</source>
         <translation>下载 FFmpeg ↗</translation>
+    </message>
+    <message>
+        <source>testing…</source>
+        <translation>正在测试…</translation>
+    </message>
+    <message>
+        <source>run encoder self-test</source>
+        <translation>运行编码器自检</translation>
+    </message>
+    <message>
+        <source>Writes a two-second tone, sends it through both encoders at the settings above, and reports what came back. Nothing is stored and nothing is sent to a player.</source>
+        <translation>生成一段两秒的提示音，按上面的设置分别送进两个编码器，然后报告产出的结果。不会保存任何文件，也不会向播放器发送任何内容。</translation>
+    </message>
+    <message>
+        <source>The test returned nothing.</source>
+        <translation>自检没有返回任何结果。</translation>
+    </message>
+    <message>
+        <source>A transfer or a device job is running. The encoders take one job at a time, so try again when the queue is empty.</source>
+        <translation>正在传输或有设备任务在运行。编码器一次只处理一个任务，请等队列为空后再试。</translation>
+    </message>
+    <message>
+        <source>Could not write the test tone: %1</source>
+        <translation>无法写入测试提示音：%1</translation>
+    </message>
+    <message>
+        <source>At %1 kbps, detail %2 — %3</source>
+        <translation>以 %1 kbps、细节等级 %2 —— %3</translation>
+    </message>
+    <message>
+        <source>%1 bytes, %2 s, %3</source>
+        <translation>%1 字节，%2 秒，%3</translation>
+    </message>
+    <message>
+        <source>the encoder refused the file</source>
+        <translation>编码器拒绝了该文件</translation>
+    </message>
+    <message>
+        <source>cancelled before it finished</source>
+        <translation>完成前被取消</translation>
+    </message>
+    <message>
+        <source>wrote a container this build does not recognise</source>
+        <translation>写出的容器格式本版本无法识别</translation>
+    </message>
+    <message>
+        <source>wrote a file that cannot be read back</source>
+        <translation>写出的文件无法读回</translation>
+    </message>
+    <message>
+        <source>the length read back is wrong</source>
+        <translation>读回的时长不正确</translation>
+    </message>
+    <message>
+        <source>the file is far too small for its bit rate</source>
+        <translation>文件相对于其码率过小</translation>
+    </message>
+    <message>
+        <source>failed</source>
+        <translation>失败</translation>
     </message>
     <message>
         <source>Your mixtapes</source>
@@ -3486,10 +3610,6 @@ or select photos and choose Add.</source>
     <message>
         <source>built here, synced to the Zune.</source>
         <translation>在此创建，同步到 Zune。</translation>
-    </message>
-    <message>
-        <source>%1 tracks</source>
-        <translation>%1 首曲目</translation>
     </message>
     <message>
         <source> · %1 not in library</source>
@@ -3678,6 +3798,10 @@ or select photos and choose Add.</source>
     <message>
         <source>Choose a %1 folder</source>
         <translation>选择 %1 文件夹</translation>
+    </message>
+    <message>
+        <source>Choose the folder holding ffmpeg and ffprobe</source>
+        <translation>选择存放 ffmpeg 与 ffprobe 的文件夹</translation>
     </message>
     <message>
         <source>Choose a background image</source>

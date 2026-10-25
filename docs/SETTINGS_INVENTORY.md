@@ -58,8 +58,10 @@ the setter.  A key is **wired** when a control writes it *and* something reads i
 | `transcodeAccel` | Transcode acceleration | Seg | `src/sync/SyncEngine.cpp:1375` | wired |
 | `preferredAudioLang` | Preferred audio language | list | `src/player/MpvController.cpp:52`, `src/sync/SyncEngine.cpp:2339` | wired |
 | `syncAudioFormat` | Audio conversion | Seg MP3/WMA | `src/sync/SyncEngine.cpp:275` | wired today |
-| `syncAudioBitrate` | Audio conversion | Seg 128/192/256/320 | `src/sync/SyncEngine.cpp:281` | wired today |
-| `copyNativeAudio` | Audio conversion | switch | `src/sync/SyncEngine.cpp:285` | wired today |
+| `syncAudioBitrate` | Audio conversion | Seg 128/192/256/320 | `src/sync/SyncEngine.cpp:283` | wired today |
+| `copyNativeAudio` | Audio conversion | switch | `src/sync/SyncEngine.cpp:287` | wired today |
+| `mp3Quality` | Audio conversion | Seg Detail 0/2/4/6 | `src/sync/SyncEngine.cpp:292` | wired today |
+| `ffmpegDir` | Audio conversion | folder picker | `src/main.cpp:254` | wired today |
 | `duplicateFormats` | Duplicate formats | checkboxes | `src/LibraryService.cpp:169` | wired |
 | `posterSource` | Artwork source | Seg | `src/LibraryService.cpp:1723` | wired |
 | `albumCoverLookup` | Music artwork | switch | `src/LibraryService.cpp:348` | wired |
@@ -115,17 +117,17 @@ Both are worse than a missing feature because the page looks complete.
 All three were named by the user on 2026-10-24 as "Settings has lots of problems", and
 each is a real backend path, not a card:
 
-- **This Zune** (`qml/SettingsPage.qml:1319`) - the device page answered "nothing
+- **This Zune** (`qml/SettingsPage.qml:1590`) - the device page answered "nothing
   connected" and no history.  Now name, model, serial, capacity, per-category storage and
   the connect-time battery snapshot come from `DeviceService`, which already had all of
   it.  There is deliberately no firmware row: `libzune/include/zune.h` has `zune_get_serial`
   (`:68`) and no firmware-version getter, so a firmware field would be an invention.
-- **Previously connected** (`qml/SettingsPage.qml:1364`) - `src/DeviceHistory.{h,cpp}`,
+- **Previously connected** (`qml/SettingsPage.qml:1702`) - `src/DeviceHistory.{h,cpp}`,
   one row per serial, keyed by serial and falling back to model+name, stored beside
   `syncqueue.json` so an isolated profile gets its own history.  `connects` counts
   sessions, not probes, because a finished sync arms a reconnect ladder whose six rungs
   are each a full `OpenSession`.  Per-row forget, and clear all.
-- **Audio conversion** (`qml/SettingsPage.qml:1445`) - MP3 or WMA, CBR 128/192/256/320,
+- **Audio conversion** (`qml/SettingsPage.qml:1781`) - MP3 or WMA, CBR 128/192/256/320,
   and a switch to send an existing WMA as its own bytes instead of re-encoding it.  The
   card answers its own capability question from the linked libavcodec through
   `DiagnosticsService.conversionTools()` rather than from a table, so a build without a
@@ -134,6 +136,29 @@ each is a real backend path, not a card:
   own row (`ffmpegcli`, `src/LibraryService.cpp`), and says out loud that conversion does
   *not* need them because it runs on the libav this executable links.  Before this, the
   only thing a user could see was a device video thumbnail that silently never appeared.
+
+Named again the next day, 2026-10-25, with "is audio conversion really usable - you have no
+LAME setting and no FFmpeg setting", which is a fair complaint about a card that reported a
+capability without offering a knob or a way to prove it:
+
+- **LAME effort** (`mp3Quality`, `src/sync/SyncEngine.cpp:292`) - Detail 0/2/4/6, read with
+  the rest of the audio policy so a queue cannot change the effort halfway through an album,
+  applied at both `lame_set_quality()` sites (`transcode/libav_transcode.c:255`, and the
+  chapter-range path at `:773`), and echoed as `LAME <version>, constant bit rate, ID3v2.3,
+  detail <n>` with the version read out of the linked encoder through `get_lame_version()`
+  rather than assumed.  Default 2 is what the code already passed, so the control changes
+  nothing until someone moves it.
+- **FFmpeg folder** (`ffmpegDir`, `src/main.cpp:254`) - name the folder and it goes in front
+  of `PATH` for this process; the card shows the resolved `ffmpeg`/`ffprobe` and says whether
+  each came from that folder or from `PATH`, and the log says the same at startup.  A missing
+  CLI is still not a conversion problem and the card keeps saying so.
+- **Encoder self-test** (`DiagnosticsService::runAudioSelfTest()`,
+  `src/diagnostics/DiagnosticsService.cpp:271`) - writes a two-second 440 Hz tone, encodes it
+  to both targets through the same `zuuned_transcode_audio_ex()` a sync uses at the bitrate and
+  effort in Settings, checks the first four bytes for the container they claim, probes the
+  result for length and size, and deletes what it made.  Answers in codes; the sentence is
+  QML's, so it goes through the catalogue.  It refuses while a transfer or a device operation
+  holds the player, because one transcode at a time is a property of the encoder layer.
 
 ## Measured limits, so no option is offered that cannot be honoured
 

@@ -8,6 +8,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QLockFile>
 #include <QQmlApplicationEngine>
@@ -239,6 +240,40 @@ int main(int argc, char *argv[]) {
         }
     }
 #endif
+    // A FFmpeg folder named in Settings is honoured before anything can ask for
+    // a command, because the two ways this process finds one read different
+    // places.  QStandardPaths::findExecutable also takes the folder directly
+    // (DiagnosticsService::conversionTools does that, so Settings reports the
+    // folder even when a Han-named path does not survive the environment block),
+    // but the one shell-out this application cannot hand a path to -- libzune's
+    // device photo thumbnail, which runs a bare `ffmpeg` through the shell --
+    // only ever finds a tool through PATH.  So the folder goes in front of PATH
+    // here, once, before any worker starts.  With the key unset or the folder
+    // gone, nothing changes and PATH is exactly what the OS handed us.
+    {
+        const QString ffmpegDir =
+            QSettings().value(QStringLiteral("ffmpegDir")).toString().trimmed();
+        if (ffmpegDir.isEmpty()) {
+            // Nothing to do; the log line stays silent so a normal profile does
+            // not carry a line about a tool it never asked for.
+        } else if (QFileInfo(ffmpegDir).isDir()) {
+            const QString pathEnv = qEnvironmentVariable("PATH");
+            qputenv("PATH",
+                    (ffmpegDir + QDir::listSeparator() + pathEnv).toLocal8Bit());
+            std::fprintf(stderr,
+                         "[ffmpeg] Settings folder \"%s\" put in front of PATH; "
+                         "ffmpeg resolves to \"%s\"\n",
+                         qUtf8Printable(ffmpegDir),
+                         qUtf8Printable(QStandardPaths::findExecutable(
+                             QStringLiteral("ffmpeg"), {ffmpegDir})));
+        } else {
+            std::fprintf(stderr,
+                         "[ffmpeg] Settings folder \"%s\" is not a folder; "
+                         "falling back to PATH\n",
+                         qUtf8Printable(ffmpegDir));
+        }
+    }
+
     installUiLanguage();
     Zuuned::configureApplicationIdentity(app);
     std::fprintf(stderr, "[zuuned] %s; Qt runtime %s\n", ZuunedBuild::version, qVersion());
@@ -450,6 +485,10 @@ int main(int argc, char *argv[]) {
             if (device) {
                 state.insert(QStringLiteral("zune_present"), device->devicePresent());
                 state.insert(QStringLiteral("zune_connected"), device->connected());
+                // The audio self-test on Settings -> Device encodes a tone with
+                // the same encoder a sync uses, so it has to know when the player
+                // is already busy rather than measure beside a running operation.
+                state.insert(QStringLiteral("zune_busy"), device->busy());
                 state.insert(QStringLiteral("zune_model"), device->modelName());
                 state.insert(QStringLiteral("zune_family"), device->deviceFamily());
                 state.insert(QStringLiteral("zuuned_rules_applicable"), device->udevRulesApply());

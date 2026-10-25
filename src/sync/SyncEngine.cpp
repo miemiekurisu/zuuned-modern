@@ -285,6 +285,12 @@ void readAudioSyncPolicy(int *target, int *bitrate, bool *copyNative) {
     // Only meaningful for a WMA target; an MP3 run has nothing to copy.
     *copyNative = *target == ZUUNED_AUDIO_WMA
         && st.value(QStringLiteral("copyNativeAudio"), true).toBool();
+    // The encoder knob travels with the rest of the policy for the same reason
+    // the bit rate does: read once per run, so a queue cannot change LAME's
+    // effort halfway through an album.  The transcode layer clamps again.
+    bool qok = false;
+    const int quality = st.value(QStringLiteral("mp3Quality"), 2).toInt(&qok);
+    zuuned_mp3_set_quality(qok ? quality : 2);
 }
 } // namespace
 

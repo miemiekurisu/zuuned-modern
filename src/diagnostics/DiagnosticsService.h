@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QUrl>
+#include <QVariantMap>
 #include <QtQml/qqmlregistration.h>
 #include <functional>
 
@@ -18,6 +19,7 @@ class DiagnosticsService : public QObject {
     Q_PROPERTY(QString logError READ logError NOTIFY statusChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QUrl lastReportUrl READ lastReportUrl NOTIFY reportChanged)
+    Q_PROPERTY(bool audioSelfTestRunning READ audioSelfTestRunning NOTIFY audioSelfTestChanged)
 public:
     explicit DiagnosticsService(QObject *parent = nullptr);
     ~DiagnosticsService() override;
@@ -25,6 +27,7 @@ public:
     QString logDirectory() const;
     QString logError() const;
     bool busy() const { return m_busy; }
+    bool audioSelfTestRunning() const { return m_audioSelfTestRunning; }
     QUrl lastReportUrl() const { return m_lastReportUrl; }
     static Zuuned::Diagnostics::Redactor::Context redactionContext();
     void setContextProvider(std::function<QJsonObject()> provider) { m_contextProvider = std::move(provider); }
@@ -44,15 +47,35 @@ public:
     static void setUiLanguageApplied(const QString &code);
     Q_INVOKABLE QUrl suggestedReportUrl() const;
     Q_INVOKABLE void exportReport(const QUrl &destination);
+    // Prove the audio conversion this page advertises, on this machine, in this
+    // build.  `conversionTools` can only say that a library is linked; a user
+    // asking "is audio conversion actually usable?" deserves a measurement, not
+    // an offer.  It writes a two-second tone to a temporary WAV, encodes it to
+    // the configured bit rate with each encoder this build carries, probes both
+    // results and sniffs their first bytes -- a file named for one container and
+    // carrying another is a failure mode this project has already been taught by
+    // a device pull.  Temporary files go away whatever the outcome.
+    //
+    // Refuses while a transfer is in flight, because one transcode at a time is
+    // a property of the encoder layer rather than a preference, and a result
+    // measured beside a running sync would describe neither.
+    Q_INVOKABLE void runAudioSelfTest();
     Q_INVOKABLE void openLogFolder() const;
 signals:
     void statusChanged();
     void busyChanged();
     void reportChanged();
     void exportFinished(bool success, const QUrl &reportUrl, const QString &error);
+    // `result` is machine-readable on purpose: {ok, code, bitrate, quality,
+    // mp3:{available,ok,bytes,duration,container,code}, wma:{...}}.  The words
+    // belong to the page that shows them, not to a worker thread.
+    void audioSelfTestChanged();
+    void audioSelfTestFinished(const QVariantMap &result);
 private:
     static QString s_uiLanguageApplied;
     bool m_busy = false;
+    bool m_audioSelfTestRunning = false;
+    QFuture<QVariantMap> m_audioSelfTest;
     bool m_lastAvailable = false;
     QString m_lastLogError;
     QUrl m_lastReportUrl;

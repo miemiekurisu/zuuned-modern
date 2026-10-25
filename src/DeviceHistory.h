@@ -29,6 +29,7 @@
 class DeviceHistory : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList devices READ devices NOTIFY changed)
+    Q_PROPERTY(QVariantMap latest READ latest NOTIFY changed)
     Q_PROPERTY(int count READ count NOTIFY changed)
     Q_PROPERTY(QString storePath READ storePath CONSTANT)
 public:
@@ -58,6 +59,13 @@ public:
 
     Q_INVOKABLE void forget(const QString &key);
     Q_INVOKABLE void clearAll();
+
+    // The row this machine saw most recently, in the same shape as a `devices`
+    // entry, or an empty map when nothing has ever connected.  Settings -> Device
+    // answers "which Zune is this" with it while no player is open: a name, a
+    // model and a capacity do not change between visits, and a card that renders
+    // nothing at all is read as a broken app rather than as an absent player.
+    Q_INVOKABLE QVariantMap latest() const;
 
     // Test/diagnostic helper: the row for a serial, or an empty map.
     Q_INVOKABLE QVariantMap find(const QString &serial) const;

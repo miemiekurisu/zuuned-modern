@@ -1830,3 +1830,41 @@ cases that had been skipping now actually run - with `tests/win-compat` at
 happened with the Zune HD attached, so the app's own hotplug browsed it inside every
 isolated profile; the diagnostics that recorded are all reads (`get_object_info`,
 `get_object_prop_value`, thumbnails), and no send, deletion or eject was triggered.
+
+**2026-10-25 Device-tab knobs and a self-test:** the user asked twice about
+`Settings -> Device` - 「这台Zune没有信息」 and 「音频转换真的可用吗？你既没有lame设置，也没ffmpeg设置，实用不便」 -
+and both were the same fault: a card that reports a fact nobody can check and offers no
+knob. The This Zune card was gated on `DeviceService.connected`, so it was absent rather
+than empty on every screen Settings is actually opened from; `DeviceHistory::latest()`
+(`src/DeviceHistory.cpp:139`) now feeds it the last session's identity in the same map shape
+the history list uses, live values win, and only Contents and Battery stay
+connected-only - a remembered row is labelled a memory with its date, never a present
+reading. `mp3Quality` (Detail 0/2/4/6, hidden for WMA because `wmav2` takes a bit rate and
+nothing else) is read in `readAudioSyncPolicy()` beside the format and bit rate so a queue
+cannot change effort mid-album, clamped again by `zuuned_mp3_set_quality()`
+(`transcode/libav_transcode.c:81`), and applied at both `lame_set_quality()` sites
+(`:255`, and the `:773` chapter-range path audiobook parts use); default 2 is what the code
+always passed. `ffmpegDir` is a folder, not two pickers, because a Windows FFmpeg download is
+one `bin` and `zune_grab_photo_thumb()` asks the shell for a bare `ffmpeg`: `src/main.cpp:254`
+prepends it to `PATH` at launch and `conversionTools()` reports `folder`/`PATH`/`none` per
+program. Measured on isolated profiles with no FFmpeg on `PATH`: both the doubled-backslash and
+the forward-slash spelling log `put in front of PATH` and resolve `ffmpeg.exe`; a missing folder
+logs the fallback. That probe also proved **`QSettings`' INI reader unescapes backslashes** -
+`D:\dev\x` typed by hand arrives as `D:evx` - which Qt writes correctly itself, so only a
+hand-editor meets it. `DiagnosticsService::runAudioSelfTest()` answers "does conversion
+actually work" by converting: a 2 s 440 Hz tone through the same `zuuned_transcode_audio_ex()` a
+sync uses at the stored bit rate and detail, first-four-bytes container check (ID3 / MPEG sync /
+ASF GUID), probed length inside 85-115 %, size above half the nominal CBR payload, outputs
+deleted; it answers in codes and QML owns the wording (34 scoped lines, catalogue 1524/1524,
+`lrelease` 0 unfinished), and it refuses while `transfer_running` or `zune_busy` because one
+transcode at a time is a property of the encoder layer - the abort flag is read, cleared and put
+back so a user cancel is never eaten by a test. The AMD pill is `disabled` on Windows and the
+转码加速 note is platform-branched, closing the VAAPI-on-Windows wording the previous pass
+recorded and left. Gates unchanged because nothing was added to what they assert:
+`tests\win-compat` 201 checks 0 failures, `tests\win-usability`
+`launches=18 checks=132 failures=0 skips=0 killed=0` `OVERALL=ok`, `i18n\audit.py` `AUDIT=ok`.
+Relinking taught one habit: `--clean-first` printed `FAILED: clean` because the app held
+`build\zuuned.exe`, continued, rebuilt all 336 targets and exited 0 - prove the executable's
+timestamp, not the exit code. No device claim changes: no send, deletion, eject or playback was
+triggered, the self-test opens no device handle, and the self-test button has no gate case of its
+own, so its evidence is the `transcodetool` encode legs plus a hand press.

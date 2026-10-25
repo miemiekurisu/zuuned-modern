@@ -64,6 +64,32 @@ int  zuuned_transcode_abort_requested(void) { return g_transcode_abort; }
 static volatile int g_hw_decode = 1;
 void zuuned_transcode_set_hw_decode(int mode) { g_hw_decode = mode; }
 
+/* ---- MP3 encoder quality ----
+ * LAME's own scale, 0 to 9, where 0 spends the most CPU for the best output and
+ * 9 the least.  Settings -> Device -> Audio conversion stores the pick and the
+ * sync engine mirrors it here before every pass, exactly like the hardware-decode
+ * mode above, so a quality change takes effect on the next sync without a
+ * restart.  2 is the constant this application always used: an ini with no key
+ * there encodes byte-for-byte as it did before the setting existed.
+ *
+ * This trades time for the encoder's own effort, never for bits -- the bit rate
+ * is the caller's separate bitrate_kbps.  On a constant-bit-rate encode a lower
+ * quality number buys better band extension and a more careful psychoacoustic
+ * model inside the same number of bits, which is why the default is 2 and not 0:
+ * 0 costs roughly twice the CPU for a difference nobody measured on a Zune. */
+static volatile int g_mp3_quality = 2;
+void zuuned_mp3_set_quality(int q)
+{
+    if (q < 0) q = 0;
+    if (q > 9) q = 9;
+    g_mp3_quality = q;
+}
+int zuuned_mp3_quality(void) { return g_mp3_quality; }
+
+/* Which LAME this binary linked, so Settings can name the encoder instead of
+ * asserting that one is there.  get_lame_version() returns a static string. */
+const char *zuuned_mp3_encoder_version(void) { return get_lame_version(); }
+
 /* POSIX keeps its scratch files under /tmp.  The Windows compatibility layer
  * answers with a writable directory that already ends in a separator, and the
  * macro expands to a function call, so temp names are built with a %s field
@@ -226,7 +252,7 @@ char *zuuned_transcode_audio_ex(const char *input_path, const char *album_artist
     }
     lame_set_in_samplerate(lame, out_sample_rate);
     lame_set_num_channels(lame, 2);
-    lame_set_quality(lame, 2);       /* High quality */
+    lame_set_quality(lame, g_mp3_quality);   /* Settings -> Audio conversion */
     if (vbr) {
         /* In VBR modes LAME reads brate as the ceiling it may spend, not the
          * rate it aims at, so "320 VBR" means LAME's own quality target capped
@@ -744,7 +770,7 @@ char *zuuned_transcode_audio_range(const char *input_path, int64_t start_ms, int
     lame_set_num_channels(range.lame, 2);
     lame_set_VBR(range.lame, vbr_off);
     lame_set_brate(range.lame, 320);
-    lame_set_quality(range.lame, 2);
+    lame_set_quality(range.lame, g_mp3_quality);
     /* The Info/LAME frame stores encoder delay and padding. Without it every
      * split acquires a short silence and decoded chapter durations drift. */
     lame_set_bWriteVbrTag(range.lame, 1);

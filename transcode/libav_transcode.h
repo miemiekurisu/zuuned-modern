@@ -43,6 +43,17 @@ int zuuned_transcode_abort_requested(void);
  * engine mirrors the Settings pick here before each sync. */
 void zuuned_transcode_set_hw_decode(int mode);
 
+/* ---- MP3 encoder quality ----
+ * LAME's 0-9 scale (0 = most CPU for the best output, 9 = fastest).  Default 2,
+ * which is what every build before the setting existed used.  Global by design,
+ * like the hardware-decode mode: Settings stores the pick and the sync engine
+ * mirrors it here before each pass.  Out-of-range values clamp. */
+void zuuned_mp3_set_quality(int quality);
+int zuuned_mp3_quality(void);
+
+/* Release string of the linked LAME, e.g. "3.100".  Never NULL. */
+const char *zuuned_mp3_encoder_version(void);
+
 /* ---- Audio Transcoding ---- */
 
 /*

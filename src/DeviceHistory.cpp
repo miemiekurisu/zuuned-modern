@@ -136,6 +136,15 @@ QVariantList DeviceHistory::devices() const
     return list;
 }
 
+QVariantMap DeviceHistory::latest() const
+{
+    // `devices()` already puts the newest sighting first, so its first row is
+    // the answer.  Handing back the same map shape keeps one vocabulary between
+    // the history list and the identity card above it.
+    const QVariantList list = devices();
+    return list.isEmpty() ? QVariantMap() : list.first().toMap();
+}
+
 void DeviceHistory::record(const QString &serial, const QString &name,
                            const QString &model, int family, double capacityGB)
 {

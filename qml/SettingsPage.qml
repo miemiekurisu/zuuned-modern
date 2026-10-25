@@ -1367,12 +1367,22 @@ Item {
                         Seg {
                             options: [{ label: qsTr("Auto"), value: "auto" },
                                       { label: qsTr("NVIDIA"), value: "nvenc" },
-                                      { label: qsTr("AMD"), value: "amd" },
+                                      { label: qsTr("AMD"), value: "amd",
+                                        disabled: Qt.platform.os === "windows" },
                                       { label: qsTr("CPU"), value: "cpu" }]
                             current: AppSettings.transcodeAccel
                             onPicked: (v) => AppSettings.transcodeAccel = v
                         }
-                        PhaseNote { text: qsTr("Auto tries NVDEC, then VAAPI, then software. A missing GPU falls back to software either way.") }
+                        // What the pills actually reach, in the order the encoder
+                        // asks. VAAPI is a Linux API: the code path is there and
+                        // always fails on Windows, which is why the AMD pill is
+                        // inert here instead of promising a decode that cannot
+                        // happen. Measured on this machine, auto answers NVDEC.
+                        PhaseNote {
+                            text: Qt.platform.os === "windows"
+                                  ? qsTr("Auto tries NVDEC, then software. VAAPI, the way an AMD or Intel card decodes on Linux, does not exist on Windows, so AMD is inert here and those GPUs transcode on the CPU.")
+                                  : qsTr("Auto tries NVDEC, then VAAPI, then software. A missing GPU falls back to software either way.")
+                        }
                     }
 
                     Sblk {
@@ -1577,38 +1587,103 @@ Item {
                     }
 
                     Sblk {
+                        id: thisZuneCard
                         title: qsTr("This Zune")
-                        desc: DeviceService.connected
+                        // Live values first, then the player this app last talked
+                        // to.  Left to `visible: DeviceService.connected` this card
+                        // was empty on every screen the user actually opened it
+                        // from, and blank beside a remembered serial asked the one
+                        // question nobody is asking.  What is kept from the last
+                        // session is said to be a memory, not a present reading:
+                        // only the identity survives a cable coming out, and the
+                        // card never invents the bytes it cannot ask for.
+                        readonly property var remembered: DeviceService.deviceHistory.latest
+                        readonly property bool live: DeviceService.connected
+                        function rememberedText(key) {
+                            const m = thisZuneCard.remembered
+                            if (!m)
+                                return ""
+                            const v = m[key]
+                            return (v === undefined || v === null) ? "" : String(v)
+                        }
+                        readonly property string rememberedName: rememberedText("name")
+                        readonly property string rememberedSerial: rememberedText("serial")
+                        readonly property string rememberedModel: rememberedText("model")
+                        readonly property string rememberedSeen: rememberedText("lastSeenDate")
+                        readonly property bool rememberedKnown: rememberedSerial.length > 0
+                        readonly property double rememberedCapacity: {
+                            const m = thisZuneCard.remembered
+                            return m && m["capacityGB"] ? Number(m["capacityGB"]) : 0
+                        }
+                        desc: live
                               ? qsTr("read from the player on this connection.")
-                              : qsTr("nothing is connected right now.")
+                              : rememberedKnown
+                                    ? (rememberedSeen.length > 0
+                                       ? qsTr("nothing is connected right now. What follows is what the last session read, seen %1.")
+                                             .arg(rememberedSeen)
+                                       : qsTr("nothing is connected right now. What follows is what the last session read."))
+                                    : qsTr("nothing is connected right now.")
 
                         ColumnLayout {
                             Layout.fillWidth: true
                             spacing: 0
-                            visible: DeviceService.connected
-                            StatRow { label: qsTr("Name"); value: DeviceService.name }
+                            StatRow {
+                                label: qsTr("Name")
+                                value: thisZuneCard.live
+                                       ? DeviceService.name
+                                       : (thisZuneCard.rememberedName.length > 0
+                                          ? thisZuneCard.rememberedName
+                                          : qsTr("not reported"))
+                            }
                             StatRow {
                                 label: qsTr("Model")
-                                value: DeviceService.modelName.length > 0
-                                       ? DeviceService.modelName : DeviceService.model
+                                value: thisZuneCard.live
+                                       ? (DeviceService.modelName.length > 0
+                                          ? DeviceService.modelName : DeviceService.model)
+                                       : (thisZuneCard.rememberedModel.length > 0
+                                          ? thisZuneCard.rememberedModel
+                                          : qsTr("not reported"))
                             }
-                            StatRow { label: qsTr("Serial"); value: DeviceService.deviceSerial }
+                            StatRow {
+                                label: qsTr("Serial")
+                                value: thisZuneCard.live
+                                       ? DeviceService.deviceSerial
+                                       : (thisZuneCard.rememberedKnown
+                                          ? thisZuneCard.rememberedSerial
+                                          : qsTr("not reported"))
+                            }
                             StatRow {
                                 label: qsTr("Storage")
-                                value: DeviceService.capacityGB > 0
-                                       ? qsTr("%1 GB free of %2 GB")
-                                             .arg(DeviceService.freeGB.toFixed(1))
-                                             .arg(DeviceService.capacityGB.toFixed(1))
-                                       : qsTr("not reported")
+                                value: {
+                                    if (thisZuneCard.live && DeviceService.capacityGB > 0)
+                                        return qsTr("%1 GB free of %2 GB")
+                                                   .arg(DeviceService.freeGB.toFixed(1))
+                                                   .arg(DeviceService.capacityGB.toFixed(1))
+                                    if (thisZuneCard.rememberedCapacity > 0)
+                                        return qsTr("%1 GB total, read on the last session")
+                                                   .arg(thisZuneCard.rememberedCapacity.toFixed(0))
+                                    return qsTr("not reported")
+                                }
                             }
                             StatRow {
                                 label: qsTr("Music / video / photos")
-                                value: DeviceService.musicGB.toFixed(2) + " / "
-                                       + DeviceService.videoGB.toFixed(2) + " / "
-                                       + DeviceService.photoGB.toFixed(2) + " GB"
+                                value: thisZuneCard.live
+                                       ? DeviceService.musicGB.toFixed(2) + " / "
+                                         + DeviceService.videoGB.toFixed(2) + " / "
+                                         + DeviceService.photoGB.toFixed(2) + " GB"
+                                       : qsTr("read while connected")
+                            }
+                            StatRow {
+                                label: qsTr("Contents")
+                                visible: thisZuneCard.live
+                                value: qsTr("%1 tracks · %2 albums · %3 artists")
+                                           .arg(DeviceService.trackCount)
+                                           .arg(DeviceService.albumCount)
+                                           .arg(DeviceService.artistCount)
                             }
                             StatRow {
                                 label: qsTr("Battery")
+                                visible: thisZuneCard.live
                                 value: DeviceService.battery >= 0
                                        ? DeviceService.battery + "%" : qsTr("not reported")
                                 divider: false
@@ -1618,7 +1693,7 @@ Item {
                         // model and nothing else, so a firmware number here would be
                         // invented rather than read.
                         PhaseNote {
-                            visible: !DeviceService.connected
+                            visible: !DeviceService.connected && !thisZuneCard.rememberedKnown
                             text: qsTr("Plug a Zune in and this card fills itself in from the device.")
                         }
                     }
@@ -1706,7 +1781,18 @@ Item {
                         id: audioConversionCard
                         title: qsTr("Audio conversion")
                         desc: qsTr("what happens to a file that a Zune cannot play as it stands.")
-                        readonly property var tools: DiagnosticsService.conversionTools()
+                        // Asked of the running program, not of a table, and asked
+                        // again the moment the user points the app at a folder —
+                        // "is ffmpeg there?" has a different answer one second after
+                        // somebody picks one. probeRevision is the nudge, the ini
+                        // value is the one that actually changed.
+                        property int probeRevision: 0
+                        property string selfTestText: ""
+                        readonly property var tools: {
+                            audioConversionCard.probeRevision
+                            AppSettings.ffmpegDir
+                            return DiagnosticsService.conversionTools()
+                        }
 
                         Seg {
                             options: [{ label: "MP3", value: "mp3" },
@@ -1732,6 +1818,23 @@ Item {
                             current: String(AppSettings.syncAudioBitrate)
                             onPicked: (v) => AppSettings.syncAudioBitrate = parseInt(v)
                         }
+                        // The second knob LAME has and this card never exposed: how
+                        // hard the encoder works for the bits the preset above
+                        // allows. -q0 is the slowest and best MP3 LAME can write,
+                        // -q9 the fastest and worst; 2 is LAME's own default, which
+                        // is the number this build always used, so the default here
+                        // is the behaviour a user already has rather than a new
+                        // guess. Only MP3 has it — wmav2 takes a bit rate and nothing
+                        // else, which is why the pill hides itself on WMA.
+                        Seg {
+                            visible: AppSettings.syncAudioFormat === "mp3"
+                            options: [{ label: qsTr("Detail 0 (slowest)"), value: "0" },
+                                      { label: qsTr("Detail 2 (default)"), value: "2" },
+                                      { label: qsTr("Detail 4"), value: "4" },
+                                      { label: qsTr("Detail 6 (fastest)"), value: "6" }]
+                            current: String(AppSettings.mp3Quality)
+                            onPicked: (v) => AppSettings.mp3Quality = parseInt(v)
+                        }
 
                         ColumnLayout {
                             Layout.fillWidth: true
@@ -1739,7 +1842,9 @@ Item {
                             StatRow {
                                 label: "MP3"
                                 value: audioConversionCard.tools.mp3Encoder
-                                       ? qsTr("LAME, constant bit rate, ID3v2.3")
+                                       ? qsTr("LAME %1, constant bit rate, ID3v2.3, detail %2")
+                                             .arg(audioConversionCard.tools.mp3EncoderVersion)
+                                             .arg(audioConversionCard.tools.mp3Quality)
                                        : qsTr("no encoder in this build")
                                 valueColor: audioConversionCard.tools.mp3Encoder
                                             ? Theme.textDim : Theme.warning
@@ -1751,6 +1856,11 @@ Item {
                                        : qsTr("no encoder in this build")
                                 valueColor: audioConversionCard.tools.wmaEncoder
                                             ? Theme.textDim : Theme.warning
+                            }
+                            StatRow {
+                                label: qsTr("Conversion library")
+                                value: qsTr("FFmpeg %1 (built in)")
+                                           .arg(audioConversionCard.tools.bundledLibav)
                             }
                             StatRow {
                                 label: qsTr("Already the right format")
@@ -1785,39 +1895,153 @@ Item {
                             text: qsTr("Bit rate is constant only. A variable-bitrate MP3 header is not written by this build - measured, the LAME/Xing frame is absent and the player then reports a track three minutes shorter than it is - so VBR is not offered.")
                         }
 
+                        // Where the two external programs come from, because
+                        // "found on PATH" was an answer to a question the user has
+                        // no way to influence: a downloaded FFmpeg is one folder,
+                        // and being told to edit PATH is being told to leave the app.
                         ColumnLayout {
                             Layout.fillWidth: true
-                            spacing: 0
-                            StatRow {
-                                label: qsTr("Conversion library")
-                                value: qsTr("FFmpeg %1 (built in)").arg(audioConversionCard.tools.bundledLibav)
+                            spacing: Theme.spaceXs
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.spaceMd
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 1
+                                    Text {
+                                        text: qsTr("FFmpeg command-line tools")
+                                        font.pixelSize: 13; font.weight: Font.Light
+                                        color: Theme.textPrimary
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                        text: {
+                                            const t = audioConversionCard.tools
+                                            if (t.commandLineTools)
+                                                return t.ffmpegPath
+                                            if (t.ffmpegDirGiven)
+                                                return qsTr("nothing usable inside the folder you chose")
+                                            return qsTr("not found on PATH")
+                                        }
+                                        font.pixelSize: 11; font.weight: Font.Light
+                                        color: audioConversionCard.tools.commandLineTools
+                                               ? Theme.textDim : Theme.warning
+                                        elide: Text.ElideMiddle
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                        text: qsTr("found on %1").arg(audioConversionCard.tools.ffmpegSource)
+                                        visible: audioConversionCard.tools.commandLineTools
+                                                 && audioConversionCard.tools.ffmpegSource !== "none"
+                                        font.pixelSize: 10; font.weight: Font.Light
+                                        color: Theme.textGhost
+                                    }
+                                }
+                                GlassButton {
+                                    text: qsTr("choose folder")
+                                    small: true
+                                    onClicked: ffmpegFolderDialog.open()
+                                }
                             }
-                            StatRow {
-                                label: qsTr("FFmpeg command-line tools")
-                                value: audioConversionCard.tools.commandLineTools
-                                       ? qsTr("found on PATH") : qsTr("not found")
-                                dot: audioConversionCard.tools.commandLineTools
-                                     ? Theme.green : Theme.warning
-                                valueColor: audioConversionCard.tools.commandLineTools
-                                            ? Theme.textDim : Theme.warning
-                                divider: false
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.spaceMd
+                                Text {
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                    text: qsTr("Converting audio inside the app needs nothing else installed. The command-line ffmpeg and ffprobe are used for two jobs only: video thumbnails for the device page, and reading a file the built-in library cannot open. Without them those two things quietly do not happen. A folder chosen here is tried before PATH; a program already running keeps the PATH it started with, so restart Zuuned if a thumbnail is still missing.")
+                                    font.pixelSize: 12; font.weight: Font.Light
+                                    color: Theme.textDim
+                                }
+                                GlassButton {
+                                    text: qsTr("check again")
+                                    small: true
+                                    onClicked: audioConversionCard.probeRevision++
+                                }
+                                GlassButton {
+                                    text: qsTr("clear")
+                                    small: true
+                                    visible: audioConversionCard.tools.ffmpegDirGiven
+                                    onClicked: AppSettings.ffmpegDir = ""
+                                }
+                                GlassButton {
+                                    text: qsTr("download FFmpeg ↗")
+                                    small: true
+                                    onClicked: Qt.openUrlExternally(audioConversionCard.tools.downloadUrl)
+                                }
                             }
                         }
+
+                        // The question actually asked: "is conversion really
+                        // working?" is answered by converting something and reading
+                        // it back, not by a list of linked libraries.
                         RowLayout {
-                            visible: !audioConversionCard.tools.commandLineTools
+                            Layout.fillWidth: true
                             spacing: Theme.spaceMd
+                            GlassButton {
+                                text: DiagnosticsService.audioSelfTestRunning
+                                      ? qsTr("testing…") : qsTr("run encoder self-test")
+                                small: true
+                                enabled: !DiagnosticsService.audioSelfTestRunning
+                                onClicked: DiagnosticsService.runAudioSelfTest()
+                            }
                             Text {
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
-                                text: qsTr("Converting inside the app needs nothing else installed. The command-line ffmpeg and ffprobe are used for two jobs only: video thumbnails for the device page, and reading a file the built-in library cannot open. Without them those two things quietly do not happen.")
+                                text: audioConversionCard.selfTestText.length > 0
+                                      ? audioConversionCard.selfTestText
+                                      : qsTr("Writes a two-second tone, sends it through both encoders at the settings above, and reports what came back. Nothing is stored and nothing is sent to a player.")
                                 font.pixelSize: 12; font.weight: Font.Light
                                 color: Theme.textDim
                             }
-                            GlassButton {
-                                text: qsTr("download FFmpeg ↗")
-                                small: true
-                                onClicked: Qt.openUrlExternally(audioConversionCard.tools.downloadUrl)
+                        }
+                        Connections {
+                            target: DiagnosticsService
+                            function onAudioSelfTestFinished(result) {
+                                audioConversionCard.selfTestText =
+                                    audioConversionCard.describeSelfTest(result)
                             }
+                        }
+                        // The worker thread answers in codes; the page owns the
+                        // wording, so a self-test reads in whatever language the
+                        // user is reading rather than in whatever the worker had.
+                        function describeSelfTest(result) {
+                            if (!result)
+                                return qsTr("The test returned nothing.")
+                            const code = String(result.code === undefined ? "" : result.code)
+                            if (code === "busy")
+                                return qsTr("A transfer or a device job is running. The encoders take one job at a time, so try again when the queue is empty.")
+                            if (code === "tone")
+                                return qsTr("Could not write the test tone: %1")
+                                           .arg(String(result.detail === undefined ? "" : result.detail))
+                            const mp3 = result.mp3 === undefined ? ({}) : result.mp3
+                            const wma = result.wma === undefined ? ({}) : result.wma
+                            return qsTr("At %1 kbps, detail %2 — %3")
+                                       .arg(Number(result.bitrate === undefined ? 0 : result.bitrate))
+                                       .arg(Number(result.quality === undefined ? 0 : result.quality))
+                                       .arg(encoderLine("MP3", mp3) + "   ·   " + encoderLine("WMA", wma))
+                        }
+                        function encoderLine(name, r) {
+                            if (!r || r.available !== true)
+                                return name + ": " + qsTr("no encoder in this build")
+                            const c = String(r.code === undefined ? "" : r.code)
+                            if (c === "ok")
+                                return name + ": " + qsTr("%1 bytes, %2 s, %3")
+                                                 .arg(Number(r.bytes === undefined ? 0 : r.bytes))
+                                                 .arg(Number(r.duration === undefined ? 0 : r.duration).toFixed(2))
+                                                 .arg(String(r.container === undefined ? "" : r.container))
+                            return name + ": " + selfTestCodeText(c)
+                        }
+                        function selfTestCodeText(code) {
+                            if (code === "refused") return qsTr("the encoder refused the file")
+                            if (code === "cancelled") return qsTr("cancelled before it finished")
+                            if (code === "container") return qsTr("wrote a container this build does not recognise")
+                            if (code === "unprobeable") return qsTr("wrote a file that cannot be read back")
+                            if (code === "duration") return qsTr("the length read back is wrong")
+                            if (code === "size") return qsTr("the file is far too small for its bit rate")
+                            return qsTr("failed")
                         }
                     }
 
@@ -2230,6 +2454,21 @@ Item {
                 LibraryService.addWatchFolder(p, pendingType)
         }
         onRejected: console.warn("[settings] folder dialog rejected/cancelled")
+
+    }
+    // The FFmpeg folder picked in Settings → Device.  canonical() for the same
+    // reason the watch-folder dialog needs it: file:///E:/Tools/ffmpeg/bin is a
+    // URL, and the value that has to land in the ini is a path.
+    FolderDialog {
+        id: ffmpegFolderDialog
+        title: qsTr("Choose the folder holding ffmpeg and ffprobe")
+        onAccepted: {
+            const p = ZPathText.canonical(selectedFolder.toString())
+            if (p.length > 1)
+                AppSettings.ffmpegDir = p
+            audioConversionCard.probeRevision++
+        }
+        onRejected: console.warn("[settings] ffmpeg folder dialog cancelled")
     }
 
     // Treat-As menu (shared across watch-folder rows)
