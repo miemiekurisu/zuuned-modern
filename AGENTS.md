@@ -2005,3 +2005,27 @@ proven against the buffered one on a fake transport, never against a player,
 nothing this tree wrote has been heard, and deletion, the spoken and
 photo/video categories, every model but this Pavo Zune HD and anything audible
 all stay open.
+
+**2026-10-29 WMA Lossless on the wire:** the claim the lossless section carried was the encode,
+and it has now been put on a player and taken off again. Fixture supplied for the purpose: the
+3-CD FLAC box under `E:\Temp\testmusic\测试音乐\Wakin Chau (周華健) - ... {RD1668-4} [FLAC]`; the
+leg ran on `Disc 1\04 - 擺渡人的歌.flac`, 18,039,399 bytes, 16-bit stereo 44.1 kHz, inside the
+eight formats the encoder in Windows publishes. `transcodetool audio-wma-lossless` encoded the
+CJK path in 2 s and reported 7,158,312 samples, which is 162.320 x 44100 to the sample; the
+produced ASF and the source FLAC each decoded to **28,633,248 bytes of `s16le` with the same
+SHA256**, equal sample counts and no priming or padding difference. Then the device, through the
+ordinary admission with `syncAudioFormat=wma-lossless` as the only profile setting: the log reads
+`native copy refused verdict=2 tag=0x0010 codec=flac` (F-05 not mistaking a container for a
+codec), `audio target=wma-lossless produced=wmalossless tag=0x0163` (the byte check between "the
+encoder ran" and "this may leave", and 0x0163 is WMA_LOSSLESS), `forge done: 1 ok, 0 failed`,
+device rows 168 -> 169, `failed=0`. A separate pull run - so the upload also survived the
+device's own re-index - answered `readbackDurationMs=162320` and saved 18,452,703 bytes behind
+the device's `.mp3` name, `codec_name=wmalossless`, and that file decoded to the same 28,633,248
+bytes and the same SHA256 as the source. FLAC -> the encoder in Windows -> this Pavo Zune HD ->
+back over USB -> PCM is bit-exact. **Nobody has listened**, so the HD taking the bytes is not the
+HD playing them; that stays the open item, alongside deletion (the test track is still on the
+player), the spoken and photo/video read halves, every other model, and packaging. Two harness
+facts: `Start-Process -ArgumentList @(...)` does not quote an element containing spaces, so a
+`--qa-device` spec arrives as five words and `qaDeviceSpec` is null - pass one pre-quoted command
+line; and `-WindowStyle Hidden` leaves no window for `winshot --pid` or `CloseMainWindow()`, so an
+instrumented run wants `Minimized` or it can only be killed.

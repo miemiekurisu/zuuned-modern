@@ -1,6 +1,6 @@
 # Windows port status
 
-Dated 2026-10-20, updated 2026-10-24.  This is where the native Windows build of Zuuned actually
+Dated 2026-10-20, updated 2026-10-29.  This is where the native Windows build of Zuuned actually
 stands: what compiles, what has been proven on a Windows machine, and what has
 not.  It exists so that nobody reads "the Windows gates pass" as "the Windows
 build works with a Zune".  Build steps and dependency locations live in
@@ -1933,9 +1933,9 @@ and there is no gate case for the self-test button itself, so today the only rec
    returned a thumbnail from a player, which is the half of it a read would close.  The
    spoken import walk this item carried is routed through `LibraryScan::walkFiles()` as
    of the fifteenth pass, so what is left there is the wire, and the import itself still
-   has no phase, gated or hand.  And hear one WMA Lossless track on the HD: the encode is
-   measured and its PCM round trip is exact, but the format is documented for that model alone
-   and no player has ever played one made here.
+   has no phase, gated or hand.  And hear one WMA Lossless track on the HD: one has been put
+   on the HD and taken off again bit-identical (2026-10-29, below), so the encode and the wire
+   are both done and only the listening is left, on a format documented for that model alone.
 6. Only then talk about Windows packaging or a Windows release channel.
 
 ## 2026-10-26 - WMA Lossless, from the encoder that is already in Windows
@@ -2122,3 +2122,67 @@ player; no WMA Lossless file this tree wrote has been played; deletion, the
 podcast, audiobook, photo and video categories, every model but this Pavo Zune
 HD, and anything anyone has heard all stay exactly where the 2026-10-26 section
 left them.
+
+## 2026-10-29 - WMA Lossless across the wire: one real recording in and back out bit-identical
+
+The 2026-10-26 section ended on the encode and nothing else - "nothing this build has written
+has been heard on any Zune". That encode has now been put on a player and taken off again.
+Nobody has heard it, and that stays the sentence to quote.
+
+Fixture, supplied for exactly this: the 3-CD FLAC box
+`E:\Temp\testmusic\测试音乐\Wakin Chau (周華健) - 周而復始 1987-2002 (2003) {RD1668-4} [FLAC]`,
+40 FLACs over `Disc 1/2/3`, each disc with its own `cover.jpg`. The leg ran on
+`Disc 1\04 - 擺渡人的歌.flac`, 18,039,399 bytes, which `ffprobe` names as 16-bit stereo at
+44.1 kHz - inside the eight formats the encoder in Windows publishes, so this is not the refusal
+path.
+
+Software first, before anything reached the player. `transcodetool audio-wma-lossless` took the
+CJK path in 2 s and reported `wrote 7158312 samples as 2 ch / 44100 Hz / 16-bit lossless`, and
+7,158,312 is 162.320 x 44100 to the sample. `ffprobe` calls the output `codec_name=wmalossless`,
+`format_name=asf`, 18,452,689 bytes. Then the answer that matters: the source FLAC and the
+produced WMA each decoded to `s16le` at **28,633,248 bytes** - equal sample counts, no priming
+or padding difference at all - and both hashed
+`E5C6FA3C1EF4A1D6B586E9573FB7B976231448BB72425AD23F54A8C4E86BC3D0`. This recording cost 909 kbps
+against 1,411 kbps of PCM, so the 1,280 kbps reservation in `estimateTrackBytes()` still fits.
+
+On the player, through the ordinary admission and no path a user cannot reach: an isolated
+profile whose only setting is `syncAudioFormat=wma-lossless`, launched
+`--page device --qa-probe --qa-device "<flac>|Wakin Chau|WL QA 2026-10-29|Lossless Roundtrip
+Test|162320"`. The log is the evidence, in order.
+
+- `[sync] native copy refused verdict=2 tag=0x0010 codec=flac asf=0 lossless=0 -- encoding
+  instead`: F-05 refusing to mistake a carryable-looking container for a carryable codec.
+- `[transcode/wma-lossless] target 2 ch / 44100 Hz / 16-bit for a 2 ch / 44100 Hz / 16-bit
+  source`, then `wrote 7158312 samples ... lossless`.
+- `[sync] audio target=wma-lossless produced=wmalossless tag=0x0163`: the byte check that sits
+  between "the encoder ran" and "this file may leave", naming what it found. `0x0163` is
+  WMA_LOSSLESS; had it answered anything else the file would have been deleted and nothing sent.
+- MTPZ `handshake complete`, `forge done: 1 ok, 0 failed`, device rows 168 -> 169,
+  `sync-summary elapsedMs=8822 tracks=1 failed=0`, attributed music 4.51 -> 4.53 GB.
+
+The pull is a separate run, so it also proves the upload survived the device's own re-index:
+same binary, `--qa-device "|Wakin Chau|WL QA 2026-10-29|Lossless Roundtrip Test"`, answering
+`download-from itemId=16777486 readbackDurationMs=162320` - the duration the device stored,
+equal to the source's 162.320 s - and `download-saved name='Lossless Roundtrip Test.mp3'
+ok=true`. What came back is 18,452,703 bytes, 14 more than the bytes that went out, behind the
+`.mp3` name the device supplies, and `ffprobe` on it says `codec_name=wmalossless` / `asf` /
+162.319 s. Decoded to `s16le` it is 28,633,248 bytes and hashes to
+`E5C6FA3C1EF4A1D6B586E9573FB7B976231448BB72425AD23F54A8C4E86BC3D0`, the same hash as the source
+FLAC decoded. FLAC -> the encoder in Windows -> this Pavo Zune HD -> back over USB -> PCM is
+bit-exact, which is the strongest thing this repository has ever been able to say about a write.
+
+Two lessons about the harness rather than the application. `Start-Process -ArgumentList @(...)`
+does not quote an element containing spaces, so the first attempt reached
+`Qt.application.arguments` as five separate words, `qaDeviceSpec` came out null, and the run sat
+through 80 ticks reporting `[qa]` states without ever asking the device for anything - this flag
+has to be handed over as one pre-quoted command line. And a launch made with `-WindowStyle Hidden`
+has no window for `winshot --pid` or `Process.CloseMainWindow()` to find, so the only way out was
+a forced kill; instrumented runs want `-WindowStyle Minimized`. That kill followed a read-only
+session, and `devicetool` answered `VERDICT=agree` at problem 0 afterwards, with no write in
+flight and nothing needing a power cycle.
+
+What this does not change, stated so it is not rediscovered: **nobody has listened**, so the HD
+accepting the bytes is not the HD playing them, and open item 5 above stays open for that reason
+alone. Deletion is still untested, so the test track is still on the player. WMA Lossless stays
+documented for the HD alone, and no other model has been offered one. The podcast, audiobook and
+photo/video read halves and packaging are untouched by any of it.
