@@ -5,15 +5,15 @@
  * a Zune reads.  This file owns WMA: libavcodec `wmav2` muxed into ASF, the
  * container the player reports as WMA.
  *
- * WMA Lossless is deliberately NOT here, and adding it is not a matter of
- * writing more code.  Measured on the FFmpeg build this application ships
- * (`ffmpeg -encoders`): the only WMA encoders are `wmav1` and `wmav2`;
- * `wmalossless` and `wmapro` appear under decoders only.  Windows closes the
- * other door - System32 carries no WMA lossless ACM codec (atrac3, the two
- * ADPCMs, l3codeca/l3codecp and the two telephony codecs are all there is), so
- * there is no encoder to reach through ACM either.  A lossless WMA the user
- * already owns is therefore carried byte-for-byte by the sync engine instead of
- * being converted; conversion here would only ever be a downgrade.
+ * WMA Lossless is not here either, and for a reason that turned out to be about
+ * where to look rather than what to write.  This file encodes through FFmpeg, and
+ * measured on the FFmpeg build this application ships (`ffmpeg -encoders`) the
+ * only WMA encoders are `wmav1` and `wmav2` - `wmalossless` and `wmapro` appear
+ * under decoders only.  Windows has no WMA lossless ACM codec either.  It does
+ * have the encoder, in the Windows Media Format runtime, reachable in process and
+ * not through either of those doors, and `wma_lossless_enc.cpp` drives it instead
+ * of anything here trying to follow.  A lossless WMA the user already owns is
+ * still carried byte-for-byte by the sync engine, which needs no encoder at all.
  *
  * `wmav2` has no variable-bitrate mode, which is why the VBR control the sync
  * settings offer is MP3-only and the UI has to say so.

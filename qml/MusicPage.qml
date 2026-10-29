@@ -537,6 +537,15 @@ Item {
                             if (!DeviceService.connected) return
                             const res = SyncEngine.addTracks(
                                 root.allTracks.map(t => root.syncItemOf(t)))
+                            // The refusal branch matters as much as the count: a
+                            // policy this build cannot honour returns error with
+                            // added 0, and "queued 0 tracks" would read as an
+                            // empty library rather than as a codec choice that
+                            // was never carried out.
+                            if (res.error) {
+                                toastHost.show(res.error)
+                                return
+                            }
                             toastHost.show("queued " + res.added + " tracks"
                                 + (res.duplicates > 0
                                    ? " · " + res.duplicates + " already queued or on the zune"

@@ -21,6 +21,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#if defined(_MSC_VER)
+#include <intrin.h>   /* _InterlockedCompareExchange, _InterlockedExchange */
+#endif
 
 /* libav* headers (via MPVKit xcframeworks, symlinked in vendor/ffmpeg-include) */
 #include <libavformat/avformat.h>
@@ -31,6 +34,7 @@
 #include <libavutil/imgutils.h>
 #include <libavutil/pixdesc.h>
 #include <libavutil/mathematics.h>
+#include <libavutil/intreadwrite.h>
 #include <libavutil/dict.h>
 #include <libavutil/avutil.h>
 #include <libswresample/swresample.h>
@@ -52,9 +56,38 @@
  * between two queue entries still kills the next transcode. */
 static volatile int g_transcode_abort = 0;
 
-void zuuned_transcode_abort(void)       { g_transcode_abort = 1; }
-void zuuned_transcode_clear_abort(void) { g_transcode_abort = 0; }
-int  zuuned_transcode_abort_requested(void) { return g_transcode_abort; }
+/* These flags are written by the sync thread and sampled by whichever encode
+ * loop is running, so they cross a thread boundary.  "volatile" is what the
+ * loops have always leaned on to stop the load being hoisted out of them, and
+ * it does that, but it is not a synchronisation operation: it promises nothing
+ * about ordering and a data race between a writer and a reader stays undefined
+ * behaviour.  Each of the three is one 32-bit word a writer replaces whole and a
+ * reader samples, which is exactly what an atomic load/store buys, so the
+ * platform intrinsic is named directly - MSVC has no C11 _Atomic in the mode
+ * these sources compile in, and a lock would be theatre for a single word. */
+#if defined(_MSC_VER)
+static int zuuned_flag_load(volatile int *flag)
+{
+    return (int)_InterlockedCompareExchange((volatile long *)flag, 0, 0);
+}
+static void zuuned_flag_store(volatile int *flag, int value)
+{
+    (void)_InterlockedExchange((volatile long *)flag, (long)value);
+}
+#else
+static int zuuned_flag_load(volatile int *flag)
+{
+    return __atomic_load_n(flag, __ATOMIC_SEQ_CST);
+}
+static void zuuned_flag_store(volatile int *flag, int value)
+{
+    __atomic_store_n(flag, value, __ATOMIC_SEQ_CST);
+}
+#endif
+
+void zuuned_transcode_abort(void)       { zuuned_flag_store(&g_transcode_abort, 1); }
+void zuuned_transcode_clear_abort(void) { zuuned_flag_store(&g_transcode_abort, 0); }
+int  zuuned_transcode_abort_requested(void) { return zuuned_flag_load(&g_transcode_abort); }
 
 /* ---- Hardware decode toggle ----
  * Default ON. The sync engine mirrors the Settings "hwDecode" flag here
@@ -62,7 +95,8 @@ int  zuuned_transcode_abort_requested(void) { return g_transcode_abort; }
  * per-call) — concurrent transcodes share the same policy. */
 /* 0 sw · 1 auto (NVDEC→VAAPI→sw) · 2 NVDEC only · 3 VAAPI only */
 static volatile int g_hw_decode = 1;
-void zuuned_transcode_set_hw_decode(int mode) { g_hw_decode = mode; }
+static int zuuned_hw_decode(void) { return zuuned_flag_load(&g_hw_decode); }
+void zuuned_transcode_set_hw_decode(int mode) { zuuned_flag_store(&g_hw_decode, mode); }
 
 /* ---- MP3 encoder quality ----
  * LAME's own scale, 0 to 9, where 0 spends the most CPU for the best output and
@@ -82,9 +116,9 @@ void zuuned_mp3_set_quality(int q)
 {
     if (q < 0) q = 0;
     if (q > 9) q = 9;
-    g_mp3_quality = q;
+    zuuned_flag_store(&g_mp3_quality, q);
 }
-int zuuned_mp3_quality(void) { return g_mp3_quality; }
+int zuuned_mp3_quality(void) { return zuuned_flag_load(&g_mp3_quality); }
 
 /* Which LAME this binary linked, so Settings can name the encoder instead of
  * asserting that one is there.  get_lame_version() returns a static string. */
@@ -115,16 +149,147 @@ static const char *basename_tail(const char *path)
     return slash ? slash + 1 : path;
 }
 
+/* Every encode writes one scratch file, and the name has to belong to that one
+ * encode.  It used to be "source basename plus process id", which is the same
+ * path twice for the ordinary case of two albums each holding a "Track 01.flac"
+ * in one sync: the second encode opened the file the first was still streaming
+ * from, and whichever finished last decided what the other sent.  So the name
+ * keeps the basename - a log that names the song is worth its characters - and
+ * takes its uniqueness from mkstemps(), which creates with O_EXCL and therefore
+ * hands back a name nobody else can be holding.  The descriptor it opens is
+ * closed right here because every caller reopens the path with fopen() under its
+ * own error handling, and a name that exists is still a name that is ours.
+ *
+ * A name that would not fit is refused rather than truncated: cutting the string
+ * short is how the random tail used to end up outside the path. */
 static char *make_temp_path(const char *input_path, const char *suffix, const char *ext)
 {
     const char *base = basename_tail(input_path);
     const char *dot = strrchr(base, '.');
     size_t base_len = dot ? (size_t)(dot - base) : strlen(base);
 
+    /* ZUUNED_TMPDIR is a function call on Windows, so it is read once. */
+    const char *tmpdir = ZUUNED_TMPDIR;
+    const int ext_len = (int)strlen(ext);
+    /* The basename is decoration - the random tail carries the uniqueness - so it
+     * is the part that gives way, and 64 bytes of it is more than enough to read
+     * back in a log. */
+    if (base_len > 64) base_len = 64;
+
     char path[1024];
-    snprintf(path, sizeof(path), "%szuuned_%s_%.*s_%d.%s",
-             ZUUNED_TMPDIR, suffix, (int)base_len, base, (int)getpid(), ext);
+    const int needed = snprintf(path, sizeof(path), "%szuuned_%s_%.*s_XXXXXX.%s",
+                                tmpdir, suffix, (int)base_len, base, ext);
+    if (needed < 0 || (size_t)needed >= sizeof(path)) {
+        fprintf(stderr, LOG_PREFIX " scratch name does not fit for: %s\n", input_path);
+        return NULL;
+    }
+
+    const int fd = mkstemps(path, ext_len + 1);
+    if (fd < 0) {
+        fprintf(stderr, LOG_PREFIX " cannot create scratch file for: %s (%s)\n",
+                input_path, strerror(errno));
+        return NULL;
+    }
+    close(fd);
     return strdup(path);
+}
+
+/* ---- ID3v2.3 text frames ----
+ *
+ * A v2.3 text frame is one encoding byte and then the text.  The only two this
+ * writes are the two a Zune-era reader understands: 0x00 ISO-8859-1 and 0x01
+ * UTF-16 with a byte-order mark.  FFmpeg hands metadata over as UTF-8 and v2.3
+ * has no UTF-8, so the choice comes from the bytes themselves - Latin-1 only for
+ * text that genuinely is Latin-1, which keeps every ASCII tag exactly the bytes
+ * it has always been, and UTF-16LE with a mark for anything else.  That is the
+ * same output transcode/id3_rewrite.c produces when it retags an existing file,
+ * and it is the fix for a Chinese album title arriving on the player as Latin-1
+ * mojibake because the encoding byte was a constant 0x00 over UTF-8 bytes.
+ *
+ * The UTF-8 decoder is written out rather than pulled in so the transcode layer
+ * keeps its single dependency.  A code point above U+FFFF becomes a surrogate
+ * pair, which is what UTF-16 requires.  The cap bounds a tag that arrives
+ * absurdly long, and because it is counted in code units it can only ever cut
+ * between two code points, never inside one.
+ */
+#define ID3_TEXT_MAX_CODE_UNITS 4096
+
+static uint8_t *id3_text_payload(const char *value, uint32_t *out_len)
+{
+    const unsigned char *s = (const unsigned char *)value;
+    const size_t bytes = strlen(value);
+    int latin1 = 1;
+    for (size_t i = 0; i < bytes; i++) {
+        if (s[i] >= 0x80) { latin1 = 0; break; }
+    }
+
+    if (latin1) {
+        uint8_t *out = malloc(bytes + 1);
+        if (!out) return NULL;
+        out[0] = 0x00;
+        memcpy(out + 1, s, bytes);
+        *out_len = (uint32_t)(bytes + 1);
+        return out;
+    }
+
+    /* No sequence costs more than one code unit per byte, so this bound holds. */
+    uint8_t *out = malloc(3 + bytes * 2 + 2);
+    if (!out) return NULL;
+    size_t pos = 0;
+    out[pos++] = 0x01;
+    out[pos++] = 0xFF;   /* little-endian mark */
+    out[pos++] = 0xFE;
+    uint32_t units = 0;
+    size_t i = 0;
+    while (i < bytes && units + 2 <= ID3_TEXT_MAX_CODE_UNITS) {
+        const unsigned char c = s[i];
+        uint32_t cp;
+        if (c < 0x80) {
+            cp = c; i += 1;
+        } else if ((c & 0xE0) == 0xC0 && i + 1 < bytes) {
+            cp = ((uint32_t)(c & 0x1F) << 6) | (uint32_t)(s[i + 1] & 0x3F); i += 2;
+        } else if ((c & 0xF0) == 0xE0 && i + 2 < bytes) {
+            cp = ((uint32_t)(c & 0x0F) << 12) | ((uint32_t)(s[i + 1] & 0x3F) << 6)
+               | (uint32_t)(s[i + 2] & 0x3F); i += 3;
+        } else if ((c & 0xF8) == 0xF0 && i + 3 < bytes) {
+            cp = ((uint32_t)(c & 0x07) << 18) | ((uint32_t)(s[i + 1] & 0x3F) << 12)
+               | ((uint32_t)(s[i + 2] & 0x3F) << 6) | (uint32_t)(s[i + 3] & 0x3F); i += 4;
+        } else {
+            cp = 0xFFFD; i += 1;   /* a truncated or otherwise invalid sequence */
+        }
+
+        if (cp >= 0x110000) cp = 0xFFFD;
+        if (cp < 0x10000) {
+            out[pos++] = (uint8_t)(cp & 0xFF);
+            out[pos++] = (uint8_t)(cp >> 8);
+            units += 1;
+        } else {
+            const uint32_t v = cp - 0x10000;
+            const uint16_t high = (uint16_t)(0xD800 + (v >> 10));
+            const uint16_t low = (uint16_t)(0xDC00 + (v & 0x3FF));
+            out[pos++] = (uint8_t)(high & 0xFF); out[pos++] = (uint8_t)(high >> 8);
+            out[pos++] = (uint8_t)(low & 0xFF);  out[pos++] = (uint8_t)(low >> 8);
+            units += 2;
+        }
+    }
+    out[pos++] = 0;
+    out[pos++] = 0;   /* a text frame is a terminated string */
+    *out_len = (uint32_t)pos;
+    return out;
+}
+
+/* ID3v1 carries no encoding byte at all: its fixed fields are in whichever code
+ * page the reader happens to guess.  UTF-8 in there is exactly what shows up as
+ * mojibake in a reader that prefers the legacy tag, so a field keeps its ASCII
+ * and leaves the rest to the ID3v2 frame above, which is where a name that is
+ * not Latin really lives. */
+static void copy_ascii_field(char *dest, size_t size, const char *value)
+{
+    size_t slot = 0;
+    if (!value) return;
+    for (const unsigned char *p = (const unsigned char *)value; *p && slot + 1 < size; p++) {
+        if (*p < 0x80) dest[slot++] = (char)*p;
+    }
 }
 
 /* Container metadata wins; Ogg and several other demuxers keep tags on
@@ -161,6 +326,8 @@ int zuuned_audio_encoder_available(int target)
 {
     if (target == ZUUNED_AUDIO_MP3)
         return 1;   /* LAME is linked in, there is nothing to look up */
+    if (target == ZUUNED_AUDIO_WMA_LOSSLESS)
+        return zuuned_wma_lossless_available();
     if (target != ZUUNED_AUDIO_WMA)
         return 0;
     return (avcodec_find_encoder_by_name("wmav2") ||
@@ -177,7 +344,8 @@ char *zuuned_transcode_audio_ex(const char *input_path, const char *album_artist
                                 zuuned_progress_cb progress, void *userdata)
 {
     if (!input_path) return NULL;
-    if (target != ZUUNED_AUDIO_MP3 && target != ZUUNED_AUDIO_WMA) return NULL;
+    if (target != ZUUNED_AUDIO_MP3 && target != ZUUNED_AUDIO_WMA &&
+        target != ZUUNED_AUDIO_WMA_LOSSLESS) return NULL;
 
     /* WMA is another encoder in another container, and it lives in its own
      * file; this one stays MP3. */
@@ -187,6 +355,21 @@ char *zuuned_transcode_audio_ex(const char *input_path, const char *album_artist
         char *made = zuuned_audio_encode_wma(input_path, album_artist, disc_number,
                                              bitrate_kbps, wma_path, progress, userdata);
         free(wma_path);
+        return made;
+    }
+
+    /* Lossless is a third encoder again, and not an FFmpeg one: it is the Windows
+     * Media Format codec already on the machine.  Same temporary-file contract as
+     * the lossy WMA route, and no bit rate or VBR to pass because the format has
+     * neither - a lossless encode that spent a caller's bitrate knob would be
+     * quietly lossy. */
+    if (target == ZUUNED_AUDIO_WMA_LOSSLESS) {
+        char *lossless_path = make_temp_path(input_path, "audio", "wma");
+        if (!lossless_path) return NULL;
+        char *made = zuuned_audio_encode_wma_lossless(input_path, album_artist,
+                                                      disc_number, lossless_path,
+                                                      progress, userdata);
+        free(lossless_path);
         return made;
     }
 
@@ -252,7 +435,7 @@ char *zuuned_transcode_audio_ex(const char *input_path, const char *album_artist
     }
     lame_set_in_samplerate(lame, out_sample_rate);
     lame_set_num_channels(lame, 2);
-    lame_set_quality(lame, g_mp3_quality);   /* Settings -> Audio conversion */
+    lame_set_quality(lame, zuuned_mp3_quality());   /* Settings -> Audio conversion */
     if (vbr) {
         /* In VBR modes LAME reads brate as the ceiling it may spend, not the
          * rate it aims at, so "320 VBR" means LAME's own quality target capped
@@ -296,7 +479,7 @@ char *zuuned_transcode_audio_ex(const char *input_path, const char *album_artist
     uint8_t mp3_buf[16384]; /* LAME output buffer */
 
     while (av_read_frame(fmt_ctx, pkt) >= 0) {
-        if (g_transcode_abort) {
+        if (zuuned_transcode_abort_requested()) {
             fprintf(stderr, LOG_PREFIX " audio transcode ABORTED\n");
             av_packet_unref(pkt);
             goto cleanup;   /* ret != 0 → temp unlinked, NULL returned */
@@ -408,39 +591,32 @@ char *zuuned_transcode_audio_ex(const char *input_path, const char *album_artist
     fclose(fout);
     fout = NULL;
 
-    /* Now prepend ID3v2.3 tag with metadata from input file.
-     * Strategy: write temp MP3 data to temp1, then write final file with ID3+data.
-     * Since we already wrote the raw MP3 data, we need to rebuild with the tag. */
+    /* Prepend an ID3v2.3 tag built from the source metadata.
+
+     Two things here are deliberate.  The frame text comes out of FFmpeg as UTF-8
+     and v2.3 has no UTF-8, so id3_text_payload() picks the encoding byte from the
+     bytes instead of claiming ISO-8859-1 for everything.  And the MP3 that was
+     just encoded is copied through a fixed 64 KiB buffer rather than read into
+     one malloc(): a thirty-minute movement is tens of megabytes, the sync thread
+     has no reason to hold all of it a second time, and the encode already holds
+     the source decoders open.  The tag is small and bounded, so that part is
+     assembled in memory.
+
+     The result goes to a scratch file that is then renamed over output_path, so
+     callers keep owning exactly one path and unlink() it on failure as before. */
     {
-        /* Read the raw MP3 we just wrote */
-        FILE *raw = fopen(output_path, "rb");
-        if (!raw) goto cleanup;
-        fseek(raw, 0, SEEK_END);
-        long raw_size = ftell(raw);
-        fseek(raw, 0, SEEK_SET);
-        uint8_t *raw_data = malloc(raw_size);
-        if (!raw_data) { fclose(raw); goto cleanup; }
-        fread(raw_data, 1, raw_size, raw);
-        fclose(raw);
-
-        /* Build ID3v2.3 tag with metadata from input */
-        FILE *final_fp = fopen(output_path, "wb");
-        if (!final_fp) { free(raw_data); goto cleanup; }
-
-        /* Collect metadata from input format context */
-        const char *title = NULL, *artist = NULL, *album = NULL;
-        const char *genre = NULL, *track = NULL, *year = NULL;
         AVDictionaryEntry *tag;
-        title = audio_tag(fmt_ctx, audio_stream, "title");
-        artist = audio_tag(fmt_ctx, audio_stream, "artist");
-        album = audio_tag(fmt_ctx, audio_stream, "album");
-        genre = audio_tag(fmt_ctx, audio_stream, "genre");
-        track = audio_tag(fmt_ctx, audio_stream, "track");
-        year = audio_tag(fmt_ctx, audio_stream, "date");
-
         char disc[48] = {0};
-        if (disc_number > 0) snprintf(disc, sizeof(disc), "%d", disc_number);
-        else {
+        const char *title = audio_tag(fmt_ctx, audio_stream, "title");
+        const char *artist = audio_tag(fmt_ctx, audio_stream, "artist");
+        const char *album = audio_tag(fmt_ctx, audio_stream, "album");
+        const char *genre = audio_tag(fmt_ctx, audio_stream, "genre");
+        const char *track = audio_tag(fmt_ctx, audio_stream, "track");
+        const char *year = audio_tag(fmt_ctx, audio_stream, "date");
+
+        if (disc_number > 0) {
+            snprintf(disc, sizeof(disc), "%d", disc_number);
+        } else {
             AVDictionary *sources[] = {fmt_ctx->metadata, audio_stream->metadata};
             const char *keys[] = {"disc", "discnumber"};
             for (int source = 0; source < 2 && !disc[0]; ++source)
@@ -454,72 +630,130 @@ char *zuuned_transcode_audio_ex(const char *input_path, const char *album_artist
          * artist instead of splitting on per-track "feat. X" strings. */
         if (album_artist && album_artist[0]) artist = album_artist;
 
-        /* Write simple ID3v2.3 tag */
-        /* Calculate frame sizes: each text frame = 10 (header) + 1 (encoding) + strlen */
-        uint32_t frames_size = 0;
-        struct { const char *id; const char *val; } tags[] = {
+        const struct { const char *id; const char *val; } tags[] = {
             {"TIT2", title}, {"TPE1", artist}, {"TALB", album},
             {"TCON", genre}, {"TRCK", track}, {"TYER", year}, {"TPOS", disc},
         };
-        int ntags = sizeof(tags) / sizeof(tags[0]);
-        for (int i = 0; i < ntags; i++) {
-            if (tags[i].val && tags[i].val[0])
-                frames_size += 10 + 1 + (uint32_t)strlen(tags[i].val);
-        }
-
-        uint32_t padding = 1024;
-        uint32_t tag_content = frames_size + padding;
-
-        /* ID3v2.3 header */
-        uint8_t hdr[10] = {'I', 'D', '3', 3, 0, 0, 0, 0, 0, 0};
-        hdr[6] = (tag_content >> 21) & 0x7F;
-        hdr[7] = (tag_content >> 14) & 0x7F;
-        hdr[8] = (tag_content >> 7)  & 0x7F;
-        hdr[9] = tag_content & 0x7F;
-        fwrite(hdr, 1, 10, final_fp);
-
-        /* Write text frames */
-        for (int i = 0; i < ntags; i++) {
-            if (!tags[i].val || !tags[i].val[0]) continue;
-            uint32_t data_len = 1 + (uint32_t)strlen(tags[i].val);
-            uint8_t fhdr[10];
-            memcpy(fhdr, tags[i].id, 4);
-            fhdr[4] = (data_len >> 24) & 0xFF;
-            fhdr[5] = (data_len >> 16) & 0xFF;
-            fhdr[6] = (data_len >> 8)  & 0xFF;
-            fhdr[7] = data_len & 0xFF;
-            fhdr[8] = 0; fhdr[9] = 0;
-            fwrite(fhdr, 1, 10, final_fp);
-            uint8_t enc = 0x00; /* ISO-8859-1 */
-            fwrite(&enc, 1, 1, final_fp);
-            fwrite(tags[i].val, 1, strlen(tags[i].val), final_fp);
-        }
-
-        /* Padding */
-        uint8_t zeros[1024];
-        memset(zeros, 0, sizeof(zeros));
-        fwrite(zeros, 1, padding, final_fp);
-
-        /* Raw MP3 data */
-        fwrite(raw_data, 1, raw_size, final_fp);
-
-        /* ID3v1 tag */
+        const int ntags = (int)(sizeof(tags) / sizeof(tags[0]));
+        const uint32_t padding = 1024;
+        uint8_t *payload[sizeof(tags) / sizeof(tags[0])];
+        uint32_t payload_len[sizeof(tags) / sizeof(tags[0])];
+        uint32_t frames_size = 0;
+        int frames_written = 0;
+        uint8_t *tag_buf = NULL;
+        size_t tag_len = 0;
+        FILE *raw = NULL;
+        FILE *tagged = NULL;
+        char *scratch = NULL;
+        int tagged_ok = 0;
         uint8_t v1[128];
+
+        for (int frame = 0; frame < ntags; frame++) {
+            payload[frame] = NULL;
+            payload_len[frame] = 0;
+            if (!tags[frame].val || !tags[frame].val[0]) continue;
+            payload[frame] = id3_text_payload(tags[frame].val, &payload_len[frame]);
+            /* A frame the allocator refused is left out; the audio is finished
+             * and worth keeping, so a missing tag is no reason to throw it away. */
+            if (!payload[frame]) continue;
+            frames_size += 10 + payload_len[frame];
+            frames_written++;
+        }
+
+        if (frames_written) {
+            const uint32_t tag_content = frames_size + padding;
+            tag_buf = malloc(10 + frames_size + padding);
+            if (tag_buf) {
+                uint8_t *w = tag_buf;
+                memcpy(w, "ID3", 3);
+                w[3] = 3; w[4] = 0; w[5] = 0;   /* v2.3, no flags */
+                w[6] = (uint8_t)((tag_content >> 21) & 0x7F);
+                w[7] = (uint8_t)((tag_content >> 14) & 0x7F);
+                w[8] = (uint8_t)((tag_content >> 7) & 0x7F);
+                w[9] = (uint8_t)(tag_content & 0x7F);
+                w += 10;
+                for (int frame = 0; frame < ntags; frame++) {
+                    if (!payload[frame]) continue;
+                    const uint32_t data_len = payload_len[frame];
+                    memcpy(w, tags[frame].id, 4);
+                    w[4] = (uint8_t)((data_len >> 24) & 0xFF);
+                    w[5] = (uint8_t)((data_len >> 16) & 0xFF);
+                    w[6] = (uint8_t)((data_len >> 8) & 0xFF);
+                    w[7] = (uint8_t)(data_len & 0xFF);
+                    w[8] = 0; w[9] = 0;
+                    w += 10;
+                    memcpy(w, payload[frame], data_len);
+                    w += data_len;
+                }
+                memset(w, 0, padding);
+                tag_len = 10 + frames_size + padding;
+            }
+        }
+        for (int frame = 0; frame < ntags; frame++) free(payload[frame]);
+
+        /* The legacy tag, written after the audio.  Same metadata, ASCII only. */
         memset(v1, 0, sizeof(v1));
         memcpy(v1, "TAG", 3);
-        if (title)  strncpy((char *)v1 + 3,  title,  30);
-        if (artist) strncpy((char *)v1 + 33, artist, 30);
-        if (album)  strncpy((char *)v1 + 63, album,  30);
-        if (year)   strncpy((char *)v1 + 93, year,   4);
+        copy_ascii_field((char *)v1 + 3, 30, title);
+        copy_ascii_field((char *)v1 + 33, 30, artist);
+        copy_ascii_field((char *)v1 + 63, 30, album);
+        copy_ascii_field((char *)v1 + 93, 4, year);
         if (track) {
-            int t = atoi(track);
-            if (t > 0 && t < 256) { v1[125] = 0; v1[126] = (uint8_t)t; }
+            const int number = atoi(track);
+            if (number > 0 && number < 256) { v1[125] = 0; v1[126] = (uint8_t)number; }
         }
         v1[127] = 0xFF;
-        fwrite(v1, 1, 128, final_fp);
 
-        fclose(final_fp);
-        free(raw_data);
+        if (frames_written && !tag_buf) goto tag_failed;
+
+        raw = fopen(output_path, "rb");
+        if (!raw) goto tag_failed;
+        scratch = make_temp_path(input_path, "id3", "mp3");
+        if (!scratch) goto tag_failed;
+        tagged = fopen(scratch, "wb");
+        if (!tagged) goto tag_failed;
+
+        if (tag_buf && fwrite(tag_buf, 1, tag_len, tagged) != tag_len) goto tag_failed;
+        {
+            uint8_t chunk[65536];
+            size_t got;
+            while ((got = fread(chunk, 1, sizeof(chunk), raw)) > 0) {
+                if (fwrite(chunk, 1, got, tagged) != got) goto tag_failed;
+            }
+            if (ferror(raw)) goto tag_failed;
+        }
+        if (fwrite(v1, 1, sizeof(v1), tagged) != sizeof(v1)) goto tag_failed;
+        if (fflush(tagged) != 0 || ferror(tagged)) goto tag_failed;
+        if (fclose(tagged) != 0) { tagged = NULL; goto tag_failed; }
+        tagged = NULL;
+        fclose(raw);
+        raw = NULL;
+        free(tag_buf);
+        tag_buf = NULL;
+
+        if (rename(scratch, output_path) != 0) {
+            fprintf(stderr, LOG_PREFIX " cannot install the ID3 tag onto %s (%s)\n",
+                    output_path, strerror(errno));
+            remove(scratch);
+            free(scratch);
+            scratch = NULL;
+            goto tag_failed;
+        }
+        free(scratch);
+        scratch = NULL;
+        tagged_ok = 1;
+
+    tag_failed:
+        if (raw) fclose(raw);
+        if (tagged) fclose(tagged);
+        free(tag_buf);
+        if (scratch) { remove(scratch); free(scratch); }
+        if (!tagged_ok) {
+            /* The encoded audio is still intact at output_path either way: this
+             * pass writes elsewhere and only renames at the end, so a failure
+             * here costs the tags and not the file. */
+            fprintf(stderr, LOG_PREFIX " warning: ID3 tag not written for %s\n", output_path);
+        }
     }
 
     ret = 0;
@@ -555,7 +789,7 @@ typedef struct {
 static int range_interrupted(void *opaque)
 {
     AudioRangeInput *input = opaque;
-    return g_transcode_abort || (input->deadline && av_gettime_relative() > input->deadline);
+    return zuuned_transcode_abort_requested() || (input->deadline && av_gettime_relative() > input->deadline);
 }
 
 static int range_read(void *opaque, uint8_t *buffer, int size)
@@ -563,7 +797,7 @@ static int range_read(void *opaque, uint8_t *buffer, int size)
     AudioRangeInput *input = opaque;
     if (range_interrupted(input)) return AVERROR_EXIT;
     ssize_t result;
-    do { result = read(input->fd, buffer, size); } while (result < 0 && errno == EINTR && !g_transcode_abort);
+    do { result = read(input->fd, buffer, size); } while (result < 0 && errno == EINTR && !zuuned_transcode_abort_requested());
     return result < 0 ? AVERROR(errno) : result == 0 ? AVERROR_EOF : (int)result;
 }
 
@@ -613,7 +847,7 @@ static int range_encode_pcm(AudioRange *range, int16_t *pcm, int samples)
 {
     uint8_t output[16384];
     for (int offset = 0; offset < samples; offset += 4096) {
-        if (g_transcode_abort) return -1;
+        if (zuuned_transcode_abort_requested()) return -1;
         int count = samples - offset;
         if (count > 4096) count = 4096;
         int bytes = lame_encode_buffer_interleaved(range->lame, pcm + (size_t)offset * 2,
@@ -641,7 +875,7 @@ static int range_resample(AudioRange *range, const uint8_t **input, int samples)
 
 static int range_frame(AudioRange *range, AVFrame *frame)
 {
-    if (g_transcode_abort || frame->sample_rate != range->rate ||
+    if (zuuned_transcode_abort_requested() || frame->sample_rate != range->rate ||
         frame->format != range->format || frame->ch_layout.nb_channels != range->channels)
         return -1;
     int64_t pts = frame->best_effort_timestamp;
@@ -691,7 +925,7 @@ char *zuuned_transcode_audio_range(const char *input_path, int64_t start_ms, int
                                   zuuned_progress_cb progress, void *userdata)
 {
     if (!input_path || !*input_path || start_ms < 0 || end_ms <= start_ms ||
-        end_ms > INT64_MAX / 1000000 || g_transcode_abort) return NULL;
+        end_ms > INT64_MAX / 1000000 || zuuned_transcode_abort_requested()) return NULL;
     AVFormatContext *format = NULL;
     AVIOContext *io = NULL;
     AVCodecContext *decoder = NULL;
@@ -770,7 +1004,7 @@ char *zuuned_transcode_audio_range(const char *input_path, int64_t start_ms, int
     lame_set_num_channels(range.lame, 2);
     lame_set_VBR(range.lame, vbr_off);
     lame_set_brate(range.lame, 320);
-    lame_set_quality(range.lame, g_mp3_quality);
+    lame_set_quality(range.lame, zuuned_mp3_quality());
     /* The Info/LAME frame stores encoder delay and padding. Without it every
      * split acquires a short silence and decoded chapter durations drift. */
     lame_set_bWriteVbrTag(range.lame, 1);
@@ -797,7 +1031,7 @@ char *zuuned_transcode_audio_range(const char *input_path, int64_t start_ms, int
     }
     int finished = 0;
     while (!finished) {
-        if (g_transcode_abort) goto done;
+        if (zuuned_transcode_abort_requested()) goto done;
         int read = av_read_frame(format, packet);
         if (read < 0 && read != AVERROR_EOF) goto done;
         if (read >= 0 && packet->stream_index != index) {
@@ -817,15 +1051,15 @@ char *zuuned_transcode_audio_range(const char *input_path, int64_t start_ms, int
         if (!finished && received != AVERROR(EAGAIN) && received != AVERROR_EOF) goto done;
         if (read == AVERROR_EOF) break;
     }
-    if (g_transcode_abort || range.cursor < range.end || range.cursor == range.start) goto done;
+    if (zuuned_transcode_abort_requested() || range.cursor < range.end || range.cursor == range.start) goto done;
     int flushed;
     do { flushed = range_resample(&range, NULL, 0); } while (flushed > 0);
-    if (flushed < 0 || g_transcode_abort || range.encoded == 0) goto done;
+    if (flushed < 0 || zuuned_transcode_abort_requested() || range.encoded == 0) goto done;
     uint8_t output[16384];
     int bytes = lame_encode_flush(range.lame, output, sizeof(output));
     if (bytes < 0 || (bytes && fwrite(output, 1, bytes, range.output) != (size_t)bytes)) goto done;
     lame_mp3_tags_fid(range.lame, range.output);
-    if (ferror(range.output) || fflush(range.output) != 0 || g_transcode_abort) goto done;
+    if (ferror(range.output) || fflush(range.output) != 0 || zuuned_transcode_abort_requested()) goto done;
     if (fclose(range.output) != 0) { range.output = NULL; goto done; }
     range.output = NULL;
     struct stat after;
@@ -1013,8 +1247,8 @@ char *zuuned_transcode_video(const char *input_path, int profile,
          * the GPU's dedicated decoder does it nearly for free. Device
          * create fails harmlessly on boxes without NVIDIA/libcuda —
          * we fall through to the threaded SW path. */
-        if (g_hw_decode) {
-            const int mode = g_hw_decode;
+        const int mode = zuuned_hw_decode();
+        if (mode) {
             if (mode == 1 || mode == 2) {
                 int hw_ret = av_hwdevice_ctx_create(&hw_decode_ref,
                                                     AV_HWDEVICE_TYPE_CUDA,
@@ -1319,7 +1553,7 @@ char *zuuned_transcode_video(const char *input_path, int profile,
             total_duration > 0 ? (double)total_duration / AV_TIME_BASE : -1.0);
 
     while (av_read_frame(ifmt_ctx, pkt) >= 0) {
-        if (g_transcode_abort) {
+        if (zuuned_transcode_abort_requested()) {
             fprintf(stderr, LOG_PREFIX " video transcode ABORTED\n");
             av_packet_unref(pkt);
             goto vcleanup;   /* ret != 0 → temp unlinked, NULL returned */
@@ -1645,6 +1879,106 @@ vcleanup:
 /* ==================================================================== */
 /*  Probing                                                              */
 /* ==================================================================== */
+
+/* ---- What a container really holds ----
+ *
+ * Read the stream table rather than the first four bytes.  The demuxer answers
+ * with the codec it selected and the container's own format tag, and for the two
+ * WMA kinds that matter both measurements are unambiguous on files this build has
+ * produced and on files pulled off a Zune HD: WMA Standard arrives as `wmav2`
+ * with tag 0x0161, WMA Lossless as `wmalossless` with tag 0x0163.  The private
+ * data is only a fallback, because for lossless it begins with something that is
+ * not the tag at all.
+ *
+ * An image stream is counted as art and not as video.  That is not a tolerance
+ * for malformed files; it is how a WMA off a Zune carries its cover - one of the
+ * files measured here is an ASF with an MJPEG 1200x1200 stream beside the audio -
+ * and a copy rule that called that a video would refuse the player's own library.
+ */
+static int codec_is_image(enum AVCodecID id)
+{
+    switch (id) {
+    case AV_CODEC_ID_MJPEG:
+    case AV_CODEC_ID_PNG:
+    case AV_CODEC_ID_BMP:
+    case AV_CODEC_ID_GIF:
+    case AV_CODEC_ID_TIFF:
+    case AV_CODEC_ID_WEBP:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+int zuuned_probe_audio_container(const char *path, zuuned_audio_container *out)
+{
+    if (!out) return -1;
+    memset(out, 0, sizeof(*out));
+
+    AVFormatContext *fmt = NULL;
+    if (avformat_open_input(&fmt, path, NULL, NULL) < 0) return -1;
+    if (avformat_find_stream_info(fmt, NULL) < 0) {
+        avformat_close_input(&fmt);
+        return -1;
+    }
+
+    out->probed = 1;
+    out->is_asf = fmt->iformat && fmt->iformat->name
+               && strstr(fmt->iformat->name, "asf") != NULL;
+    out->duration_ms = fmt->duration > 0 ? (int64_t)(fmt->duration / (AV_TIME_BASE / 1000)) : 0;
+
+    for (unsigned i = 0; i < fmt->nb_streams; i++) {
+        AVStream *st = fmt->streams[i];
+        if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+            /* A stream the demuxer could not name is nobody's video either; it is
+             * refused by the copy rule because there is no decoder for it. */
+            if ((st->disposition & AV_DISPOSITION_ATTACHED_PIC) ||
+                codec_is_image(st->codecpar->codec_id)) out->art_streams++;
+            else if (st->codecpar->codec_id != AV_CODEC_ID_NONE) out->video_streams++;
+            continue;
+        }
+        if (st->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) continue;
+        if (out->codec_id) continue;   /* the first audio stream is the one that plays */
+        out->codec_id = (int)st->codecpar->codec_id;
+        out->has_decoder = avcodec_find_decoder(st->codecpar->codec_id) != NULL;
+        if (out->has_decoder) out->audio_streams++;
+        out->channels = st->codecpar->ch_layout.nb_channels;
+        out->sample_rate = st->codecpar->sample_rate;
+        out->bits_per_sample = st->codecpar->bits_per_raw_sample > 0
+                             ? st->codecpar->bits_per_raw_sample
+                             : st->codecpar->bits_per_coded_sample;
+        if (st->codecpar->codec_tag) out->format_tag = (int)st->codecpar->codec_tag;
+        else if (st->codecpar->extradata_size >= 2)
+            out->format_tag = (int)AV_RL16(st->codecpar->extradata);
+        const char *name = avcodec_get_name(st->codecpar->codec_id);
+        if (name) {
+            strncpy(out->codec_name, name, sizeof(out->codec_name) - 1);
+            out->codec_name[sizeof(out->codec_name) - 1] = '\0';
+        }
+    }
+    out->lossless = out->codec_id == (int)AV_CODEC_ID_WMALOSSLESS
+                 || out->format_tag == ZUUNED_WMA_FORMAT_TAG_LOSSLESS;
+
+    avformat_close_input(&fmt);
+    return 0;
+}
+
+int zuuned_native_copy_verdict(const zuuned_audio_container *probe, int target)
+{
+    if (target != ZUUNED_AUDIO_WMA && target != ZUUNED_AUDIO_WMA_LOSSLESS)
+        return ZUUNED_COPY_TARGET_NOT_WMA;
+    if (!probe || !probe->probed)
+        return ZUUNED_COPY_NOT_PROBED;
+    if (!probe->is_asf)
+        return ZUUNED_COPY_NOT_ASF;
+    if (!probe->audio_streams || !probe->has_decoder)
+        return ZUUNED_COPY_NO_DECODABLE_AUDIO;
+    if (probe->video_streams)
+        return ZUUNED_COPY_HAS_VIDEO;
+    if (target == ZUUNED_AUDIO_WMA_LOSSLESS && !probe->lossless)
+        return ZUUNED_COPY_NOT_LOSSLESS;
+    return ZUUNED_NATIVE_COPY_OK;
+}
 
 int zuuned_probe_duration(const char *filepath, double *duration_out)
 {

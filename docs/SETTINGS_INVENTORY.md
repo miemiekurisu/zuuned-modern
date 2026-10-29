@@ -153,20 +153,43 @@ capability without offering a knob or a way to prove it:
   each came from that folder or from `PATH`, and the log says the same at startup.  A missing
   CLI is still not a conversion problem and the card keeps saying so.
 - **Encoder self-test** (`DiagnosticsService::runAudioSelfTest()`,
-  `src/diagnostics/DiagnosticsService.cpp:271`) - writes a two-second 440 Hz tone, encodes it
-  to both targets through the same `zuuned_transcode_audio_ex()` a sync uses at the bitrate and
-  effort in Settings, checks the first four bytes for the container they claim, probes the
-  result for length and size, and deletes what it made.  Answers in codes; the sentence is
-  QML's, so it goes through the catalogue.  It refuses while a transfer or a device operation
-  holds the player, because one transcode at a time is a property of the encoder layer.
+  `src/diagnostics/DiagnosticsService.cpp:285`) - writes a two-second 440 Hz tone and sends it
+  through every encoder this build can reach - MP3, WMA, and on Windows WMA Lossless - through
+  the same `zuuned_transcode_audio_ex()` a sync uses at the bitrate and effort in Settings,
+  checks the first four bytes for the container they claim, probes the result for length and
+  size, and deletes what it made.  A lossless encode has no bit rate to be measured against, so
+  that leg is judged on its container and its length and its size is only ever reported.
+  Answers in codes; the sentence is QML's, so it goes through the catalogue.  It refuses while a
+  transfer or a device operation holds the player, because one transcode at a time is a
+  property of the encoder layer.
 
 ## Measured limits, so no option is offered that cannot be honoured
 
 - The linked FFmpeg `N-127697-g3ebed8c087-20261019` carries **`wmav1`/`wmav2` only** - no
   `wmalossless`, no `wmapro` - and this machine's System32 has no WMA Lossless ACM codec
-  either.  **WMA Lossless cannot be encoded here.**  What it can do is carry a source that
-  already *is* WMA through byte for byte, which is what `copyNativeAudio` is; the card says
-  exactly that instead of listing a lossless preset.
+  either.  Nothing was forked or vendored to work around that.  On Windows the lossless encode
+  asks **the encoder that is already inside Windows**: `transcode/wma_lossless_enc.cpp` drives
+  the Windows Media Format runtime that ships as `wmvcore.dll` (`IWMCodecInfo3` to enumerate,
+  `IWMWriter` to write), and `transcode/wma_lossless_stub.c` answers "not here" on every other
+  platform.  The only new dependency is an import library for a DLL that is on every Windows
+  install.  Making the formats show up at all takes `SetCodecEnumerationSetting()` with
+  `g_wszVBREnabled` TRUE and `g_wszNumPasses` 1, re-applied before the final `GetCodecFormat()`,
+  or the lossless codec enumerates zero formats and the honest first answer is "no lossless
+  encoder".  Measured on this machine against the relinked binary: `transcodetool encoders`
+  reports `wma-lossless=1`, and 44.1 kHz/16-bit stereo, 48 kHz/16-bit stereo, 44.1 kHz/24-bit
+  stereo and a copy of the first under a Chinese file name each wrote an ASF that `ffprobe`
+  names `wmalossless` and that decoded back to **bit-identical PCM** - equal sample counts, no
+  encoder delay.  A 30 s slice of a real master cost 71.2 % of its PCM (1,006 kbps), which is
+  why `estimateTrackBytes()` reserves 1,280 kbps for a lossless leg and why no size statement
+  here rests on a tone - a sine costs about 795 kbps and understates the file.  The codec's own
+  table is the limit and the app honours it exactly: stereo or 5.1 only, 44.1 to 96 kHz, 16-bit
+  at 44.1 kHz and 24-bit above it, eight formats in total.  **Nothing is resampled, upmixed or
+  otherwise changed to make a file fit** - a 48 kHz/16-bit source is handed over in 24-bit
+  containers because the table has no 16-bit entry that high and a left shift moves no sample
+  value, and a mono or 192 kHz source is refused with a message that says why.  Only the Zune HD
+  is documented to play the result, and nothing this build writes has been heard on a player.
+  A source that already *is* WMA still goes through byte for byte under `copyNativeAudio`, which
+  is a different feature with a different name.
 - VBR MP3 is broken upstream of this app and deliberately not offered:
   `lame_mp3_tags_fid()` never writes the header, measured as no `Xing`/`Info` frame and a
   probe duration of 388.58 s against 272.17 s of real audio.  A VBR option would produce
@@ -193,9 +216,11 @@ Worth adding, in the order I would do it:
   `Prefs.backdrop` and `Prefs.displayFont`.
 - **Quality presets, not a bitrate matrix.**  The original client shipped presets.  A
   single "Quality" control - Lossless passthrough / High 320 / Standard 192 / Space
-  saving 128 - covers what the three audio keys do today, keeps "convert for the target
-  model" as one decision, and cannot offer the lossless encode this build cannot do.  The
-  three keys stay as the storage underneath.
+  saving 128 - covers what the three audio keys do today and keeps "convert for the target
+  model" as one decision.  WMA Lossless belongs beside that control rather than inside it: it
+  exists on Windows only, it takes no bit rate, and a preset that is a fourth format on one
+  platform and an error on another is worse than the three keys it replaced.  The three keys
+  stay as the storage underneath.
 - **Per-device overrides.**  Everything audio is global today, and one user with a Zune HD
   and a Classic has two different decoders and two different disks.  The history rows now
   exist to hang that on.  Do not do it before a second model has been connected once.
@@ -209,7 +234,9 @@ Worth adding, in the order I would do it:
 
 Deliberately **not** options, each for a reason already in this repository:
 
-- VBR, and any WMA Lossless encode - measured above.
+- VBR - measured above.  WMA Lossless left this list when the encode stopped being a fork
+  question: on Windows the operating system writes it and it is measured above, and where there
+  is no such encoder the option is absent from the card rather than offered and broken.
 - DRM or playsync conversion - the licence servers are gone
   ([ZUNE_CLIENT_FEATURES.md](ZUNE_CLIENT_FEATURES.md), "What cannot come back").
 - Automatic playlists from ratings and play counts - no rule engine, and no ratings or

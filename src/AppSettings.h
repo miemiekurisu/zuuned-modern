@@ -30,7 +30,8 @@ class AppSettings : public QObject {
     ZUNE_SETTING(bool, podcastAutoQueue, setPodcastAutoQueue,
                  "podcastAutoQueue", false, toBool)
 
-    // What music becomes on the way to the player.
+    // What music becomes on the way to the player: "mp3", "wma" or
+    // "wma-lossless".
     //
     // MP3 is the default because it is the one target proven on hardware here:
     // the Windows round trip sent MP3 and read it back. WMA is offered because
@@ -41,22 +42,39 @@ class AppSettings : public QObject {
     // hand-built ID3v2.3 tag and no Xing/Info header, so a VBR file would seek
     // by guesswork. See the measured account in transcode/libav_transcode.c.
     //
-    // WMA Lossless cannot be encoded at all — no wmalossless encoder exists in
-    // this libavcodec and Windows ships no ACM codec for it — which is what
-    // copyNativeAudio below is for.
+    // WMA Lossless is the third target and the only one whose encoder is not
+    // FFmpeg's: it is the Windows Media Audio 9.2 Lossless codec in the Windows
+    // Media Format runtime, driven in process, so nothing is vendored and no
+    // upstream project is forked to get it. The price is that it exists on Windows
+    // and nowhere else, so the settings page asks the build instead of assuming.
+    // Two-channel WMA Lossless is documented for the Zune HD and for no other
+    // model, which the page says out loud, and no player has ever been heard
+    // playing a file this application wrote.
+    //
+    // A lossless WMA the user already owns is still carried byte for byte while
+    // copyNativeAudio is on, and that route needs no encoder at all.
     Q_PROPERTY(QString syncAudioFormat READ syncAudioFormat WRITE setSyncAudioFormat NOTIFY changed)
 public:
     QString syncAudioFormat() const {
-        return m_store.value("syncAudioFormat", QStringLiteral("mp3")).toString()
-                   .compare(QLatin1String("wma"), Qt::CaseInsensitive) == 0
-                   ? QStringLiteral("wma") : QStringLiteral("mp3");
+        return canonicalAudioFormat(m_store.value("syncAudioFormat",
+                                                  QStringLiteral("mp3")).toString());
     }
     void setSyncAudioFormat(const QString &value) {
-        const auto canonical = value.compare(QLatin1String("wma"), Qt::CaseInsensitive) == 0
-                                   ? QStringLiteral("wma") : QStringLiteral("mp3");
+        const auto canonical = canonicalAudioFormat(value);
         if (syncAudioFormat() == canonical) return;
         m_store.setValue("syncAudioFormat", canonical);
         emit changed();
+    }
+    // One rule for what a format name is, because a stored value and a value
+    // arriving from QML reach the same three answers by different routes, and a
+    // half-spelled or stale value has to land on the default rather than become a
+    // fourth target the sync engine has never been told about.
+    static QString canonicalAudioFormat(const QString &value) {
+        if (value.compare(QLatin1String("wma"), Qt::CaseInsensitive) == 0)
+            return QStringLiteral("wma");
+        if (value.compare(QLatin1String("wma-lossless"), Qt::CaseInsensitive) == 0)
+            return QStringLiteral("wma-lossless");
+        return QStringLiteral("mp3");
     }
     Q_PROPERTY(int syncAudioBitrate READ syncAudioBitrate WRITE setSyncAudioBitrate NOTIFY changed)
 public:
@@ -72,10 +90,12 @@ public:
         emit changed();
     }
     // Send audio that is already in the chosen format byte for byte instead of
-    // decoding and re-encoding it. On by default, and it is the only way a
-    // WMA Lossless file survives a sync: nothing here can encode WMA Lossless,
-    // so converting one is a permanent downgrade. Turn it off to force a
-    // re-encode, which is what the original client always did.
+    // decoding and re-encoding it. On by default. It is how a WMA Lossless file
+    // the user already owns survives a lossy sync - nothing that encodes can put
+    // those samples back - and it is the fast path when the target is WMA Lossless
+    // too, because a file that is already the destination format only gets
+    // recompressed by an encoder. Turn it off to force a re-encode, which is what
+    // the original client always did.
     ZUNE_SETTING(bool, copyNativeAudio, setCopyNativeAudio,
                  "copyNativeAudio", true, toBool)
     // LAME's own 0-9 effort scale, where 0 spends the most CPU for the best

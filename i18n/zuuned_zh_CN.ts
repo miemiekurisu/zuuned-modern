@@ -3432,6 +3432,10 @@ or select photos and choose Add.</source>
         <translation>对 Zune 无法直接播放的文件如何处理。</translation>
     </message>
     <message>
+        <source>WMA Lossless</source>
+        <translation>WMA 无损</translation>
+    </message>
+    <message>
         <source>Space saving 128</source>
         <translation>省空间 128</translation>
     </message>
@@ -3476,6 +3480,14 @@ or select photos and choose Add.</source>
         <translation>libavcodec 的 wmav2，封装为 ASF —— 有损</translation>
     </message>
     <message>
+        <source>Windows Media Audio 9.2 Lossless (in Windows)</source>
+        <translation>Windows Media Audio 9.2 Lossless（Windows 自带）</translation>
+    </message>
+    <message>
+        <source>not on this platform</source>
+        <translation>当前平台不支持</translation>
+    </message>
+    <message>
         <source>Conversion library</source>
         <translation>转换库</translation>
     </message>
@@ -3500,12 +3512,24 @@ or select photos and choose Add.</source>
         <translation>电脑中已有的 WMA 按字节原样保留</translation>
     </message>
     <message>
-        <source>WMA Lossless cannot be encoded here. The FFmpeg this build links carries wmav1 and wmav2 as its only WMA encoders (measured: `ffmpeg -encoders`), and Windows ships no WMA lossless ACM codec either, so every encoder reachable from here is a downgrade from lossless. What keeps a WMA Lossless track intact is the switch above: the bytes go over untouched instead of being converted. FLAC, WAV and APE have no lossless destination on a Zune at all, so syncing one is always a lossy convert to the format chosen above.</source>
-        <translation>这里无法编码 WMA Lossless。本版本链接的 FFmpeg 只带有 wmav1 与 wmav2 两个 WMA 编码器（实测：`ffmpeg -encoders`），Windows 也未提供 WMA 无损的 ACM 编解码器，因此从这里能选到的每一个编码器相对于无损都是降级。让 WMA Lossless 保持完整的办法是上面那个开关：字节原样传输，而不是转换。FLAC、WAV 与 APE 在 Zune 上根本不存在无损去处，因此同步它们时必然是有损转换为上面所选的格式。</translation>
+        <source>WMA Lossless is written by the encoder that is already inside Windows - Windows Media Audio 9.2 Lossless, reached through the Windows Media Format runtime. The FFmpeg this build links carries wmav1 and wmav2 as its only WMA encoders (measured: `ffmpeg -encoders`), so this is the one destination that does not come from it, and no codec is bundled, vendored or forked to get it. It is Windows-only, which is also the good news: on Windows a FLAC, WAV or APE now has somewhere lossless to go instead of being converted down.</source>
+        <translation>WMA 无损由 Windows 自带的编码器写入 —— Windows Media Audio 9.2 Lossless，通过 Windows Media Format 运行时调用。本版本链接的 FFmpeg 只带有 wmav1 与 wmav2 两个 WMA 编码器（实测：`ffmpeg -encoders`），因此这是唯一不来自它的目标格式，我们也无需内置、引入或 fork 任何编码器。它仅在 Windows 上可用，这也是好消息：在 Windows 上，FLAC、WAV 与 APE 如今有了一个无损的去处，而不再必然被转成有损。</translation>
+    </message>
+    <message>
+        <source>It has eight formats and this build refuses a file that fits none of them rather than resampling it into something that is no longer the recording: stereo or 5.1 surround, 44.1 to 96 kHz, 16-bit only at 44.1 kHz and 24-bit above it, and no mono at all. A 16-bit file at 48 kHz or higher is widened to 24 bits at the same rate and channel count, which costs nothing; anything else is refused and the queue says why.</source>
+        <translation>它只有八种格式，本版本对一种都不符合的文件会选择拒绝，而不是重采样成一段已不再是原录音的东西：立体声或 5.1 环绕，44.1 至 96 kHz，仅在 44.1 kHz 支持 16 位、更高采样率仅支持 24 位，且完全不支持单声道。48 kHz 或更高的 16 位文件会在相同采样率与声道数下扩展为 24 位，这不损失任何信息；其余情况会被拒绝，并在队列中说明原因。</translation>
+    </message>
+    <message>
+        <source>Writes a two-second tone, sends it through every encoder this build can reach at the settings above, and reports what came back. Nothing is stored and nothing is sent to a player.</source>
+        <translation>生成一段两秒的提示音，按上面的设置分别送进本版本能够调用到的每一个编码器，然后报告产出的结果。不会保存任何文件，也不会向播放器发送任何内容。</translation>
     </message>
     <message>
         <source>Bit rate is constant only. A variable-bitrate MP3 header is not written by this build - measured, the LAME/Xing frame is absent and the player then reports a track three minutes shorter than it is - so VBR is not offered.</source>
         <translation>码率只能是恒定的。本版本不会写入可变码率的 MP3 头 —— 实测缺少 LAME/Xing 帧，播放器随后会把曲目时长少报三分钟 —— 因此不提供 VBR。</translation>
+    </message>
+    <message>
+        <source>What a player does with the result is the part nobody can promise. WMA Lossless is documented for the Zune HD and documented neither way for every other model, so on a Classic or a Zune 30 the likely answer is a track that stays silent rather than one that plays worse. Nothing this build has written has been heard on any Zune. If a lossless track goes quiet on the player, switch the format above back to MP3 or WMA and sync again - nothing on the computer is touched.</source>
+        <translation>播放器会如何处理这个结果，是没有人能承诺的部分。只有 Zune HD 在文档中明确支持 WMA 无损，其他机型正反两面的文档都没有，因此在 Classic 或 Zune 30 上，更可能的结果是该曲目完全不出声，而不是播放质量下降。本版本写出的任何文件都还没有在任何 Zune 上被听过。如果无损曲目在播放器上没有声音，请把上面的格式改回 MP3 或 WMA 后重新同步 — 电脑上的文件不会有任何改动。</translation>
     </message>
     <message>
         <source>FFmpeg command-line tools</source>
@@ -3552,10 +3576,6 @@ or select photos and choose Add.</source>
         <translation>运行编码器自检</translation>
     </message>
     <message>
-        <source>Writes a two-second tone, sends it through both encoders at the settings above, and reports what came back. Nothing is stored and nothing is sent to a player.</source>
-        <translation>生成一段两秒的提示音，按上面的设置分别送进两个编码器，然后报告产出的结果。不会保存任何文件，也不会向播放器发送任何内容。</translation>
-    </message>
-    <message>
         <source>The test returned nothing.</source>
         <translation>自检没有返回任何结果。</translation>
     </message>
@@ -3570,6 +3590,10 @@ or select photos and choose Add.</source>
     <message>
         <source>At %1 kbps, detail %2 — %3</source>
         <translation>以 %1 kbps、细节等级 %2 —— %3</translation>
+    </message>
+    <message>
+        <source>Lossless</source>
+        <translation>无损</translation>
     </message>
     <message>
         <source>%1 bytes, %2 s, %3</source>
@@ -5573,6 +5597,14 @@ Star an episode in any show to find it here.</source>
         <translation>请连接原来那台 Zune，且其序列号可读。未删除任何内容。</translation>
     </message>
     <message>
+        <source>WMA Lossless is not available in this build. It needs the Windows Media encoder that ships with Windows, and only the Zune HD is documented to play the result. Nothing was queued, and your files were not converted to MP3 instead.</source>
+        <translation>此版本用不了 WMA Lossless：它需要 Windows 自带的 Windows Media 编码器，而目前有文档记载能播放其结果的只有 Zune HD。本次没有排入任何队列，你的文件也不会被转而转换成 MP3。</translation>
+    </message>
+    <message>
+        <source>WMA is not available in this build. It needs the Windows Media encoder that ships with Windows. Nothing was queued, and your files were not converted to MP3 instead.</source>
+        <translation>此版本用不了 WMA：它需要 Windows 自带的 Windows Media 编码器。本次没有排入任何队列，你的文件也不会被转而转换成 MP3。</translation>
+    </message>
+    <message>
         <source>interrupted media transfer</source>
         <translation>被中断的媒体传输</translation>
     </message>
@@ -5725,8 +5757,16 @@ Star an episode in any show to find it here.</source>
         <translation>无法准备所需的分盘标签；原始文件未被发送。</translation>
     </message>
     <message>
+        <source>Could not write WMA Lossless from this file. The encoder in Windows takes stereo or 5.1 at 44.1 to 96 kHz and nothing else, and will not resample a file to fit.</source>
+        <translation>无法把这个文件写成 WMA 无损。Windows 中的编码器只接受 44.1 至 96 kHz 的立体声或 5.1 声道，并且不会为了让文件合适而重采样。</translation>
+    </message>
+    <message>
         <source>transcode failed</source>
         <translation>转码失败</translation>
+    </message>
+    <message>
+        <source>The encoder did not produce a WMA Lossless file, so nothing was sent.</source>
+        <translation>编码器没有产出 WMA Lossless 文件，因此未发送任何内容。</translation>
     </message>
     <message>
         <source>Device disconnected during preparation.</source>
@@ -5755,6 +5795,10 @@ Star an episode in any show to find it here.</source>
     <message>
         <source>Cannot save spoken transfer recovery information.</source>
         <translation>无法保存有声内容传输的恢复信息。</translation>
+    </message>
+    <message>
+        <source>The encoded file needs %1 MB more room than the queue reserved for it and the Zune has %2 MB left, so nothing was sent.</source>
+        <translation>编码后的文件比队列为它预留的空间还多需要 %1 MB，而 Zune 只剩下 %2 MB，因此未发送任何内容。</translation>
     </message>
     <message>
         <source>Could not save transfer recovery information. Nothing was sent.</source>

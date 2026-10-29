@@ -37,10 +37,13 @@ Browse a Zune's library and transfer media to it over USB; enjoy a local music l
 with artists, albums, playlists and playback; organize videos, podcasts and audiobooks;
 edit metadata and artwork; build photo albums. Local playback and organization work with
 no player connected, and each kind of media has exactly one default destination folder -
-that folder shows the fact as a status on its row, the others offer it as a button. The
-Windows port carries music in both directions against a player; photos and video have been
-sent from Windows without a byte of either coming back, and no Windows deletion has ever
-been done - see the status page.
+that folder shows the fact as a status on its row, the others offer it as a button. Sync
+converts audio on the way to the player to whichever profile you pick under **Settings ->
+Device -> Audio conversion**, WMA Lossless included; that target is written by the encoder
+the operating system already ships rather than by a bundled codec, and it refuses rather
+than quietly downgrading to lossy. The Windows port carries music in both directions
+against a player; photos and video have been sent from Windows without a byte of either
+coming back, and no Windows deletion has ever been done - see the status page.
 
 ## The pages
 
@@ -99,10 +102,14 @@ Hand-tested against one Pavo-generation Zune HD on the development machine:
   non-ASCII file names, album artwork.
 
 **Not yet proven on Windows**, and not inherited from Linux either: deletion and purge,
-the podcast, audiobook, photo and video transfer categories, every Zune model but that
-one Pavo, audible playback (the automated gate opens WASAPI muted, so nothing has been
+the podcast, audiobook, photo and video transfer categories, every Zune model but that one
+Pavo, audible playback (the automated gate opens WASAPI muted, so nothing has been
 listened to by a test), and packaging - there is no Windows installer yet, so today the
-port is a build-from-source project.
+port is a build-from-source project. **WMA Lossless** is encoded on Windows, by the
+encoder the operating system already ships rather than a bundled codec, and the
+measurement is a bit-identical PCM round trip; what has not happened is a player playing
+one.  The format is documented for the Zune HD alone, so the setting says out loud that
+the likely result on another model is a silent track.
 
 ## Getting a Zune seen by Windows
 
@@ -157,11 +164,15 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File tests\win-usability\run.ps1
 ```
 
 They cover the POSIX-compatibility layer and launch every page, every settings tab, the
-filename and library probes, and the command-line tools against isolated profiles. A green
-run on 2026-10-25 reported `201 checks, 0 failures, 0 skips` and
-`launches=18 checks=132 failures=0 skips=0 killed=0`. Those counters move with the tree,
-so read them as a floor rather than an expectation. Neither gate says anything at all
-about a Zune - that is deliberate, and is why the hardware evidence lives on
+filename and library probes, plus the command-line self-tests that ride inside it -
+`librarytool names`, `paths`, `customize`, `folders`, `vanish`, `videofloor`, `census`,
+`cover` and `net`, `transcodetool retagcheck` and `copycheck`, and `mtpframingtool` - all
+run against isolated profiles. A green run on 2026-10-29 reported
+`201 checks, 0 failures, 0 skips` and
+`launches=18 checks=134 failures=0 skips=1 killed=0`, the single skip being the two checks
+that name a specific device with no Zune attached to compare. Those counters move with the
+tree, so read them as a floor rather than an expectation. Neither gate says anything at
+all about a Zune - that is deliberate, and is why the hardware evidence lives on
 [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) instead.
 
 ## Building on Linux
@@ -171,7 +182,10 @@ The upstream instructions still apply and are unchanged by the port: see
 authentication data, and the upstream
 [badgeromen/zuuned-linux](https://github.com/badgeromen/zuuned-linux) repository for
 released Linux packages, the AppImage workflow and the udev rule. This repository builds
-Linux too, but it publishes no Linux binaries.
+Linux too, but it publishes no Linux binaries. The Linux software gates ship here as well:
+`ci/check.sh` drives the other directories under `tests/` - music import and sync,
+artwork, spoken media, playlists, diagnostics and the rest - on a Linux machine, which is
+the only place that suite runs.
 
 ## Reporting a problem
 
@@ -189,11 +203,14 @@ src/            C++; DeviceService (libzune bridge), app entry
 qml/            UI; Theme.qml design tokens
 compat/win/     the Windows POSIX surface, built once as zuuned_wincompat
 libzune/        included source; shared C protocol library
+libzune/tools/  zunetool and mtpframingtool, the protocol-side probes
+transcode/      FFmpeg and LAME transcoding, plus the in-box WMA Lossless encoder
 i18n/           the interface wording; zh_CN.tsv is the editable source
 packaging/      Linux USB rule, PKGBUILD and AppImage builder
 packaging/windows/  WinUSB driver guide and check-driver.ps1
 tests/win-compat/    Windows compatibility gate (no device)
 tests/win-usability/ Windows launch and UI gate (no device)
+tests/            the Linux gate suite, driven by ci/check.sh (no device)
 docs/readme-screenshots/  these captures, and the zh/ set
 docs/WINDOWS_PORT.md what is and is not proven on Windows
 docs/WINDOWS_COMPAT_AUDIT.md the whole-tree Windows compatibility sweeps

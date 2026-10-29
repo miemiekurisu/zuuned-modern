@@ -1797,7 +1797,18 @@ Item {
                         Seg {
                             options: [{ label: "MP3", value: "mp3" },
                                       { label: "WMA", value: "wma",
-                                        disabled: !audioConversionCard.tools.wmaEncoder }]
+                                        disabled: !audioConversionCard.tools.wmaEncoder },
+                                      // Its own availability because it is its own
+                                      // encoder: the one inside Windows, not the
+                                      // FFmpeg this build links.  It is absent on
+                                      // Linux rather than shown and failing, and
+                                      // the caution about which players actually
+                                      // play the result is said below, not hidden
+                                      // behind a third button.
+                                      { label: qsTr("WMA Lossless"),
+                                        value: "wma-lossless",
+                                        disabled: !audioConversionCard.tools
+                                                  .wmaLosslessEncoder }]
                             current: AppSettings.syncAudioFormat
                             onPicked: (v) => AppSettings.syncAudioFormat = v
                         }
@@ -1806,11 +1817,15 @@ Item {
                         // four are the same constant bit rates the card used to
                         // list as bare numbers and the same stored key
                         // underneath, so a preset is a name over a value rather
-                        // than a second source of truth. Both encoders honour
-                        // it: LAME for MP3, and for WMA wmav2, which takes
+                        // than a second source of truth. Both lossy encoders
+                        // honour it: LAME for MP3, and for WMA wmav2, which takes
                         // 32-320 kbps and has no VBR mode at all (measured with
-                        // `ffmpeg -h encoder=wmav2` on this build).
+                        // `ffmpeg -h encoder=wmav2` on this build).  Lossless has
+                        // no bit rate to choose -- it spends what the recording is
+                        // worth -- so the row hides itself there instead of
+                        // showing four presets that do nothing.
                         Seg {
+                            visible: AppSettings.syncAudioFormat !== "wma-lossless"
                             options: [{ label: qsTr("Space saving 128"), value: "128" },
                                       { label: qsTr("Standard 192"), value: "192" },
                                       { label: qsTr("High 256"), value: "256" },
@@ -1858,6 +1873,14 @@ Item {
                                             ? Theme.textDim : Theme.warning
                             }
                             StatRow {
+                                label: qsTr("WMA Lossless")
+                                value: audioConversionCard.tools.wmaLosslessEncoder
+                                       ? qsTr("Windows Media Audio 9.2 Lossless (in Windows)")
+                                       : qsTr("not on this platform")
+                                valueColor: audioConversionCard.tools.wmaLosslessEncoder
+                                            ? Theme.textDim : Theme.warning
+                            }
+                            StatRow {
                                 label: qsTr("Conversion library")
                                 value: qsTr("FFmpeg %1 (built in)")
                                            .arg(audioConversionCard.tools.bundledLibav)
@@ -1865,7 +1888,8 @@ Item {
                             StatRow {
                                 label: qsTr("Already the right format")
                                 value: AppSettings.copyNativeAudio
-                                       && AppSettings.syncAudioFormat === "wma"
+                                       && (AppSettings.syncAudioFormat === "wma"
+                                           || AppSettings.syncAudioFormat === "wma-lossless")
                                        ? qsTr("sent as-is") : qsTr("converted")
                                 divider: false
                             }
@@ -1889,7 +1913,13 @@ Item {
                         // The honest half, said out loud rather than left to the
                         // user to discover through a silent quality loss.
                         PhaseNote {
-                            text: qsTr("WMA Lossless cannot be encoded here. The FFmpeg this build links carries wmav1 and wmav2 as its only WMA encoders (measured: `ffmpeg -encoders`), and Windows ships no WMA lossless ACM codec either, so every encoder reachable from here is a downgrade from lossless. What keeps a WMA Lossless track intact is the switch above: the bytes go over untouched instead of being converted. FLAC, WAV and APE have no lossless destination on a Zune at all, so syncing one is always a lossy convert to the format chosen above.")
+                            text: qsTr("WMA Lossless is written by the encoder that is already inside Windows - Windows Media Audio 9.2 Lossless, reached through the Windows Media Format runtime. The FFmpeg this build links carries wmav1 and wmav2 as its only WMA encoders (measured: `ffmpeg -encoders`), so this is the one destination that does not come from it, and no codec is bundled, vendored or forked to get it. It is Windows-only, which is also the good news: on Windows a FLAC, WAV or APE now has somewhere lossless to go instead of being converted down.")
+                        }
+                        PhaseNote {
+                            text: qsTr("It has eight formats and this build refuses a file that fits none of them rather than resampling it into something that is no longer the recording: stereo or 5.1 surround, 44.1 to 96 kHz, 16-bit only at 44.1 kHz and 24-bit above it, and no mono at all. A 16-bit file at 48 kHz or higher is widened to 24 bits at the same rate and channel count, which costs nothing; anything else is refused and the queue says why.")
+                        }
+                        PhaseNote {
+                            text: qsTr("What a player does with the result is the part nobody can promise. WMA Lossless is documented for the Zune HD and documented neither way for every other model, so on a Classic or a Zune 30 the likely answer is a track that stays silent rather than one that plays worse. Nothing this build has written has been heard on any Zune. If a lossless track goes quiet on the player, switch the format above back to MP3 or WMA and sync again - nothing on the computer is touched.")
                         }
                         PhaseNote {
                             text: qsTr("Bit rate is constant only. A variable-bitrate MP3 header is not written by this build - measured, the LAME/Xing frame is absent and the player then reports a track three minutes shorter than it is - so VBR is not offered.")
@@ -1992,7 +2022,7 @@ Item {
                                 wrapMode: Text.WordWrap
                                 text: audioConversionCard.selfTestText.length > 0
                                       ? audioConversionCard.selfTestText
-                                      : qsTr("Writes a two-second tone, sends it through both encoders at the settings above, and reports what came back. Nothing is stored and nothing is sent to a player.")
+                                      : qsTr("Writes a two-second tone, sends it through every encoder this build can reach at the settings above, and reports what came back. Nothing is stored and nothing is sent to a player.")
                                 font.pixelSize: 12; font.weight: Font.Light
                                 color: Theme.textDim
                             }
@@ -2018,10 +2048,13 @@ Item {
                                            .arg(String(result.detail === undefined ? "" : result.detail))
                             const mp3 = result.mp3 === undefined ? ({}) : result.mp3
                             const wma = result.wma === undefined ? ({}) : result.wma
+                            const ls = result.lossless === undefined ? ({}) : result.lossless
                             return qsTr("At %1 kbps, detail %2 — %3")
                                        .arg(Number(result.bitrate === undefined ? 0 : result.bitrate))
                                        .arg(Number(result.quality === undefined ? 0 : result.quality))
-                                       .arg(encoderLine("MP3", mp3) + "   ·   " + encoderLine("WMA", wma))
+                                       .arg(encoderLine("MP3", mp3) + "   ·   "
+                                            + encoderLine("WMA", wma) + "   ·   "
+                                            + encoderLine(qsTr("Lossless"), ls))
                         }
                         function encoderLine(name, r) {
                             if (!r || r.available !== true)

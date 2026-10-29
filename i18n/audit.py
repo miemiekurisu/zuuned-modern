@@ -23,7 +23,9 @@ Four checks:
              built in a .js table reaches a text: property just as easily.
   cxx        a sentence-shaped quoted literal under src/ or transcode/ must sit
              inside UiText::tr() / tr() / qsTr(), or be named in
-             i18n/audit-allow.txt together with a reason.
+             i18n/audit-allow.txt together with a reason.  A call written across
+             lines counts as one literal: the continuation lines hold no string
+             that lupdate would extract on its own.
 
 Both text checks are shape heuristics and say so.  "Sentence-shaped" is three or
 more alphabetic words; QML flags a literal that has a space in it, or one that
@@ -63,6 +65,12 @@ VALUE_SHAPE = re.compile(
 # A line that is nothing but string-literal fragments: the tail of a multi-line
 # fprintf/SQL statement whose opening line is already excluded.
 CONTINUATION = re.compile(r"""^[ 	]*(?:L?"(?:[^"\\]|\\.)*"[ 	]*)+[+,=]?[ 	]*[,:]?[ 	]*$""")
+# The same shape with the call-closing punctuation on the last fragment, which
+# is how a sentence written across lines usually ends.  The one hole this
+# leaves is a literals-only line sitting inside a translated call that also
+# takes a second, untranslated argument; lupdate cannot extract that argument
+# either, so nothing reaches the user that the catalogue did not already miss.
+TR_TAIL = re.compile(r"""^[ 	]*(?:L?"(?:[^"\\]|\\.)*"[ 	]*)+[+,=]?[ 	]*[,:]?[ 	]*\)?;?$""")
 
 UI_PROP = re.compile(
     r"^[ \t]*(?:(?:required[ \t]+|readonly[ \t]+property[ \t]+|property[ \t]+|alias[ \t]+)?"
@@ -368,14 +376,26 @@ def check_cxx(allow, skip, skip_lines, findings):
             continue
         body = decomment(read(os.path.join(ROOT, rel)))
         prev_skip = False
+        prev_tr = False
         for n, line in enumerate(body.split("\n"), 1):
             drop = logged(line, skip_lines)
             if not drop and prev_skip and CONTINUATION.match(line):
                 drop = True
-            prev_skip = drop
-            if drop:
-                continue
             s = stripped(line)
+            # C concatenates adjacent literals, so the tail of a sentence written
+            # across lines is the same catalogue entry as its head:
+            #     UiText::tr("first half "
+            #                "second half")
+            # lupdate extracts one source text, and the runtime looks up that one
+            # text. Only a line that is nothing but literals and separators (a
+            # continuation cannot stand as a statement) following a line that
+            # really opens a translated call counts, so a fresh literal on its own
+            # line is still a finding.
+            continued = bool(TR_TAIL.match(s)) and prev_tr
+            prev_tr = bool(TR_WRAP.search(line)) or continued
+            prev_skip = drop
+            if drop or continued:
+                continue
             for lit in QUOTED.findall(s):
                 inner = lit[1:-1]
                 if " " not in inner:

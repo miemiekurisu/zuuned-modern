@@ -251,6 +251,7 @@ static int send_track_internal(ZuneDevice *dev, const char *filepath,
                                 const char *title, const char *artist,
                                 const char *album, const char *genre,
                                 uint16_t tracknumber, uint32_t duration_ms,
+                                zune_progress_fn progress, void *userdata,
                                 uint32_t *out_item_id) {
     uint64_t fsize = get_file_size(filepath);
     if (fsize == 0) {
@@ -304,8 +305,11 @@ static int send_track_internal(ZuneDevice *dev, const char *filepath,
             continue;
         }
 
-        /* Step 2: SendObject (file data) */
-        ret = mtp_send_object_from_file(&dev->ptp, filepath, (uint32_t)fsize);
+        /* Step 2: SendObject (file data), streamed so a large track costs
+         * one 1 MB chunk of memory rather than its whole size. */
+        ret = mtp_send_object_from_file_progress(&dev->ptp, filepath,
+                                                 (uint32_t)fsize,
+                                                 progress, userdata);
         if (ret == 0)
             break;
 
@@ -374,7 +378,7 @@ int zune_smuggle_track(ZuneDevice *dev, const char *filepath,
     int ret = send_track_internal(dev, filepath,
                                    fallback_title ? fallback_title : "Unknown",
                                    "Unknown Artist", "Unknown Album", "",
-                                   0, 0, out_item_id);
+                                   0, 0, NULL, NULL, out_item_id);
     free(fallback_title);
     return ret;
 }
@@ -396,7 +400,8 @@ int zune_smuggle_track_tagged(ZuneDevice *dev, const char *filepath,
                                 artist && artist[0] ? artist : "Unknown Artist",
                                 album && album[0] ? album : "Unknown Album",
                                 genre && genre[0] ? genre : "",
-                                tracknumber, duration_ms, out_item_id);
+                                tracknumber, duration_ms, NULL, NULL,
+                                out_item_id);
 }
 
 /* ---- Send track with progress callback ---- */
@@ -413,29 +418,21 @@ int zune_smuggle_track_ex(ZuneDevice *dev, const char *filepath,
     }
 
     /*
-     * The native MTP stack's mtp_send_object_from_file reads the entire file
-     * into memory and sends it in one bulk transfer. Progress callbacks at the
-     * MTP object level are not currently supported — the transfer is atomic.
+     * The data phase streams from the file in 1 MB chunks, so the callback
+     * fires per chunk with the number of bytes handed to the USB backend —
+     * real progress across a 40 MB track, not the 0%/100% pair this used to
+     * fake when the whole file was read into memory first.
      *
-     * Call the progress callback at start (0%) and end (100%) so callers
-     * can still update their UI. When per-chunk progress is added to
-     * mtp_send_object_from_file, this will be wired through.
+     * ptp_progress_fn and zune_progress_fn are the same shape on purpose; the
+     * PTP layer cannot see zune.h, so the cast is how the two meet.
      */
-    uint64_t fsize = get_file_size(filepath);
-    if (progress && fsize > 0)
-        progress(0, fsize, userdata);
-
-    int ret = send_track_internal(dev, filepath,
-                                   title && title[0] ? title : "Unknown",
-                                   artist && artist[0] ? artist : "Unknown Artist",
-                                   album && album[0] ? album : "Unknown Album",
-                                   genre && genre[0] ? genre : "",
-                                   tracknumber, duration_ms, out_item_id);
-
-    if (ret == 0 && progress && fsize > 0)
-        progress(fsize, fsize, userdata);
-
-    return ret;
+    return send_track_internal(dev, filepath,
+                                title && title[0] ? title : "Unknown",
+                                artist && artist[0] ? artist : "Unknown Artist",
+                                album && album[0] ? album : "Unknown Album",
+                                genre && genre[0] ? genre : "",
+                                tracknumber, duration_ms,
+                                progress, userdata, out_item_id);
 }
 
 /* ---- Delete track ---- */

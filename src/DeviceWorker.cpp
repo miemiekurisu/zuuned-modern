@@ -806,12 +806,27 @@ void DeviceWorker::doSendTrack(const QString &entryId, const QString &filepath,
         return;
     }
 
-    // Verify readback — warning-only, never deletes (mac posture)
+    // Verify readback — warning-only, never deletes (mac posture).
+    //
+    // The size argument used to be 0, which is the sentinel libzune reads as
+    // "do not check the size" (track.c guards the whole comparison with
+    // `expected_size > 0`), so the one property of a send that a byte count can
+    // settle was never settled: a SendObject that came back short, or an object
+    // the player truncated, was reported as a successful transfer.  The bytes we
+    // handed the sender are the only honest expectation, and libzune compares
+    // them against GetObjectInfo.object_compressed_size, which is the player's
+    // own answer about what it kept rather than a restatement of ours.
+    //
+    // Still warn-only: there is no measured case here of a Zune keeping a wrong
+    // object, and deleting on a suspicion is how a listener loses a file because
+    // of a bug in the code doing the checking.  libzune prints both byte counts.
+    const qint64 sentBytes = QFileInfo(filepath).size();
     if (zune_verify(m_dev, itemId,
                     title.isEmpty() ? nullptr : title.toUtf8().constData(),
-                    nullptr, 0) != 0) {
-        fprintf(stderr, "[worker] verify mismatch for %s (item %u) — keeping\n",
-                qUtf8Printable(title), itemId);
+                    nullptr, quint64(std::max<qint64>(0, sentBytes))) != 0) {
+        fprintf(stderr, "[worker] verify mismatch for %s (item %u, %lld bytes sent)"
+                        " — keeping\n",
+                qUtf8Printable(title), itemId, (long long)sentBytes);
     }
 
     emit sendDone(entryId, true, itemId, autopsy);

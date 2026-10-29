@@ -209,9 +209,14 @@ public:
     // source may go over byte-for-byte, which costs sourceBytes — and which
     // is not sniffed here, because guessing which queued rows are ASF would
     // mean opening every one of them to answer a question about free space.
-    // So this never promises less than the run could need.
+    // So this never promises less than the run could need.  lossless swaps the
+    // bit rate nobody was given for the share of a raw stream that WMA Lossless
+    // measurably does spend; see the comment on the definition.  It is defaulted
+    // off so the spoken-media callers, whose MP3 320 contract is frozen by gate,
+    // keep asking the old question.
     static qint64 estimateTrackBytes(int durationMs, qint64 sourceBytes,
-                                     int bitrateKbps, bool nativeCopy);
+                                     int bitrateKbps, bool nativeCopy,
+                                     bool lossless = false);
 
 public slots:
     void onPodcastCleanupInspected(quint64 generation, const QString &token, const QString &serial,

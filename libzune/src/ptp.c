@@ -200,6 +200,116 @@ static int ptp_send_command(ptp_session_t *s, uint16_t opcode,
  * =================================================================== */
 
 /*
+ * ptp_data_source — where the bytes of a send-data phase come from.
+ *
+ * The data phase can be fed from a buffer that is already in memory or from
+ * an open file, and BOTH go through the one chunk loop below. That is the
+ * whole design: the framing a Zune sees — chunk sizes, the max-packet
+ * alignment, where the zero-length packet lands — cannot drift between the
+ * two, because there is only one place that frames anything. Feeding from a
+ * file is what lets a 200 MB video be sent without ever holding 200 MB.
+ *
+ * `buf` is scratch for the file kind only, allocated on first fill and freed
+ * by ptp_send_data_source(); a memory source never allocates.
+ */
+typedef struct {
+    const uint8_t *mem;   /* memory source: payload start, or NULL */
+    FILE   *file;         /* file source: open for reading, or NULL */
+    uint8_t *buf;         /* file source scratch, CONTEXT_BLOCK_SIZE bytes */
+    uint64_t offset;      /* payload bytes already handed out */
+    uint64_t total;       /* payload length the container advertises */
+} ptp_data_source;
+
+static void ptp_source_init_mem(ptp_data_source *src,
+                               const uint8_t *data, uint64_t len)
+{
+    memset(src, 0, sizeof(*src));
+    src->mem = data;
+    src->total = len;
+}
+
+static void ptp_source_init_file(ptp_data_source *src, FILE *fp, uint64_t len)
+{
+    memset(src, 0, sizeof(*src));
+    src->file = fp;
+    src->total = len;
+}
+
+/*
+ * ptp_source_read — Deliver exactly `want` payload bytes.
+ *
+ * A memory source answers from the buffer it already owns; a file source
+ * reads into its scratch. Both set *out and return 1 only when they could
+ * supply all `want` bytes — a file that ends before `total` is a hard error,
+ * because the container header already promised that length to the device.
+ */
+static int ptp_source_read(ptp_data_source *src, uint32_t want,
+                           const uint8_t **out)
+{
+    uint64_t left = src->total - src->offset;
+
+    if (want == 0) {
+        *out = src->mem ? src->mem + src->offset : src->buf;
+        return 1;
+    }
+    if (left < (uint64_t)want) {
+        fprintf(stderr, "[ptp] send_data: source has %llu of %llu payload "
+                "bytes left at offset %llu -- refusing a short container\n",
+                (unsigned long long)left, (unsigned long long)src->total,
+                (unsigned long long)src->offset);
+        return 0;
+    }
+    if (src->mem) {
+        *out = src->mem + src->offset;
+        src->offset += want;
+        return 1;
+    }
+    if (!src->buf) {
+        src->buf = (uint8_t *)malloc(CONTEXT_BLOCK_SIZE);
+        if (!src->buf) {
+            fprintf(stderr, "[ptp] send_data: malloc failed for %u byte "
+                    "stream buffer\n", CONTEXT_BLOCK_SIZE);
+            return 0;
+        }
+    }
+    if (want > CONTEXT_BLOCK_SIZE)
+        want = CONTEXT_BLOCK_SIZE;
+    uint32_t got = 0;
+    while (got < want) {
+        size_t r = fread(src->buf + got, 1, want - got, src->file);
+        if (r == 0)
+            break;
+        got += (uint32_t)r;
+    }
+    if (got != want) {
+        fprintf(stderr, "[ptp] send_data: read %u of %u bytes at offset %llu\n",
+                got, want, (unsigned long long)src->offset);
+        return 0;
+    }
+    src->offset += got;
+    *out = src->buf;
+    return 1;
+}
+
+/* Copy `want` payload bytes into a caller-owned buffer (never re-frames). */
+static int ptp_source_copy(ptp_data_source *src, uint8_t *dst, uint32_t want)
+{
+    const uint8_t *view = NULL;
+    if (!ptp_source_read(src, want, &view))
+        return 0;
+    if (want > 0 && view != dst)
+        memcpy(dst, view, want);
+    return 1;
+}
+
+static void ptp_source_progress(ptp_data_source *src,
+                                ptp_progress_fn progress, void *userdata)
+{
+    if (progress)
+        progress(src->offset, src->total, userdata);
+}
+
+/*
  * ptp_send_data — Send a data container to the device.
  *
  * The first USB write includes the 12-byte data container header
@@ -210,16 +320,36 @@ static int ptp_send_command(ptp_session_t *s, uint16_t opcode,
  * the bulk OUT max packet size, a zero-length packet is sent to
  * signal end of transfer.
  *
+ * The payload arrives through a ptp_data_source, so this frames a memory
+ * buffer and a file identically; the length that drives every decision here
+ * is src->total, which the container header also advertises.
+ *
  * Returns 0 on success, -1 on failure.
  */
-static int ptp_send_data(ptp_session_t *s, uint16_t opcode,
-                          const uint8_t *data, uint64_t data_len)
+static int ptp_send_data_stream(ptp_session_t *s, uint16_t opcode,
+                                ptp_data_source *src,
+                                ptp_progress_fn progress, void *userdata)
 {
     uint8_t *first_chunk;
+    const uint64_t data_len = src->total;
     uint64_t total_container_len = PTP_CONTAINER_HDR_SIZE + data_len;
     uint32_t first_write_len;
     uint64_t data_offset;
     uint64_t bytes_remaining;
+    const uint8_t *view = NULL;
+
+    /*
+     * The container length field is uint32 on the wire. A payload that does
+     * not fit would be packed modulo 2^32 and the device would then wait for
+     * bytes nobody intends to send, so say no here rather than wedge a
+     * transaction. Callers stat the file first; this is the last gate.
+     */
+    if (total_container_len > 0xFFFFFFFFULL) {
+        fprintf(stderr, "[ptp] send_data: %llu byte container does not fit "
+                "the 32-bit length field\n",
+                (unsigned long long)total_container_len);
+        return -1;
+    }
 
     /*
      * Split header/data mode (Zune/WMP compatibility):
@@ -267,10 +397,13 @@ static int ptp_send_data(ptp_session_t *s, uint16_t opcode,
             if (maxpkt > 0 && chunk > maxpkt && chunk % maxpkt != 0)
                 chunk -= chunk % maxpkt;
 
-            if (ptp_usb_write_timeout(s, data + offset, chunk, PTP_USB_DATA_TIMEOUT_MS) < 0)
+            if (!ptp_source_read(src, chunk, &view))
+                return -1;
+            if (ptp_usb_write_timeout(s, view, chunk, PTP_USB_DATA_TIMEOUT_MS) < 0)
                 return -1;
             offset += chunk;
             remaining -= chunk;
+            ptp_source_progress(src, progress, userdata);
         }
 
         if (data_len > 8u * 1024 * 1024) {
@@ -334,8 +467,12 @@ static int ptp_send_data(ptp_session_t *s, uint16_t opcode,
 
     /* Copy as much data as fits in the first chunk */
     uint32_t first_data_len = first_write_len - PTP_CONTAINER_HDR_SIZE;
-    if (first_data_len > 0 && data)
-        memcpy(first_chunk + PTP_CONTAINER_HDR_SIZE, data, first_data_len);
+    if (first_data_len > 0 &&
+        !ptp_source_copy(src, first_chunk + PTP_CONTAINER_HDR_SIZE,
+                         first_data_len)) {
+        free(first_chunk);
+        return -1;
+    }
 
     /* Debug: dump data container header — disabled (very noisy). */
 #if 0
@@ -372,11 +509,14 @@ static int ptp_send_data(ptp_session_t *s, uint16_t opcode,
             }
         }
 
-        if (ptp_usb_write_timeout(s, data + data_offset, chunk_len, PTP_USB_DATA_TIMEOUT_MS) < 0)
+        if (!ptp_source_read(src, chunk_len, &view))
+            return -1;
+        if (ptp_usb_write_timeout(s, view, chunk_len, PTP_USB_DATA_TIMEOUT_MS) < 0)
             return -1;
 
         data_offset += chunk_len;
         bytes_remaining -= chunk_len;
+        ptp_source_progress(src, progress, userdata);
     }
 
     /*
@@ -389,8 +529,38 @@ static int ptp_send_data(ptp_session_t *s, uint16_t opcode,
         s->usb->backend->bulk_write(s->usb, s->usb->bulk_out_ep,
                                     NULL, 0, &actual, PTP_USB_TIMEOUT_MS);
     }
+    ptp_source_progress(src, progress, userdata);
 
     return 0;
+}
+
+/*
+ * ptp_send_data_source — Stream a data phase, then release any scratch the
+ * source took. Every early return inside ptp_send_data_stream() lands here,
+ * which is why the buffer is freed outside it rather than at each exit.
+ */
+static int ptp_send_data_source(ptp_session_t *s, uint16_t opcode,
+                                ptp_data_source *src,
+                                ptp_progress_fn progress, void *userdata)
+{
+    int rc = ptp_send_data_stream(s, opcode, src, progress, userdata);
+    free(src->buf);
+    src->buf = NULL;
+    return rc;
+}
+
+/*
+ * ptp_send_data — Send a data container held wholly in memory.
+ *
+ * The historical entry point, now a thin view over the streaming loop so the
+ * in-memory path keeps the exact framing it has always had.
+ */
+static int ptp_send_data(ptp_session_t *s, uint16_t opcode,
+                          const uint8_t *data, uint64_t data_len)
+{
+    ptp_data_source src;
+    ptp_source_init_mem(&src, data, data_len);
+    return ptp_send_data_source(s, opcode, &src, NULL, NULL);
 }
 
 /* ===================================================================
@@ -872,6 +1042,57 @@ int ptp_transaction(ptp_session_t *s,
     if (ret < 0 && resp_code != PTP_RC_OK) {
         return -1;
     }
+
+    return 0;
+}
+
+/*
+ * ptp_transaction_send_file — SendObject whose payload streams from a file.
+ *
+ * Kept separate from ptp_transaction() because that signature has ~30 callers
+ * and none of them need a file; what the two DO share — transaction-id
+ * handling, the command phase, and the long response timeout that a device
+ * needs to commit a large payload — is spelled the same here on purpose. If
+ * ptp_transaction()'s phasing ever changes, this follows it.
+ */
+int ptp_transaction_send_file(ptp_session_t *s,
+                              uint16_t opcode,
+                              uint32_t *params, int nparams,
+                              FILE *fp, uint64_t send_len,
+                              ptp_progress_fn progress, void *userdata,
+                              uint16_t *response_code)
+{
+    ptp_data_source src;
+    uint16_t resp_code = 0;
+    int ret;
+
+    if (response_code) *response_code = 0;
+    if (!fp) {
+        fprintf(stderr, "[ptp] send_file 0x%04X: no file\n", opcode);
+        return -1;
+    }
+    s->last_response = 0;
+    s->transaction_id++;
+
+    if (ptp_send_command(s, opcode, params, nparams) < 0) {
+        fprintf(stderr, "[ptp] send_file 0x%04X: command phase failed\n", opcode);
+        return -1;
+    }
+
+    ptp_source_init_file(&src, fp, send_len);
+    if (ptp_send_data_source(s, opcode, &src, progress, userdata) < 0) {
+        fprintf(stderr, "[ptp] send_file 0x%04X: send data phase failed\n", opcode);
+        return -1;
+    }
+
+    /* Same reasoning as phase 3 of ptp_transaction(): the device writes the
+     * payload to flash before answering, and that scales with size. */
+    ret = ptp_recv_response_timeout(s, &resp_code, NULL, 0,
+                                    PTP_USB_DATA_TIMEOUT_MS);
+    if (response_code) *response_code = resp_code;
+
+    if (ret < 0 && resp_code != PTP_RC_OK)
+        return -1;
 
     return 0;
 }

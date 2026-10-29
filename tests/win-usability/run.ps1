@@ -49,6 +49,7 @@ $fixture = Join-Path $out 'fixture'
 $exe = Join-Path $build 'zuuned.exe'
 $libraryTool = Join-Path $build 'librarytool.exe'
 $transcodeTool = Join-Path $build 'transcodetool.exe'
+$mtpFraming = Join-Path $build 'mtpframingtool.exe'
 $playerTool = Join-Path $build 'playertool.exe'
 $deviceTool = Join-Path $build 'devicetool.exe'
 $winshot = Join-Path $out 'winshot.exe'
@@ -1243,6 +1244,38 @@ if (Select-Phase 'tools') {
     Check 'every music search reset clears the field and the filter together' `
         ($blanks -eq 1 -and $musicText.Contains('function clearSearch()')) `
         ('searchText = "" appears ' + $blanks + ' time(s) in qml/MusicPage.qml')
+    # Three self-contained C gates that no GUI launch reaches on purpose.  The tag
+    # writer only runs on a file the user edits or a FLAC about to become an mp3;
+    # the copy policy only runs on a sync target; the framing gate only runs on a
+    # SendObject.  None of them can be driven from a page without writing to a
+    # real library or a real player, and the framing gate opens no device handle,
+    # so it answers with no Zune attached.
+    if (Test-Path -LiteralPath $transcodeTool) {
+        $retag = Invoke-Proc -File $transcodeTool -Arguments @('retagcheck') -Timeout 600
+        Check 'transcodetool retagcheck rewrites every text frame as legal ID3v2.3 and leaves the audio byte-exact' `
+            (($retag.Code -eq 0) -and ($retag.Out -match 'retagcheck \d+ checks 0 failures')) `
+            ('code=' + $retag.Code + ' out=' + $retag.Out.Trim().Replace([Environment]::NewLine, ' '))
+        $copy = Invoke-Proc -File $transcodeTool -Arguments @('copycheck') -Timeout 600
+        Check 'transcodetool copycheck refuses a native copy the probe cannot prove' `
+            (($copy.Code -eq 0) -and ($copy.Out -match 'copycheck \d+ checks 0 failures')) `
+            ('code=' + $copy.Code + ' out=' + $copy.Out.Trim().Replace([Environment]::NewLine, ' '))
+    }
+    else {
+        Skip 'transcodetool retagcheck and copycheck' 'transcodetool.exe is missing'
+    }
+    # Streaming MTP framing is the send path after the whole-file malloc() went
+    # away.  A chunk that drifts by one byte, or a zero-length packet that moves,
+    # is a player that accepts the transfer and shows a truncated song, so the
+    # gate holds the streaming path against the buffered one write for write.
+    if (Test-Path -LiteralPath $mtpFraming) {
+        $framing = Invoke-Proc -File $mtpFraming -Timeout 600
+        Check 'mtpframingtool streams SendObject byte-for-byte like the buffered path' `
+            (($framing.Code -eq 0) -and ($framing.Out -match 'framing \d+ checks 0 failures')) `
+            ('code=' + $framing.Code + ' out=' + $framing.Out.Trim().Replace([Environment]::NewLine, ' '))
+    }
+    else {
+        Skip 'mtpframingtool' 'mtpframingtool.exe is missing'
+    }
 }
 
 Write-Host ''

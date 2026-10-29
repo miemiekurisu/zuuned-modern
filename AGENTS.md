@@ -1891,3 +1891,117 @@ so the pictures carry that machine's own data, including the player name and one
 this sitting sent, deleted, ejected or played anything, the device is in these pictures only
 because the app's own hotplug browsed it, and every not-proven-on-Windows list in both READMEs
 stays as long as it was.
+
+**2026-10-26 WMA Lossless, and the encoder that was already in Windows:** the standing answer
+to "can this encode WMA Lossless" was a true refusal - the linked FFmpeg carries `wmav1` and
+`wmav2` and nothing else, and System32 has no WMA Lossless ACM codec - and the wrong answer
+was to vendor or fork a codec, because this is a lightweight client and the user said so. The
+third door is `transcode/wma_lossless_enc.cpp` (Windows-only; `transcode/wma_lossless_stub.c`
+answers "not available" everywhere else) driving the Windows Media Audio 9.2 Lossless codec
+that ships inside `wmvcore.dll`, in process, through `IWMCodecInfo3` -> `IWMStreamConfig` ->
+`IWMProfile` -> `IWMWriter`, behind the entry point a sync already uses: a
+`ZUUNED_AUDIO_WMA_LOSSLESS` target on `zuuned_transcode_audio_ex()`, reported by
+`zuuned_audio_encoder_available()`, linked only against SDK import libraries
+(`wmvcore wmcodecdspuuid ole32`). Four traps, each one a build: the eight lossless formats do
+not exist for enumeration until `SetCodecEnumerationSetting()` has been given
+`g_wszVBREnabled` TRUE and `g_wszNumPasses` 1 per codec, and they must be re-applied before
+the final `GetCodecFormat()`; `GetMediaType()` returns one buffer with `pbFormat` pointing
+inside it, so freeing that pointer is `0xc0000409` and not a leak; `IWMWriter::GetInputFormat()`
+takes the input number and the index, and `GetCodecInfoCount()` takes its GUID by value; and
+`ksmedia.h` collides with `wmcodecdsp.h` so it stays out. The file is STL-, exception- and
+constant-init-only because the C `transcodetool` links it, and FFmpeg's headers carry no
+`extern "C"` of their own, so without an explicit block the link dies on every `av_*`. The
+codec's own table is the specification - 2ch/44100/16, 2ch/44100/24, 2ch/48000/24,
+6ch/48000/24, 2ch/88200/24, 6ch/88200/24, 2ch/96000/24, 6ch/96000/24 - so the policy is:
+never resample, never change the channel count, widen 16-bit to 24-bit at the same rate and
+channel count when the table has no other entry (a left shift moves no sample value), and
+refuse everything else with its own queue message instead of delivering a file that quietly
+stopped being lossless. Measured on the relinked binary, all software: `transcodetool
+encoders` answers `wma-lossless=1`, and 44.1 kHz/16-bit stereo, 48 kHz/16-bit stereo (widened
+to 24-bit), 44.1 kHz/24-bit stereo and the first under a Chinese file name each wrote an ASF
+that probes as `wmalossless` and decoded back to bit-identical PCM, equal sample counts, zero
+delay. A real master cost 71.2 % of its PCM (1,006 kbps); a sine costs about 795 kbps, so a
+tone is the wrong fixture to size a lossless queue with, and `estimateTrackBytes()` reserves
+1,280 kbps for a lossless leg on the recording. `readAudioSyncPolicy()` maps `wma-lossless`
+and falls back to MP3 whenever the running build has no encoder for the target a profile asks
+for - which is also what happens to a profile that saved lossless on Windows and then runs on
+Linux - Settings gained a third option that is disabled unless
+`conversionTools().wmaLosslessEncoder` and hides the bit-rate pill, the self-test runs a third
+leg judged on container and length only, and the Chinese went into `i18n/zh_CN.tsv` like every
+other string (1531 translated, 0 missing, `AUDIT=ok`). Gates re-run against
+the relinked binary: `tests/win-compat` 201 checks, 0 failures, 0 skips;
+`tests/win-usability` `launches=18 checks=131 failures=0 skips=1 killed=0`,
+the one skip being the check that names a specific device with no player
+attached to compare. **Nothing has been heard.** Only the Zune HD is
+documented to play WMA Lossless, the models this repository has actually
+held are documented neither way, the card says so in as many words, and
+hearing one is an open gate on this page's list.
+**2026-10-29 audit closure, and a gate for every finding:** the review of the
+audio line that came in as `Zuuned_Modern_代码审计及_WMA_Lossless_编码同步实施方案.md` -
+ten findings, F-01 to F-10, each read out of the source rather than guessed -
+is closed in code, and the one that mattered most was also the quietest. F-01:
+`transcode/libav_transcode.c` called `avcodec_send_packet()` and on any
+negative return unref'd the packet and `continue`d, but `AVERROR(EAGAIN)`
+means the decoder is full, not the packet is bad, so the correct answer is
+drain-and-retry-the-same-packet; as it was the packet vanished, nothing was
+logged, and the output was a few hundred milliseconds shorter than the source.
+Keep the shape, not just the fix: a loop that reads backpressure as rejection
+loses audio silently, and a slightly short file looks like nothing. F-03:
+`mtp_send_object()` took a buffer and `libzune/src/track.c` slurped the whole
+track before a byte went on the wire, which is fine for a 5 MB MP3 and not
+fine for a lossless album side, so `ptp_transaction_send_file()` (`src/ptp.c`)
+now drives the same transaction from an open `FILE *` with a 1 MB
+`ptp_data_source` scratch - same transaction id, command phase and long commit
+timeout - behind `mtp_send_object_from_file_progress()`, with the buffered
+path left alone, and `libzune/tools/mtpframingtool.c` runs both over one fake
+transport and compares the bytes (`framing 1245 checks 0 failures`):
+byte-identical framing is the whole claim. It refuses a 0-byte object (a
+12-byte container leaves the device waiting for a data phase that never
+speaks) and refuses a source that ends before the length `SendObjectInfo`
+promised rather than padding it. F-06: the transcode scratch name was
+source-plus-PID, unique per process and not per job, and three sites take
+`mkstemps()` (`O_EXCL`) now. F-07: `transcode/id3_rewrite.c` no longer reads a
+whole MP3 to rewrite four frames and no longer writes UTF-8 bytes under an
+ISO-8859-1 flag - `normalize_text_frame_for_v23()` picks Latin-1 when the text
+fits and UTF-16-with-BOM when it does not, bounded by `TEXT_CODE_POINTS_MAX` -
+and `transcodetool retagcheck` judges 27 things over a fixture whose frames
+declare three encodings, including that the audio after the tag returns
+byte-exact; the lesson worth keeping is that the audio offset a rewriter wants
+is the *end of the tag*, because a UTF-16 BOM is `FF FE` and `FF FE` is a
+legal MPEG sync word, so scanning forward for a sync word stopped inside the
+tag. F-08: the abort and hw-decode flags cross a thread boundary and
+`volatile` orders nothing, so every access goes through ``zuuned_flag_load()`
+and `zuuned_flag_store()`` - `_Interlocked*` on MSVC, `__atomic_*` at
+`__ATOMIC_SEQ_CST` elsewhere - with the declarations still `volatile int` on
+both platforms. F-04: a lossless profile on a build with no encoder used to
+fall back to MP3 without saying so, which is the same crime as F-01, so
+`readAudioSyncPolicy()` refuses and the queue card names the missing encoder
+and states that the file was not converted instead. F-05: `transcodetool
+container` reports the ASF codec GUID, the `WAVEFORMATEX` tag, losslessness
+and the copy-policy verdict, so a native copy is decided off the codec and not
+off a fourcc that looked carryable. F-09: `zune_verify()` is still the
+after-the-fact warning pass it always was, and the length is now enforced on
+the way out instead, where being wrong costs a wedge rather than a log line.
+F-10: `estimateTrackBytes()` takes the bitrate and a lossless flag, reserves
+1,280 kbps for a lossless leg, and an encoded file over its reservation is not
+sent - the queue says how far over and how much room the Zune has. Two bugs
+belonging to this sitting were found in this sitting's own code:
+`transcodetool container` with no argument dereferenced a null path and died
+`0xc0000005` (every command but the three that ask about the build now returns
+a usage error for a missing file, because a gate that crashes on a typo
+reports nothing), and `i18n/audit.py` flagged 34 non-findings because it
+matched `UiText::tr(` on one line only, so an adjacent-literal string had its
+continuation lines read as untranslated CJK - it tracks a continuation now,
+and the loosening was regression-tested against a bare `QStringLiteral` with
+Chinese in it and a continuation whose head is not a `tr()`, both still
+reported. Gates on the relinked binaries: `tests\win-compat` 201 checks / 0
+failures / 0 skips; `tests\win-usability` `launches=18 checks=134 failures=0
+skips=1 killed=0`, the tools phase re-run alone on the last binary `checks=47
+failures=0 skips=0`; `librarytool paths` 67 and the other nine subcommands
+`ALL PASS (0 failures)`; `retagcheck` 27/0, `copycheck` 14/0, `mtpframingtool`
+1245/0; i18n 1535 translated / 0 missing, 1535 finished / 0 unfinished,
+`AUDIT=ok`. **No Zune was opened for any of it.** The streaming sender is
+proven against the buffered one on a fake transport, never against a player,
+nothing this tree wrote has been heard, and deletion, the spoken and
+photo/video categories, every model but this Pavo Zune HD and anything audible
+all stay open.

@@ -267,23 +267,57 @@ qint64 SyncEngine::estimateVideoBytes(int profile, int durationMs,
 namespace {
 // Settings → the audio policy for one run, read in one place so the capacity
 // gate, the queue and the worker cannot disagree about what "convert for the
-// Zune" means.  WMA is opt-in and MP3 320 CBR stays the default: MP3 is what a
-// Zune is known to play, and nothing in this repository has ever heard a WMA
-// come out of a player.  A build whose libavcodec carries no `wmav2` cannot
-// honour the request at all, so it answers MP3 rather than failing every track
-// in the album.
-void readAudioSyncPolicy(int *target, int *bitrate, bool *copyNative) {
+// Zune" means.  MP3 320 CBR stays the default: MP3 is what a Zune is known to
+// play, and nothing in this repository has ever heard a WMA come out of a
+// player.  Both WMA targets are opt-in for that reason, and the lossless one
+// twice over, because it exists only on Windows and only the Zune HD is
+// documented to play it.
+//
+//
+// A request this build cannot honour is refused out loud, and it is never
+// answered MP3.  The rule this layer exists to enforce is that the user chooses
+// the codec: "no encoder here" is a fact about the build, but quietly delivering
+// 320 kbps of a file the user asked to keep lossless is a different recording
+// than the one they own, and a queue that says WMA Lossless and ships MP3 has
+// lied in the one place a listener is entitled to trust.  That includes a
+// profile that saved "wma-lossless" on Windows and then ran on Linux, where the
+// target has no encoder at all -- the honest answer there is "this build cannot
+// do it", not a downgraded album.
+bool readAudioSyncPolicy(int *target, int *bitrate, bool *copyNative,
+                         QString *reason) {
     const QSettings st;
-    *target = st.value(QStringLiteral("syncAudioFormat"),
-                       QStringLiteral("mp3")).toString() == QLatin1String("wma")
-        ? ZUUNED_AUDIO_WMA : ZUUNED_AUDIO_MP3;
-    if (*target == ZUUNED_AUDIO_WMA && !zuuned_audio_encoder_available(ZUUNED_AUDIO_WMA))
-        *target = ZUUNED_AUDIO_MP3;
+    const QString wanted = st.value(QStringLiteral("syncAudioFormat"),
+                                    QStringLiteral("mp3")).toString();
+    *target = ZUUNED_AUDIO_MP3;
+    if (wanted == QLatin1String("wma"))
+        *target = ZUUNED_AUDIO_WMA;
+    else if (wanted == QLatin1String("wma-lossless"))
+        *target = ZUUNED_AUDIO_WMA_LOSSLESS;
+    if (*target != ZUUNED_AUDIO_MP3 && !zuuned_audio_encoder_available(*target)) {
+        // Named per target, because the two WMA options fail for different
+        // reasons and only one of them has a hardware caveat attached.
+        *reason = *target == ZUUNED_AUDIO_WMA_LOSSLESS
+            ? UiText::tr("WMA Lossless is not available in this build. It needs "
+                         "the Windows Media encoder that ships with Windows, and "
+                         "only the Zune HD is documented to play the result. "
+                         "Nothing was queued, and your files were not converted "
+                         "to MP3 instead.")
+            : UiText::tr("WMA is not available in this build. It needs the "
+                         "Windows Media encoder that ships with Windows. "
+                         "Nothing was queued, and your files were not converted "
+                         "to MP3 instead.");
+        fprintf(stderr, "[sync] audio target=%s refused: no encoder in this build\n",
+                *target == ZUUNED_AUDIO_WMA_LOSSLESS ? "wma-lossless" : "wma");
+        return false;
+    }
     bool ok = false;
     const int kbps = st.value(QStringLiteral("syncAudioBitrate"), 320).toInt(&ok);
     *bitrate = ok ? qBound(32, kbps, 320) : 320;
-    // Only meaningful for a WMA target; an MP3 run has nothing to copy.
-    *copyNative = *target == ZUUNED_AUDIO_WMA
+    // Only meaningful for a WMA target; an MP3 run has nothing to copy.  Lossless
+    // wants it the most: a WMA Lossless the user already owns is worth exactly
+    // its own bytes, and decoding it to re-encode it is the one thing a lossless
+    // target must never do.
+    *copyNative = (*target == ZUUNED_AUDIO_WMA || *target == ZUUNED_AUDIO_WMA_LOSSLESS)
         && st.value(QStringLiteral("copyNativeAudio"), true).toBool();
     // The encoder knob travels with the rest of the policy for the same reason
     // the bit rate does: read once per run, so a queue cannot change LAME's
@@ -291,6 +325,7 @@ void readAudioSyncPolicy(int *target, int *bitrate, bool *copyNative) {
     bool qok = false;
     const int quality = st.value(QStringLiteral("mp3Quality"), 2).toInt(&qok);
     zuuned_mp3_set_quality(qok ? quality : 2);
+    return true;
 }
 } // namespace
 
@@ -299,13 +334,24 @@ qint64 SyncEngine::estimateTrackBytes(int durationMs, qint64 sourceBytes) {
 }
 
 qint64 SyncEngine::estimateTrackBytes(int durationMs, qint64 sourceBytes,
-                                      int bitrateKbps, bool nativeCopy) {
+                                      int bitrateKbps, bool nativeCopy,
+                                      bool lossless) {
     // Chosen CBR rate + ~1MB tag/art headroom.  MPEG passthrough keeps the
     // source size, but a transcode cannot exceed the nominal rate by more than
     // that headroom, so this is a ceiling either way.
     qint64 encoded;
     if (durationMs <= 0)
         encoded = sourceBytes > 0 ? sourceBytes : qint64(10) * 1000 * 1000;
+    else if (lossless)
+        // A lossless encoder has no bit rate to be given, so the shape above is
+        // meaningless for it: what it spends is a share of the uncompressed
+        // stream, and the share belongs to the music.  Measured on this machine
+        // with a real 44.1 kHz/16-bit/stereo master -- ninety seconds of it,
+        // through the encoder in Windows -- the share was 72.8% of PCM, 1,025
+        // kbps.  Reserved at 1,280 kbps, a quarter above that, because a 24-bit
+        // or six-channel recording spends more and a gate that promises space the
+        // run does not have is worse than one that asks for a little too much.
+        encoded = qint64(durationMs / 1000.0 * 160000.0) + 1000 * 1000;
     else
         encoded = qint64(durationMs / 1000.0 * (qMax(32, bitrateKbps) * 125.0))
                   + 1000 * 1000;
@@ -346,9 +392,10 @@ bool SyncEngine::sniffIsMpeg(const QString &path) {
 }
 
 // Carry a file the player can already play straight to it, byte for byte.
-// Not copying is the entire point: a WMA Lossless track has no encoder in this
-// build, so anything that decoded it and wrote it out again would be a
-// downgrade.  It still cannot leave under the name it came in with, because
+// Not copying is the entire point: re-encoding a lossless track to hand back
+// something that was already lossless buys one generation of CPU, and on a Linux
+// build there is no lossless WMA encoder to buy it from in the first place.  It still cannot
+// leave under the name it came in with, because
 // libzune picks the MTP object format from the extension
 // (libzune/src/track.c: format_from_ext), and an ASF stream announced to the
 // player as MP3 is a file the player is told to decode the wrong way.  Hence a
@@ -855,6 +902,19 @@ QVariantMap SyncEngine::addTracks(const QVariantList &tracks) {
     // queueing rows that would only be skipped at sync.
     const auto deviceKeys = deviceDedupIndex();
     const auto sourceIdentities = musicIndex(tracks);
+    // Read once, before the loop, and answered before the loop: a policy this
+    // build cannot honour rejects the whole request rather than filling the
+    // queue with rows whose target has already been changed under the user.
+    int policyTarget = 0, policyBitrate = 320;
+    bool policyCopy = false;
+    QString policyReason;
+    if (!readAudioSyncPolicy(&policyTarget, &policyBitrate, &policyCopy,
+                             &policyReason))
+        return QVariantMap{{"error", policyReason},
+                           {"added", 0},
+                           {"rejected", 0},
+                           {"duplicates", 0},
+                           {"onDevice", 0}, {"ambiguous", 0}};
     m_queue.beginBatch();
     for (const QVariant &v : tracks) {
         const QVariantMap t = v.toMap();
@@ -864,14 +924,15 @@ QVariantMap SyncEngine::addTracks(const QVariantList &tracks) {
             onDevice++;
             continue;
         }
-        int policyTarget = 0, policyBitrate = 320;
-        bool policyCopy = false;
-        readAudioSyncPolicy(&policyTarget, &policyBitrate, &policyCopy);
-        Q_UNUSED(policyTarget);
+        // The target belongs in the gate as much as the rate does.  A lossless
+        // run spends roughly what a raw stream costs, so reserving it at the
+        // chosen preset would let a queue promise a fraction of the space it
+        // needs and then fail on the fortieth track with the device full.
         const qint64 est = estimateTrackBytes(
             t.value(QStringLiteral("durationMs")).toInt(),
             qint64(t.value(QStringLiteral("filesize")).toLongLong()),
-            policyBitrate, policyCopy);
+            policyBitrate, policyCopy,
+            policyTarget == ZUUNED_AUDIO_WMA_LOSSLESS);
         if (est > budget) {
             rejectedItems.append(QVariantMap{
                 {"title", t.value(QStringLiteral("title")).toString()},
@@ -1198,6 +1259,19 @@ void SyncEngine::startSync() {
         return;
     }
 
+    // Audio policy for this run, read once and ahead of every mutation below:
+    // change the target halfway through an album and the second half arrives in
+    // a different codec from the first, and a refusal that lands after
+    // m_isSyncing is set would leave the engine claiming a sync that never
+    // started.  Refused here means nothing was sent and no row changed status.
+    QString policyReason;
+    if (!readAudioSyncPolicy(&m_audioTarget, &m_audioBitrate,
+                             &m_copyNativeAudio, &policyReason)) {
+        m_lastError = policyReason;
+        emit syncStateChanged();
+        return;
+    }
+
     m_queue.clearPodcastRemovals();
     m_cleanupQueueEntries.clear();
     m_cleanupConfirmed.clear();
@@ -1389,10 +1463,6 @@ void SyncEngine::startSync() {
         else if (accel == QLatin1String("amd"))   mode = 3;
         zuuned_transcode_set_hw_decode(mode);
     }
-    // Audio policy for this run, read once here for the same reason: change
-    // the target halfway through an album and the second half arrives in a
-    // different codec from the first.
-    readAudioSyncPolicy(&m_audioTarget, &m_audioBitrate, &m_copyNativeAudio);
     m_totalCount = m_entries.size() + m_videoEntries.size()
                    + m_photoEntries.size();
     m_photoPos = -1;
@@ -1693,16 +1763,45 @@ void SyncEngine::prepareEntry(int idx) {
         const int container = chapter ? 0 : sniffAudioContainer(filepath);
         // Spoken media keeps its own frozen MP3 320 contract; only music asks.
         const bool wantWma = !podcast && !chapter && audioTarget == ZUUNED_AUDIO_WMA;
-        // MPEG into an MP3 target is a retag and a send.  MPEG into a WMA
+        const bool wantLossless = !podcast && !chapter
+                                  && audioTarget == ZUUNED_AUDIO_WMA_LOSSLESS;
+        // MPEG into an MP3 target is a retag and a send.  MPEG into either WMA
         // target is a real conversion and must not take the retag shortcut,
         // or the player quietly receives MP3 after being promised WMA.
         const bool mpeg = !chapter && (podcast ? podcastMp3
-                                              : (container == 1 && !wantWma));
-        // A WMA the player can already play, requested as WMA, with copying
-        // allowed: the bytes go over untouched.  This is the only way a WMA
-        // Lossless source survives a sync, because no encoder in this build
-        // can write lossless WMA — everything else would be a downgrade.
-        const bool nativeWma = wantWma && copyNative && container == 2;
+                                              : (container == 1 && !wantWma && !wantLossless));
+        // A WMA the player can already play, requested as a WMA of some kind,
+        // with copying allowed: the bytes go over untouched.  For the lossless
+        // target that is not an optimisation but the only defensible answer --
+        // a lossless file decoded and written out again is one generation
+        // poorer however good the encoder on the other end is.
+        // Whether those bytes may travel untouched is a question for the demuxer,
+        // not for the first four bytes.  ASF is the container for WMA Standard,
+        // WMA Pro and WMA Lossless alike, so an ASF header cannot tell a
+        // 1,025 kbps lossless recording from a 64 kbps one, and the first four
+        // bytes also open a video file with music in it.  The probe names the
+        // codec and reads the WAVEFORMATEX tag the muxer stored; the verdict
+        // function owns the rule so this line, the session log and
+        // `transcodetool container` cannot tell three stories about one refusal.
+        // The path goes out as UTF-8 because that is what FFmpeg names files by
+        // on Windows -- QFile::encodeName() here is GBK on a locale-936 machine.
+        zuuned_audio_container probe{};
+        const bool askedWma = wantWma || wantLossless;
+        const int copyVerdict = (chapter || !askedWma)
+            ? ZUUNED_COPY_TARGET_NOT_WMA
+            : zuuned_native_copy_verdict(
+                  zuuned_probe_audio_container(filepath.toUtf8().constData(), &probe) == 0
+                      ? &probe : nullptr,
+                  audioTarget);
+        const bool nativeWma = askedWma && copyNative
+                               && copyVerdict == ZUUNED_NATIVE_COPY_OK;
+        if (askedWma && copyNative && !nativeWma)
+            fprintf(stderr,
+                    "[sync] native copy refused verdict=%d tag=0x%04x codec=%s "
+                    "asf=%d lossless=%d -- encoding instead: %s\n",
+                    copyVerdict, probe.format_tag,
+                    probe.codec_name[0] ? probe.codec_name : "?",
+                    probe.is_asf, probe.lossless, qUtf8Printable(filepath));
         // W2: MPEG retag is near-instant ("sending"); anything else
         // transcodes ("transcoding" — the slow, freeze-looking half).  A
         // native copy is IO only, so it belongs with the fast half.
@@ -1793,8 +1892,42 @@ void SyncEngine::prepareEntry(int idx) {
             if (p) {
                 prepared = QString::fromUtf8(p);
                 free(p);
+            } else if (wantLossless) {
+                // A lossless refusal is a fact about the source, not a fault in
+                // the run: the encoder in Windows exposes eight formats and this
+                // layer refuses a file that fits none of them instead of
+                // resampling it into something that is no longer the recording.
+                // Say which, because "transcode failed" here sends the user
+                // looking for a broken encoder that is not broken.
+                error = UiText::tr("Could not write WMA Lossless from this file. The encoder in Windows takes stereo or 5.1 at 44.1 to 96 kHz and nothing else, and will not resample a file to fit.");
             } else {
                 error = UiText::tr("transcode failed");
+            }
+        }
+
+        // "the encoder ran" is not "the encoder produced what was asked for".
+        // The queue shows a target and the transfer shows success; the only place
+        // a codec claim can be checked is the bytes, so the file that is about to
+        // leave is probed and named here.  A lossless request that answers with
+        // anything else is an error and the file is deleted rather than sent --
+        // shipping it would be the downgrade this whole layer refuses.
+        if (error.isEmpty() && !prepared.isEmpty() && !podcast && !chapter) {
+            zuuned_audio_container made{};
+            const bool readable
+                = zuuned_probe_audio_container(prepared.toUtf8().constData(), &made) == 0
+                  && made.probed;
+            fprintf(stderr, "[sync] audio target=%s produced=%s tag=0x%04x\n",
+                    audioTarget == ZUUNED_AUDIO_MP3 ? "mp3"
+                        : audioTarget == ZUUNED_AUDIO_WMA ? "wma" : "wma-lossless",
+                    readable && made.codec_name[0] ? made.codec_name : "?",
+                    readable ? made.format_tag : 0);
+            if (wantLossless && (!readable || !made.lossless)) {
+                error = UiText::tr("The encoder did not produce a WMA Lossless file, "
+                                   "so nothing was sent.");
+                if (prepared != filepath)
+                    QFile::remove(prepared);
+                prepared.clear();
+                transcoded = false;
             }
         }
 
@@ -1948,6 +2081,37 @@ void SyncEngine::onPrepareFinished(const QString &entryId,
         if (e.value("type") == "audiobook") emit workerSendAudiobook(entryId, preparedPath, e);
         else emit workerSendPodcast(entryId, preparedPath, e);
         return;
+    }
+
+    // The queue reserved space from a duration and a bit rate.  That is honest
+    // for a lossy preset and systematically wrong for a lossless one, where the
+    // recording costs what it costs whatever the settings said, so the file that
+    // actually exists is measured now and only the overage has to fit in what the
+    // player still has room for.  Free space is live -- noteBytesWritten() moves
+    // it after every send -- so this is the device as it is, not as it looked
+    // when the queue was built.  Catching it here costs one track; missing it
+    // costs a player that fills up on the fortieth send with the album half done.
+    {
+        const qint64 actual = QFileInfo(preparedPath).size();
+        const qint64 reserved = estimateTrackBytes(
+            e.value(QStringLiteral("durationMs")).toInt(),
+            QFileInfo(original).size(), m_audioBitrate, m_copyNativeAudio,
+            m_audioTarget == ZUUNED_AUDIO_WMA_LOSSLESS);
+        const qint64 over = actual - reserved;
+        const qint64 room = capacityBudget();
+        if (over > room) {
+            fprintf(stderr, "[sync] capacity after encode actual=%lld reserved=%lld room=%lld\n",
+                    (long long)actual, (long long)reserved, (long long)room);
+            cleanupCurrentTemp(original);
+            markEntryTerminal(entryId, QStringLiteral("failed"),
+                              UiText::tr("The encoded file needs %1 MB more room than "
+                                         "the queue reserved for it and the Zune has "
+                                         "%2 MB left, so nothing was sent.")
+                                  .arg(over / (1000.0 * 1000.0), 0, 'f', 1)
+                                  .arg(qMax<qint64>(0, room) / (1000.0 * 1000.0), 0, 'f', 1));
+            m_spacing.start();
+            return;
+        }
     }
 
     QString aartist = e.value(QStringLiteral("albumartist")).toString();

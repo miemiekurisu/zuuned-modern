@@ -32,7 +32,10 @@ WinUSB 连接的 Pavo 世代 Zune HD。*
 通过 USB 浏览 Zune 的资料库并往里传媒体；享受一个有艺术家、专辑、播放列表和本地播放的本地
 音乐库；整理视频、播客与有声书；编辑元数据与封面；组建照片相册。不接播放器时，本地播放与
 整理照常工作，并且每一类媒体只有一个默认目标目录——那一个目录在自己的行上把这个事实显示成
-状态，其余目录把它显示成一个按钮。Windows 移植已经与播放器双向传过音乐；照片与视频从
+状态，其余目录把它显示成一个按钮。同步到播放器时，音频按
+**设置 -> 设备 -> 音频转换** 里选定的规格转码，WMA 无损也在其中；那个目标由 Windows 本来就
+自带的那个编码器写出来，而不是随程序附带一个编码器，做不到就直接拒绝，不会悄悄降级成有损。
+Windows 移植已经与播放器双向传过音乐；照片与视频从
 Windows 发过去过，但一个字节都没有回来过；Windows 上的删除至今一次都没做过——见状态页。
 
 ## 各个界面
@@ -86,8 +89,11 @@ Windows 发过去过，但一个字节都没有回来过；Windows 上的删除�
 
 **在 Windows 上尚未证实**，也不会从 Linux 继承过来：删除与清理、播客、有声书、照片和视频这些
 传输类别、那台 Pavo 之外的每一个 Zune 型号、听得见的播放（自动化门禁是静音打开 WASAPI 的，
-所以没有任何一次测试真正听过声音），以及打包——目前还没有 Windows 安装包，所以今天这个移植
-是一个从源码构建的项目。
+所以没有任何一次测试真正听过声音）、在播放器上播放一个 WMA 无损曲目，以及打包——目前还没有
+Windows 安装包，所以今天这个移植是一个从源码构建的项目。**WMA 无损**在 Windows 上是可以编码的，
+用的是操作系统自带的那个编码器，而不是随程序附带一个编码器；实测到的是 PCM 往返逐位相同，还没有
+做到的是让播放器真的放出一个来。这个格式只有 Zune HD 有文档支持，所以设置项里也明说了：在别的
+机型上更可能的结果是那一首不出声。
 
 ## 让 Windows 认出 Zune
 
@@ -139,9 +145,12 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File tests\win-usability\run.ps1
 ```
 
 它们覆盖 POSIX 兼容层，并在隔离的 profile 里启动每一个页面、每一个设置页签、文件名与资料库
-探针，以及命令行工具。2026-10-25 的一次全绿运行报出 `201 checks, 0 failures, 0 skips` 和
-`launches=18 checks=132 failures=0 skips=0 killed=0`。这些计数会随代码移动，请把它们当下限
-而不是预期值。两个门禁对 Zune 一个字都不说——这是故意的，也正是硬件证据放在
+探针，以及跑在它内部的命令行自检——`librarytool names`、`paths`、`customize`、`folders`、
+`vanish`、`videofloor`、`census`、`cover`、`net`，`transcodetool retagcheck` 与 `copycheck`，
+还有 `mtpframingtool`。2026-10-29 的一次全绿运行报出 `201 checks, 0 failures, 0 skips` 和
+`launches=18 checks=134 failures=0 skips=1 killed=0`，那一个 skip 是没接 Zune 时跳过的
+那两条点名具体设备的检查。这些计数会随代码移动，请把它们当下限而不是预期值。两个门禁对
+Zune 一个字都不说——这是故意的，也正是硬件证据放在
 [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) 而不是这里的原因。
 
 ## 在 Linux 上构建
@@ -149,7 +158,9 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File tests\win-usability\run.ps1
 上游的说明依然适用，移植没有改动它们：见 [BUILDING.md](BUILDING.md)、Zune 鉴权数据的
 [docs/BUILD_WITH_MTPZ.md](docs/BUILD_WITH_MTPZ.md)，以及上游
 [badgeromen/zuuned-linux](https://github.com/badgeromen/zuuned-linux) 仓库里的 Linux 发行包、
-AppImage 工作流和 udev 规则。本仓库也能构建 Linux，但不发布任何 Linux 二进制。
+AppImage 工作流和 udev 规则。本仓库也能构建 Linux，但不发布任何 Linux 二进制。Linux 那一侧
+的软件门禁同样在树里：`ci/check.sh` 会在 Linux 机器上驱动 `tests/` 下的其余目录——音乐导入
+与同步、封面、有声媒体、播放列表、诊断等等——那也是那套门禁唯一跑得起来的地方。
 
 ## 报告问题
 
@@ -166,11 +177,14 @@ src/            C++；DeviceService（libzune 桥）、应用入口
 qml/            界面；Theme.qml 是设计 token
 compat/win/     Windows 的 POSIX 接口面，只构建一次，产物是 zuuned_wincompat
 libzune/        随源码附带；共享的 C 协议库
+libzune/tools/  zunetool 与 mtpframingtool，协议侧的探针
+transcode/      FFmpeg 与 LAME 转码，外加系统自带的 WMA 无损编码器
 i18n/           界面措辞；zh_CN.tsv 是可编辑的源
 packaging/      Linux USB 规则、PKGBUILD 与 AppImage 构建器
 packaging/windows/  WinUSB 驱动指南与 check-driver.ps1
 tests/win-compat/    Windows 兼容性门禁（不碰设备）
 tests/win-usability/ Windows 启动与界面门禁（不碰设备）
+tests/            Linux 门禁套件，由 ci/check.sh 驱动（不碰设备）
 docs/readme-screenshots/  这些截图，以及 zh/ 那一套
 docs/WINDOWS_PORT.md 在 Windows 上证实了什么、没证实什么
 docs/WINDOWS_COMPAT_AUDIT.md 全树的 Windows 兼容性排查

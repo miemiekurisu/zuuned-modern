@@ -90,6 +90,12 @@ QVariantMap DiagnosticsService::conversionTools() const
          zuuned_audio_encoder_available(ZUUNED_AUDIO_MP3) != 0},
         {QStringLiteral("wmaEncoder"),
          zuuned_audio_encoder_available(ZUUNED_AUDIO_WMA) != 0},
+        // WMA Lossless does not come from the linked FFmpeg, so it is asked of its
+        // own door: the encoder shipped inside Windows, present per install and
+        // never present off Windows.  A card that showed the WMA row as if it
+        // answered for both would offer a format this machine cannot write.
+        {QStringLiteral("wmaLosslessEncoder"),
+         zuuned_audio_encoder_available(ZUUNED_AUDIO_WMA_LOSSLESS) != 0},
         // Which LAME is linked.  A card that only prints the word "LAME" asks the
         // user to believe a name; a version is something a report can compare.
         {QStringLiteral("mp3EncoderVersion"),
@@ -253,7 +259,15 @@ QVariantMap encodeTone(const QString &tonePath, int target, int bitrate)
     const bool durationOk =
         probed == 0 && seconds > kSelfTestSeconds * 0.85 && seconds < kSelfTestSeconds * 1.15;
     const double expectedBytes = double(bitrate) * 1000.0 / 8.0 * kSelfTestSeconds;
-    const bool sizeOk = bytes > qint64(expectedBytes * 0.5);
+    // A lossless encode has no bit rate to be measured against: it spends what
+    // the recording is worth, and a two-second tone is worth very little to it
+    // (measured, three seconds of a sine came out at 72,391 bytes where 320 kbps
+    // CBR would have spent 120,000).  Judging that against a preset would call a
+    // working encoder too small, so a lossless leg is judged on its container and
+    // its length and its size is only ever reported.
+    const bool sizeOk = target == ZUUNED_AUDIO_WMA_LOSSLESS
+                            ? bytes > 0
+                            : bytes > qint64(expectedBytes * 0.5);
     result.insert(QStringLiteral("ok"), containerOk && durationOk && sizeOk);
     if (!containerOk) result.insert(QStringLiteral("code"), QStringLiteral("container"));
     else if (probed != 0) result.insert(QStringLiteral("code"), QStringLiteral("unprobeable"));
@@ -321,9 +335,16 @@ void DiagnosticsService::runAudioSelfTest()
         }
         const QVariantMap mp3 = encodeTone(tonePath, ZUUNED_AUDIO_MP3, bitrate);
         const QVariantMap wma = encodeTone(tonePath, ZUUNED_AUDIO_WMA, bitrate);
+        // The same two seconds through the third door.  It is the same tone on
+        // purpose: 44.1 kHz, two channels, 16 bits is one of the eight shapes the
+        // lossless encoder in Windows offers, so a leg that fails here means the
+        // runtime will not write, not that the file was never going to fit.
+        const QVariantMap lossless =
+            encodeTone(tonePath, ZUUNED_AUDIO_WMA_LOSSLESS, bitrate);
         QFile::remove(tonePath);
         out.insert(QStringLiteral("mp3"), mp3);
         out.insert(QStringLiteral("wma"), wma);
+        out.insert(QStringLiteral("lossless"), lossless);
         const bool mp3Ok = mp3.value(QStringLiteral("ok")).toBool();
         // An absent WMA encoder is a fact about the build, not a failed test; the
         // card already lists it in red.  A present one that cannot produce a
@@ -331,10 +352,20 @@ void DiagnosticsService::runAudioSelfTest()
         const bool wmaOk = wma.value(QStringLiteral("available")).toBool()
                                ? wma.value(QStringLiteral("ok")).toBool()
                                : true;
-        out.insert(QStringLiteral("ok"), mp3Ok && wmaOk);
+        // The same rule, and it earns its keep here more than anywhere: this
+        // encoder belongs to the Windows Media Format runtime rather than to
+        // anything this build links, so on Linux, and on a Windows install with
+        // WMSDK 9.2 removed, "not available" is a true sentence about the platform
+        // rather than a broken app.
+        const bool losslessOk = lossless.value(QStringLiteral("available")).toBool()
+                                    ? lossless.value(QStringLiteral("ok")).toBool()
+                                    : true;
+        out.insert(QStringLiteral("ok"), mp3Ok && wmaOk && losslessOk);
         out.insert(QStringLiteral("code"),
-                   !mp3Ok ? QStringLiteral("mp3") : (wmaOk ? QStringLiteral("ok")
-                                                           : QStringLiteral("wma")));
+                   !mp3Ok ? QStringLiteral("mp3")
+                          : !wmaOk ? QStringLiteral("wma")
+                          : losslessOk ? QStringLiteral("ok")
+                                       : QStringLiteral("lossless"));
         return out;
     });
     watcher->setFuture(m_audioSelfTest);

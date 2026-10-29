@@ -16,6 +16,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+#include <stdio.h>  /* FILE - the streaming send-data source reads from one */
 #include "usb.h"
 
 /* ===================================================================
@@ -283,6 +284,44 @@ int ptp_transaction(ptp_session_t *s,
                     uint8_t **recv_data, uint32_t *recv_len,
                     uint16_t *response_code,
                     uint32_t *resp_params, int *resp_nparams);
+
+/*
+ * Progress for a streamed data phase: `sent` bytes of `total` have been
+ * handed to the USB backend. Called from the transfer thread between chunks.
+ */
+typedef void (*ptp_progress_fn)(uint64_t sent, uint64_t total, void *userdata);
+
+/*
+ * ptp_transaction_send_file - Execute a SendObject-style transaction whose
+ * data phase is streamed from an open file.
+ *
+ * Same three phases, same transaction-id handling, same response timeout as
+ * ptp_transaction() with PTP_DP_SENDDATA, and the same USB framing to the
+ * byte: both paths run through one chunk loop in ptp.c. The difference is
+ * only where the bytes come from, and that is the point - a 200 MB video
+ * used to be malloc()ed whole before the first byte went out.
+ *
+ * The file is read from its current position, exactly `send_len` bytes; a
+ * file that ends early fails rather than sending a short container.
+ *
+ *   s:             initialized, open session
+ *   opcode:        op code carrying the data phase (PTP_OC_SendObject)
+ *   params:        command parameters (NULL for SendObject)
+ *   nparams:       number of command parameters
+ *   fp:            file opened for binary reading, kept open by the caller
+ *   send_len:      payload length the container header advertises
+ *   progress:      per-chunk callback (may be NULL)
+ *   userdata:      passed through to progress
+ *   response_code: [out] PTP_RC_* from the device (may be NULL)
+ *
+ * Returns 0 on success (PTP_RC_OK), -1 on transport, protocol or read error.
+ */
+int ptp_transaction_send_file(ptp_session_t *s,
+                              uint16_t opcode,
+                              uint32_t *params, int nparams,
+                              FILE *fp, uint64_t send_len,
+                              ptp_progress_fn progress, void *userdata,
+                              uint16_t *response_code);
 
 /*
  * ptp_get_device_prop_value — Read a device property.

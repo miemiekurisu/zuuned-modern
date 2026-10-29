@@ -568,6 +568,19 @@ add_library(zuuned_transcode STATIC
     transcode/audio_encode.c
     transcode/id3_rewrite.c
 )
+if(WIN32)
+    # WMA Lossless is not an FFmpeg target.  The encoder is the one in the Windows
+    # Media Format runtime, so the Windows build adds one translation unit of
+    # in-process WMSDK calls and three import libraries for DLLs that are already
+    # on every Windows install - no vendored codec and no forked encoder project.
+    # Elsewhere the same two entry points come from the stub, which keeps this
+    # library's POSIX link line C-only: transcodetool is a C executable and has no
+    # reason to acquire a C++ runtime for two stubs.
+    target_sources(zuuned_transcode PRIVATE transcode/wma_lossless_enc.cpp)
+    target_link_libraries(zuuned_transcode PUBLIC wmvcore wmcodecdspuuid ole32)
+else()
+    target_sources(zuuned_transcode PRIVATE transcode/wma_lossless_stub.c)
+endif()
 target_include_directories(zuuned_transcode PUBLIC transcode ${FFMPEG_INCLUDE_DIRS}
     ${ZUUNED_COMPAT_DIR} ${LAME_INCLUDE_DIRS} ${PCRE2_INCLUDE_DIR})
 target_link_libraries(zuuned_transcode PUBLIC
@@ -575,8 +588,13 @@ target_link_libraries(zuuned_transcode PUBLIC
 if(WIN32)
     # Shared with the Linux/mac build, so it leans on the same POSIX surface
     # libzune does; see compat/win.
+    # /utf-8 covers C++ here as well, which is the exception: this library's only
+    # C++ source is the WMSDK encoder, it is pure ASCII, and the shared
+    # libav_transcode.h it includes is UTF-8 - left to the console code page that
+    # header draws C4819 on every compile.  Other targets keep the C-only spelling
+    # because their C++ sources are not all clean ASCII.
     target_compile_options(zuuned_transcode PRIVATE
-        "$<$<COMPILE_LANGUAGE:C>:/utf-8>" ${ZUUNED_SHIM_FLAGS})
+        "/utf-8" ${ZUUNED_SHIM_FLAGS})
 endif()
 
 add_executable(transcodetool transcode/transcodetool.c)
@@ -590,6 +608,24 @@ else()
     target_link_libraries(transcodetool PRIVATE zuuned_transcode)
 endif()
 zuuned_long_paths(transcodetool)
+
+# MTP framing gate (mtpframingtool).  The SendObject data phase streams from
+# the file now instead of being malloc()ed whole, and what a Zune must not be
+# able to notice is the difference: chunk sizes, max-packet alignment and
+# zero-length-packet placement have to come out identical.  This runs both
+# paths against a mock USB backend and compares every recorded bulk_out write.
+# Software only - it opens no device handle and makes no libusb call, which is
+# exactly why it can run with no Zune attached.
+if(WIN32)
+add_executable(mtpframingtool libzune/tools/mtpframingtool.c)
+target_include_directories(mtpframingtool PRIVATE
+    ${LIBZUNE_DIR}/src ${LIBZUNE_DIR}/include ${ZUUNED_COMPAT_DIR})
+target_link_libraries(mtpframingtool PRIVATE ${LIBZUNE_A} ${ZUUNED_WINCOMPAT}
+    ${LIBUSB_LIBRARIES} ${ZUUNED_SYSTEM_LIBS})
+target_compile_options(mtpframingtool PRIVATE
+    "$<$<COMPILE_LANGUAGE:C>:/utf-8>" ${ZUUNED_SHIM_FLAGS})
+zuuned_long_paths(mtpframingtool)
+endif()
 
 # Private spoken-media foundation. Reusable worker-only parsers; the inspection
 # harness is a developer target, never an AppImage payload or runtime dependency.

@@ -205,15 +205,35 @@ int mtp_send_object_info(ptp_session_t *s, uint32_t storage,
 int mtp_send_object(ptp_session_t *s, const uint8_t *data, uint32_t len);
 
 /*
- * mtp_send_object_from_file — Send object data from a file.
+ * mtp_send_object_from_file_progress — Send object data streamed from a file.
  *
- * Reads the file into memory and calls mtp_send_object.
  * Must be called immediately after a successful mtp_send_object_info().
  *
- *   path:  filesystem path to read from
- *   len:   expected file size in bytes (used for validation)
+ * The file is streamed in CONTEXT_BLOCK_SIZE chunks, so the peak memory this
+ * call costs is one chunk rather than one object. An 80 GB video used to be
+ * malloc()ed whole here, which on a 32-bit size_t or a fragmented heap meant
+ * either a refusal or a stalled sync long before the USB wire saw anything.
+ * Framing on the wire is identical to mtp_send_object() with the same bytes:
+ * both feed one chunk loop in ptp.c.
+ *
+ *   path:     filesystem path to read from (read exactly `len` bytes; a file
+ *             that ends early is an error, never a short container)
+ *   len:      object size in bytes, as advertised in ObjectInfo
+ *   progress: per-chunk callback (may be NULL)
+ *   userdata: passed through to progress
  *
  * Returns 0 on success, -1 on error.
+ */
+int mtp_send_object_from_file_progress(ptp_session_t *s, const char *path,
+                                       uint32_t len,
+                                       ptp_progress_fn progress,
+                                       void *userdata);
+
+/*
+ * mtp_send_object_from_file — Stream a file with no progress callback.
+ *
+ * Kept as the signature every existing caller uses; it is now a wrapper over
+ * mtp_send_object_from_file_progress() rather than a read-whole-file path.
  */
 int mtp_send_object_from_file(ptp_session_t *s, const char *path,
                               uint32_t len);

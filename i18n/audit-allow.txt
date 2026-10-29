@@ -25,6 +25,7 @@ SKIP-LINE :: Q_TEST|\bQCOMPARE\b|\bQVERIFY\b :: test assertions
 
 # --- whole files that are not the application's interface --------------------
 SKIP-FILE :: src/library/librarytool.cpp :: offline CLI probe; its stdout is read by gate scripts, not by a user
+SKIP-FILE :: transcode/transcodetool.c :: offline CLI encoder probe and self-test harness; its check names are gate output, read by run.ps1, never rendered
 SKIP-FILE :: src/library/LibraryDb.cpp :: schema, migration SQL and metadata plumbing
 SKIP-FILE :: src/diagnostics/SupportReport.cpp :: support file text, English by design so a maintainer can read it anywhere
 SKIP-FILE :: src/diagnostics/SessionLog.cpp :: the session log is English log output

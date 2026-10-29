@@ -866,13 +866,30 @@ int mtp_send_object(ptp_session_t *s, const uint8_t *data, uint32_t len)
     return 0;
 }
 
-int mtp_send_object_from_file(ptp_session_t *s, const char *path,
-                              uint32_t len)
+int mtp_send_object_from_file_progress(ptp_session_t *s, const char *path,
+                                       uint32_t len,
+                                       ptp_progress_fn progress,
+                                       void *userdata)
 {
     FILE *fp;
-    uint8_t *data;
-    size_t bytes_read;
+    uint16_t resp = 0;
     int ret;
+
+    if (!path || !path[0]) {
+        fprintf(stderr, "[mtp] send_object_from_file: no path\n");
+        return -1;
+    }
+    /*
+     * An empty object is not a file transfer, and a container of 12 bytes
+     * would leave the device waiting for a data phase that never said
+     * anything. Callers get their size from stat(); a zero here means the
+     * file vanished or was never what ObjectInfo claimed.
+     */
+    if (len == 0) {
+        fprintf(stderr, "[mtp] send_object_from_file: refusing a 0-byte "
+                        "object for '%s'\n", path);
+        return -1;
+    }
 
     fp = fopen(path, "rb");
     if (!fp) {
@@ -880,27 +897,24 @@ int mtp_send_object_from_file(ptp_session_t *s, const char *path,
         return -1;
     }
 
-    data = (uint8_t *)malloc(len);
-    if (!data) {
-        fprintf(stderr, "[mtp] send_object_from_file: malloc failed for %u bytes\n",
-                len);
-        fclose(fp);
-        return -1;
-    }
-
-    bytes_read = fread(data, 1, len, fp);
+    ret = ptp_transaction_send_file(s, PTP_OC_SendObject, NULL, 0,
+                                    fp, (uint64_t)len, progress, userdata,
+                                    &resp);
     fclose(fp);
 
-    if (bytes_read != len) {
-        fprintf(stderr, "[mtp] send_object_from_file: read %zu of %u bytes from '%s'\n",
-                bytes_read, len, path);
-        free(data);
+    if (ret < 0) {
+        fprintf(stderr, "[mtp] send_object_from_file: failed (response 0x%04X)\n",
+                resp);
         return -1;
     }
 
-    ret = mtp_send_object(s, data, len);
-    free(data);
-    return ret;
+    return 0;
+}
+
+int mtp_send_object_from_file(ptp_session_t *s, const char *path,
+                              uint32_t len)
+{
+    return mtp_send_object_from_file_progress(s, path, len, NULL, NULL);
 }
 
 int mtp_delete_object(ptp_session_t *s, uint32_t handle)
