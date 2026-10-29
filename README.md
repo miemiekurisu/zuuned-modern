@@ -100,16 +100,20 @@ Hand-tested against one Pavo-generation Zune HD on the development machine:
   music, not in a directory of the app's own choosing.
 - **Local library on a Windows disk** - watch folders, native `E:\...` path display,
   non-ASCII file names, album artwork.
+- **WMA Lossless end to end** - a FLAC master encoded by the encoder Windows already ships, sent
+  to the player, taken back with PCM that still hashes to the master's, and played on the HD. The
+  container that comes back is not the one that went out: a Zune re-wraps an ASF on ingest and
+  rewrites the Author inside the file from the name it holds device-side, so the invariant for this
+  format is the codec tag the player serves plus the decoded samples, never the bytes.
 
 **Not yet proven on Windows**, and not inherited from Linux either: deletion and purge,
 the podcast, audiobook, photo and video transfer categories, every Zune model but that one
-Pavo, audible playback (the automated gate opens WASAPI muted, so nothing has been
-listened to by a test), and packaging - there is no Windows installer yet, so today the
-port is a build-from-source project. **WMA Lossless** is encoded on Windows, by the
-encoder the operating system already ships rather than a bundled codec, and the
-measurement is a bit-identical PCM round trip; what has not happened is a player playing
-one.  The format is documented for the Zune HD alone, so the setting says out loud that
-the likely result on another model is a silent track.
+Pavo, audible PC-side playback (the automated gate opens WASAPI muted, so no
+automated run has heard anything), and packaging - there is no Windows installer yet, so today the
+port is a build-from-source project. **WMA Lossless** is encoded on Windows, by the encoder the
+operating system already ships rather than a bundled codec, and a track written that way has now
+been heard on the HD; the format is documented for the Zune HD alone, so no other model has been
+offered one and the setting says out loud that the likely result elsewhere is a silent track.
 
 ## Getting a Zune seen by Windows
 

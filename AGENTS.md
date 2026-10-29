@@ -2029,3 +2029,23 @@ facts: `Start-Process -ArgumentList @(...)` does not quote an element containing
 `--qa-device` spec arrives as five words and `qaDeviceSpec` is null - pass one pre-quoted command
 line; and `-WindowStyle Hidden` leaves no window for `winshot --pid` or `CloseMainWindow()`, so an
 instrumented run wants `Minimized` or it can only be killed.
+
+**2026-10-29 the HD played the lossless track, and it re-wraps ASF on ingest:** the user played
+`Lossless Roundtrip Test` on the Zune HD, so a WMA Lossless file this tree wrote has been heard on
+a player, which is the claim the lossless section refused to make. The codec was settled off bytes
+rather than ears: the pulled object is `wmalossless`, `codec_tag=0x0163`, VBR, 909 kbps against
+1,411 kbps of PCM, with the source's ASF attributes intact, and its PCM still hashes to the source
+FLAC's. Against the standalone encode it is a different ASF over the same audio - Header Object
+5,213 -> 5,227 bytes with the same seven header records in the same order on both sides, all of it
+the Content Description Object (GUID `75B22633-668E-11CF-A6D9-00AA0062CE6C`) growing 54 -> 68
+because its Author field goes 8 -> 22 UTF-16 bytes, the source's three Han characters out and the
+ASCII `Wakin Chau` back with the Title unchanged; past each header both payloads are 18,447,476
+bytes and differ in 32, the Data Object's random signature GUID at payload offset 24 and its random
+padding signature partner near the end, one random value per file - so every compressed packet is
+ours, the player re-wrapped the container, and the artist a tag reader reports after a sync can be
+the device's rather than the file's. A byte-exact readback of a WMA/ASF object is therefore not a
+claim this project can make: the invariant is the device's codec tag plus the decoded samples, and
+the 2026-10-21 byte readback was an MP3 this says nothing about. `18,452,689 -> 18,452,703` is
+bookkeeping, not 14 bytes of audio, and the wording that implied otherwise is corrected in
+`docs/WINDOWS_PORT.md`. The track is still on the player because deletion stays its own untested
+gate; item 1 (the 2026-10-21 pair) has still not been heard; nothing has been heard on the PC.

@@ -1933,9 +1933,10 @@ and there is no gate case for the self-test button itself, so today the only rec
    returned a thumbnail from a player, which is the half of it a read would close.  The
    spoken import walk this item carried is routed through `LibraryScan::walkFiles()` as
    of the fifteenth pass, so what is left there is the wire, and the import itself still
-   has no phase, gated or hand.  And hear one WMA Lossless track on the HD: one has been put
-   on the HD and taken off again bit-identical (2026-10-29, below), so the encode and the wire
-   are both done and only the listening is left, on a format documented for that model alone.
+   has no phase, gated or hand.  The WMA Lossless leg of this item is closed: one went onto the
+   HD, came back with bit-identical samples, and the user played it on the player on 2026-10-29,
+   so the HD does decode what this tree writes in that format.  Item 1 above stays open on its
+   own terms - the track heard is the lossless record, not the two files item 1 names.
 6. Only then talk about Windows packaging or a Windows release channel.
 
 ## 2026-10-26 - WMA Lossless, from the encoder that is already in Windows
@@ -1993,7 +1994,7 @@ failure is a track that stays silent rather than one that sounds worse.  The opt
 choice on the Audio conversion card, `disabled` when `conversionTools().wmaLosslessEncoder` is
 false, and it hides the bit-rate pill because the format has none.  **Nothing this build has
 written has been heard on any Zune**, and that stays the sentence to quote until somebody plays
-one.
+one.  Superseded 2026-10-29: somebody played one, on the HD.
 ## 2026-10-29 - The twenty-fifth pass: an outside audit of the audio line, and the gates that answer it
 
 An audit document came into the repo root -
@@ -2118,7 +2119,8 @@ finished and 0 unfinished.
 
 **Not claimed.** No Zune was opened during this pass. The streaming sender has
 been compared against the buffered one on a fake transport and never against a
-player; no WMA Lossless file this tree wrote has been played; deletion, the
+player; no WMA Lossless file this tree wrote had been played (one has since been heard on the
+HD - see the last two sections); deletion, the
 podcast, audiobook, photo and video categories, every model but this Pavo Zune
 HD, and anything anyone has heard all stay exactly where the 2026-10-26 section
 left them.
@@ -2126,8 +2128,9 @@ left them.
 ## 2026-10-29 - WMA Lossless across the wire: one real recording in and back out bit-identical
 
 The 2026-10-26 section ended on the encode and nothing else - "nothing this build has written
-has been heard on any Zune". That encode has now been put on a player and taken off again.
-Nobody has heard it, and that stays the sentence to quote.
+has been heard on any Zune". That encode has now been put on a player and taken off again,
+which is the whole of this section. As it closed nobody had heard it, and the section after
+this one is what closed that.
 
 Fixture, supplied for exactly this: the 3-CD FLAC box
 `E:\Temp\testmusic\测试音乐\Wakin Chau (周華健) - 周而復始 1987-2002 (2003) {RD1668-4} [FLAC]`,
@@ -2164,9 +2167,12 @@ The pull is a separate run, so it also proves the upload survived the device's o
 same binary, `--qa-device "|Wakin Chau|WL QA 2026-10-29|Lossless Roundtrip Test"`, answering
 `download-from itemId=16777486 readbackDurationMs=162320` - the duration the device stored,
 equal to the source's 162.320 s - and `download-saved name='Lossless Roundtrip Test.mp3'
-ok=true`. What came back is 18,452,703 bytes, 14 more than the bytes that went out, behind the
-`.mp3` name the device supplies, and `ffprobe` on it says `codec_name=wmalossless` / `asf` /
-162.319 s. Decoded to `s16le` it is 28,633,248 bytes and hashes to
+ok=true`. What came back is 18,452,703 bytes behind the `.mp3` name the device supplies. The
+size the sync itself wrote is not in the log, so that number is set against the 18,452,689-byte
+standalone encode above and not against the wire, and the section at the end of this page shows
+that the 14-byte difference is container bookkeeping rather than audio. `ffprobe` on the pulled
+object says `codec_name=wmalossless` / `asf` / 162.319 s. Decoded to `s16le` it is
+28,633,248 bytes and hashes to
 `E5C6FA3C1EF4A1D6B586E9573FB7B976231448BB72425AD23F54A8C4E86BC3D0`, the same hash as the source
 FLAC decoded. FLAC -> the encoder in Windows -> this Pavo Zune HD -> back over USB -> PCM is
 bit-exact, which is the strongest thing this repository has ever been able to say about a write.
@@ -2186,3 +2192,55 @@ accepting the bytes is not the HD playing them, and open item 5 above stays open
 alone. Deletion is still untested, so the test track is still on the player. WMA Lossless stays
 documented for the HD alone, and no other model has been offered one. The podcast, audiobook and
 photo/video read halves and packaging are untouched by any of it.
+
+## 2026-10-29 (later) - the HD played it, and the container it gave back is not the one it got
+
+The user reports that `Lossless Roundtrip Test`, in the album `WL QA 2026-10-29`, plays on the
+Zune HD.  That is the first time anybody has heard a WMA Lossless file this tree wrote come out of
+a player, and it closes the listening leg of open item 5.  A listener cannot name a codec - no part
+of a Zune prints one - so the format question was answered off the bytes, and the answer is yes.
+
+`ffprobe` on the object pulled back off the player, which is the file the HD actually keeps:
+`codec_name=wmalossless`, `codec_long_name=Windows Media Audio Lossless`, `codec_tag=0x0163` - the
+same value `[sync] ... tag=0x0163` demanded before it would let the file leave - 44100 Hz, two
+channels, `IsVBR=1`, `DeviceConformanceTemplate=N1`, `WMFSDKVersion=12.0.19041.6456`, 909 kbps
+average against 1,411 kbps of PCM, and the source recording's own ASF attributes still in place
+(title, artist, album, `TrackNumber=04`, `Year=2003`, `PartOfSet=1`).  Nothing lossy happened
+anywhere in the round trip, and the argument is not stylistic: a lossy leg cannot return PCM that
+hashes the same as the source FLAC's PCM, and this one does.
+
+The part nobody had measured, because the two files had only ever been compared by size, is what
+those 14 bytes are.  Laid byte against byte, the standalone encode and the pulled object are two
+different ASFs carrying the same audio.  Each file's top-level Header Object holds the same seven
+records in the same order, six of them the same size on both sides (498, 104, 4147, 226, 122 and 32
+bytes) and simply sitting 14 bytes further along, and the whole of that object's growth from 5,213
+bytes to 5,227 is its first record - GUID `75B22633-668E-11CF-A6D9-00AA0062CE6C`, the **Content
+Description Object** - going 54 bytes to 68.  Its five length fields read Title 12, Author 8,
+Copyright 0, Description 0, Rating 0 on the way out and Title 12, Author 22, Copyright 0,
+Description 0, Rating 0 coming back: the Title is the source's own title unchanged, and the Author
+is three Han characters, 8 UTF-16 bytes, in the file this tree wrote against the ASCII `Wakin Chau`,
+22 bytes, in the file the HD serves.  Those 14 bytes are the whole difference, to the byte.  Past
+each header both payloads are exactly 18,447,476 bytes and they differ in **32 of them**, the Data
+Object's 16-byte random signature GUID at payload offset 24 and its 16-byte random padding
+signature partner near the end - the pair an ASF muxer randomises, which is why each file carries one
+value in both slots and the two files disagree twice.
+Every compressed audio packet between them is byte-identical.  The player stored the stream this
+tree encoded and re-wrapped the container around it.
+
+Three things fall out, and the first two are the kind this page has usually learned the hard way.
+A Zune re-muxes an ASF on ingest, so **a byte-for-byte readback of a WMA or WMA Lossless object is
+not a claim this project can ever make**; the honest invariant is what this sitting measured - the
+codec tag the device serves and the decoded samples.  The 2026-10-21 readback was an MP3 and this
+measurement says nothing about it.  And `18,452,689 -> 18,452,703` is container bookkeeping, not
+14 bytes of audio, which is why the sentence that implied otherwise is corrected above instead of
+being left for the next person to re-derive wrongly from two `ffprobe` runs.  The third is about
+tags rather than gates: the HD rewrote the Author *inside* the file from the name it holds on the
+MTP side, so after a sync a tag reader can report the device's artist rather than the one the file
+shipped with - the same shape of lesson the GUID-moniker work carries, that a name crossing a
+boundary does not necessarily come back the same name.
+
+Still open and unchanged: the test track is still on the player, because deletion is its own
+untested gate and this sitting did not go near it; open item 1 is about the two files from
+2026-10-21 and nobody has heard those; PC-side playback is still muted by gate, so nothing has been
+heard here; and the podcast, audiobook and photo/video read halves, every model but this Pavo, and
+packaging are untouched by any of it.

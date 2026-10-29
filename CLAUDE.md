@@ -30,7 +30,11 @@ Windows change. The fork publishes no Linux binaries.
 - **No Windows hardware claim that `docs/WINDOWS_PORT.md` has no capture of.** No
   Linux hardware evidence crosses platforms in either direction, in a commit
   message, a document or a final answer.
-- Nothing has been listened to on Windows. Never write that playback works there.
+- Nothing has been listened to on the PC under Windows - the audio gate opens a real
+  output muted and never hears it - so never write that playback works there. What has
+  been heard came out of a player: on 2026-10-29 a Zune HD played a WMA Lossless file
+  this tree encoded. That is the device playing, not Windows playing, and it licenses
+  no claim about PC playback.
 - After a header-only edit, build with `cmake --build build --clean-first`.
   Ninja's `deps = msvc` never matches this machine's localized `/showIncludes`
   output, so every object records `#deps 0` and an incremental build silently

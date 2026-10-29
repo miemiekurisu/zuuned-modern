@@ -268,10 +268,11 @@ namespace {
 // Settings → the audio policy for one run, read in one place so the capacity
 // gate, the queue and the worker cannot disagree about what "convert for the
 // Zune" means.  MP3 320 CBR stays the default: MP3 is what a Zune is known to
-// play, and nothing in this repository has ever heard a WMA come out of a
-// player.  Both WMA targets are opt-in for that reason, and the lossless one
-// twice over, because it exists only on Windows and only the Zune HD is
-// documented to play it.
+// play, and a plain WMA has never been heard coming out of a player here.
+// Both WMA targets are opt-in for that reason, and the lossless one twice
+// over, because it exists only on Windows and only the Zune HD is
+// documented to play it -- and that one model has been heard doing it,
+// on 2026-10-29.
 //
 //
 // A request this build cannot honour is refused out loud, and it is never

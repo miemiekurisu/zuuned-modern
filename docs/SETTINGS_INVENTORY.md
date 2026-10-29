@@ -187,7 +187,8 @@ capability without offering a knob or a way to prove it:
   otherwise changed to make a file fit** - a 48 kHz/16-bit source is handed over in 24-bit
   containers because the table has no 16-bit entry that high and a left shift moves no sample
   value, and a mono or 192 kHz source is refused with a message that says why.  Only the Zune HD
-  is documented to play the result, and nothing this build writes has been heard on a player.
+  is documented to play the result, and since 2026-10-29 one such file has been heard coming
+  out of a Zune HD; no other model has been offered the format.
   A source that already *is* WMA still goes through byte for byte under `copyNativeAudio`, which
   is a different feature with a different name.
 - VBR MP3 is broken upstream of this app and deliberately not offered:
@@ -197,8 +198,9 @@ capability without offering a knob or a way to prove it:
 - `format_from_ext()` (`libzune/src/track.c:230`) chooses the MTP object format from the
   **file extension**, so a native WMA copy has to be staged under a `.wma` name or it is
   announced to the player as MP3.
-- Nothing in this repository has ever heard a file come out of a player.  WMA device
-  playback is unproven, so **WMA stays opt-in and MP3 320 CBR stays the default.**
+- A plain WMA has never been heard coming out of a player, and WMA Lossless has been heard
+  from exactly one model - a Zune HD, on 2026-10-29.  WMA device playback is unproven in
+  general, so **WMA stays opt-in and MP3 320 CBR stays the default.**
 
 ## What it should contain
 

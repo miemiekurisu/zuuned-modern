@@ -33,10 +33,12 @@ class AppSettings : public QObject {
     // What music becomes on the way to the player: "mp3", "wma" or
     // "wma-lossless".
     //
-    // MP3 is the default because it is the one target proven on hardware here:
+    // MP3 is the default because it has by far the most hardware history here:
     // the Windows round trip sent MP3 and read it back. WMA is offered because
     // the linked libavcodec carries wmav2 — measured, not assumed — but no Zune
-    // has ever played a WMA this application made, so it stays opt-in.
+    // has ever played a plain WMA this application made, so it stays opt-in.
+    // A lossless file made here has been heard on a Zune HD since 2026-10-29;
+    // plain WMA has not.
     //
     // There is deliberately no VBR option: the MP3 this app writes carries a
     // hand-built ID3v2.3 tag and no Xing/Info header, so a VBR file would seek
@@ -48,8 +50,10 @@ class AppSettings : public QObject {
     // upstream project is forked to get it. The price is that it exists on Windows
     // and nowhere else, so the settings page asks the build instead of assuming.
     // Two-channel WMA Lossless is documented for the Zune HD and for no other
-    // model, which the page says out loud, and no player has ever been heard
-    // playing a file this application wrote.
+    // model, which the page says out loud. That model has now been heard: on
+    // 2026-10-29 a Zune HD played a lossless track this tree encoded from a FLAC
+    // master and gave the same samples back. No other model has been offered the
+    // format.
     //
     // A lossless WMA the user already owns is still carried byte for byte while
     // copyNativeAudio is on, and that route needs no encoder at all.

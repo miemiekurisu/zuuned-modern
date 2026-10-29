@@ -100,9 +100,9 @@ char *zuuned_transcode_audio_with_disc(const char *input_path, const char *album
  * such a source outright instead of resampling or upmixing it into something that
  * would no longer be lossless.  And a player playing WMA Lossless is not a given:
  * two-channel WMA Lossless is documented for the Zune HD, other models are not
- * documented either way, and nothing written here has been listened to on any
- * player.  Lossless WMA the user already owns continues to travel byte for byte,
- * which needs no encoder at all.
+ * documented either way, and the only player ever heard playing what this layer
+ * writes is that one Zune HD, on 2026-10-29.  Lossless WMA the user already owns
+ * continues to travel byte for byte, which needs no encoder at all.
  *
  * `wmav2` has no variable-bitrate mode, which is why the VBR option is MP3-only;
  * lossless has no bit rate to pick either.

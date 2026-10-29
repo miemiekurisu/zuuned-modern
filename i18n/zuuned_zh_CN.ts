@@ -3520,16 +3520,16 @@ or select photos and choose Add.</source>
         <translation>它只有八种格式，本版本对一种都不符合的文件会选择拒绝，而不是重采样成一段已不再是原录音的东西：立体声或 5.1 环绕，44.1 至 96 kHz，仅在 44.1 kHz 支持 16 位、更高采样率仅支持 24 位，且完全不支持单声道。48 kHz 或更高的 16 位文件会在相同采样率与声道数下扩展为 24 位，这不损失任何信息；其余情况会被拒绝，并在队列中说明原因。</translation>
     </message>
     <message>
+        <source>What a player does with the result is the part nobody can promise. WMA Lossless is documented for the Zune HD and documented neither way for every other model, so on a Classic or a Zune 30 the likely answer is a track that stays silent rather than one that plays worse. One WMA Lossless track this build encoded has been played on a Zune HD, on 2026-10-29; no other model has been offered the format. If a lossless track goes quiet on the player, switch the format above back to MP3 or WMA and sync again - nothing on the computer is touched.</source>
+        <translation>播放器会如何处理这个结果，是没有人能承诺的部分。只有 Zune HD 在文档中明确支持 WMA 无损，其他机型正反两面的文档都没有，因此在 Classic 或 Zune 30 上，更可能的结果是该曲目完全不出声，而不是播放质量下降。本构建编码的一个 WMA 无损曲目已在 2026 年 10 月 29 日由 Zune HD 播放过，其他机型都还没有拿到过这个格式。如果无损曲目在播放器上没有声音，请把上面的格式改回 MP3 或 WMA 后重新同步 — 电脑上的文件不会有任何改动。</translation>
+    </message>
+    <message>
         <source>Writes a two-second tone, sends it through every encoder this build can reach at the settings above, and reports what came back. Nothing is stored and nothing is sent to a player.</source>
         <translation>生成一段两秒的提示音，按上面的设置分别送进本版本能够调用到的每一个编码器，然后报告产出的结果。不会保存任何文件，也不会向播放器发送任何内容。</translation>
     </message>
     <message>
         <source>Bit rate is constant only. A variable-bitrate MP3 header is not written by this build - measured, the LAME/Xing frame is absent and the player then reports a track three minutes shorter than it is - so VBR is not offered.</source>
         <translation>码率只能是恒定的。本版本不会写入可变码率的 MP3 头 —— 实测缺少 LAME/Xing 帧，播放器随后会把曲目时长少报三分钟 —— 因此不提供 VBR。</translation>
-    </message>
-    <message>
-        <source>What a player does with the result is the part nobody can promise. WMA Lossless is documented for the Zune HD and documented neither way for every other model, so on a Classic or a Zune 30 the likely answer is a track that stays silent rather than one that plays worse. Nothing this build has written has been heard on any Zune. If a lossless track goes quiet on the player, switch the format above back to MP3 or WMA and sync again - nothing on the computer is touched.</source>
-        <translation>播放器会如何处理这个结果，是没有人能承诺的部分。只有 Zune HD 在文档中明确支持 WMA 无损，其他机型正反两面的文档都没有，因此在 Classic 或 Zune 30 上，更可能的结果是该曲目完全不出声，而不是播放质量下降。本版本写出的任何文件都还没有在任何 Zune 上被听过。如果无损曲目在播放器上没有声音，请把上面的格式改回 MP3 或 WMA 后重新同步 — 电脑上的文件不会有任何改动。</translation>
     </message>
     <message>
         <source>FFmpeg command-line tools</source>
