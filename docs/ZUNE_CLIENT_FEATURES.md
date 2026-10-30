@@ -212,7 +212,7 @@ songs into six provider requests and a `HTTP 503`.
 | Rename the player | Yes | Yes - `renameDevice` through MTP property `0xD402` | no |
 | Rename an object | Yes | Yes - `renameItem` | no |
 | Create a playlist on it | Yes | Yes - `createPlaylist` | no |
-| Delete from it | Yes | Yes - `purgeItems` and `purgeSpokenItems`, user-confirmed, live selection revalidated first | no |
+| Delete from it | Yes | Yes - `purgeItems` and `purgeSpokenItems`, user-confirmed, live selection revalidated first. One music track was deleted from a Zune HD on Windows on 2026-10-30 and the player agreed in a second session; the spoken path has never run against a player | yes |
 | Eject safely | Yes | Yes - `eject` | no |
 | Duplicate detection before sending | Yes | Yes - shared identity with disc/track distinction and an explicit ambiguous answer | no |
 | Storage accounting per category | Yes | Yes, with honest counts where per-media bytes are unknown on classic players | read |
@@ -292,13 +292,14 @@ line. Two of them are useful for exactly the question this page is about.
 
 Item 1 is not a feature decision, it is the precondition for the rest: the Windows
 hardware gates in `WINDOWS_PORT.md` are open, and every added capability would be
-measured against a player that this port has never deleted from.
+measured against one Pavo Zune HD that this port has deleted exactly one music track
+from.
 
 Items 4, 6 and 7 are the ones a dated release names, which is the useful kind of gap:
 the original client shipped them, they were not a hosted service, and nothing about the
 protocol prevents them here.
 
-1. Close the open Windows device gates: one deletion, audible playback, the photo and
+1. Close the open Windows device gates: audible playback, the photo and
    video read halves, the podcast and audiobook categories with firmware resume, then a
    Classic, a Draco and an 80/120.
 2. Packaging and an install path, so a tester is not choosing a driver in Zadig by hand.

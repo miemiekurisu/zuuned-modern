@@ -121,6 +121,8 @@ ApplicationWindow {
         startQaQueue()
         if (qaTransferSpec)
             qaDeviceTimer.start()
+        if (qaDeleteSpec)
+            qaDeleteTimer.start()
     }
     // QA harness (`--qa-probe`): one authoritative line about what this window
     // actually decided to show.  The usability gates need it because a painted
@@ -522,6 +524,89 @@ ApplicationWindow {
             if (!window.qaTransferSpec)
                 return
             window.qaDeviceLog("pull-toast '" + message + "'")
+        }
+    }
+    // QA harness (`--qa-delete "<artist>|<album>|<title>"`): one device deletion
+    // through the very purge path the right-click control uses, so a delete
+    // becomes evidence in a log instead of a claim.  The row is re-matched on
+    // all three identity fields before anything is sent, the pass refuses while
+    // anything else owns the device, and the row inventory plus the reported
+    // free space go out before and after.  What the player itself thinks is a
+    // separate flagless run, because a purge is a DeleteObject and nothing here.
+    readonly property var qaDeleteSpec: {
+        const args = Qt.application.arguments
+        const i = args.indexOf("--qa-delete")
+        if (i < 0 || i + 1 >= args.length)
+            return null
+        const parts = String(args[i + 1]).split("|")
+        return parts.length >= 3 ? parts : null
+    }
+    property bool qaDeleteIssued: false
+    property bool qaDeleteDone: false
+    function qaDeleteLog(note) {
+        console.log("[qa-delete] " + note)
+    }
+    function qaDeleteRowFor(artist, album, title) {
+        const rows = DeviceService.deviceTrackRows()
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i]
+            if (row.title === title && row.artist === artist
+                && row.album === album)
+                return row
+        }
+        return null
+    }
+    function qaDeleteStep() {
+        const spec = qaDeleteSpec
+        if (!spec || qaDeleteDone)
+            return
+        qaDeleteLog("state connected=" + DeviceService.connected
+            + " busy=" + DeviceService.busy
+            + " stage=" + DeviceService.connectionStage
+            + " purging=" + DeviceService.purging
+            + " syncing=" + SyncEngine.isSyncing
+            + " deviceTracks=" + DeviceService.trackCount
+            + " freeGB=" + DeviceService.freeGB)
+        if (qaDeleteIssued) {
+            if (DeviceService.purging)
+                return
+            qaDeleteLog("delete-settled deviceTracks=" + DeviceService.trackCount
+                + " rowGone=" + (qaDeleteRowFor(spec[0], spec[1], spec[2]) === null)
+                + " freeGB=" + DeviceService.freeGB
+                + " status=\"" + DeviceService.status + "\"")
+            qaDeleteDone = true
+            return
+        }
+        if (!DeviceService.connected || DeviceService.busy
+            || DeviceService.purging || SyncEngine.isSyncing)
+            return
+        const row = qaDeleteRowFor(spec[0], spec[1], spec[2])
+        if (!row) {
+            qaDeleteLog("delete-missing artist='" + spec[0] + "' album='"
+                + spec[1] + "' title='" + spec[2] + "'")
+            const rows = DeviceService.deviceTrackRows()
+            for (let i = 0; i < rows.length; i++)
+                if (rows[i].album === spec[1])
+                    qaDeleteLog("same-album itemId=" + rows[i].itemId
+                        + " artist='" + rows[i].artist
+                        + "' title='" + rows[i].title + "'")
+            return
+        }
+        qaDeleteLog("delete-before deviceTracks=" + DeviceService.trackCount
+            + " itemId=" + row.itemId + " durationMs=" + row.durationMs)
+        DeviceService.purgeItems([row.itemId])
+        qaDeleteIssued = true
+    }
+    Timer {
+        id: qaDeleteTimer
+        interval: 2000
+        repeat: true
+        property int ticks: 0
+        onTriggered: {
+            ticks++
+            window.qaDeleteStep()
+            if (ticks >= 150 || window.qaDeleteDone)
+                stop()
         }
     }
     Connections {

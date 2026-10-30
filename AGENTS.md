@@ -2047,5 +2047,45 @@ the device's rather than the file's. A byte-exact readback of a WMA/ASF object i
 claim this project can make: the invariant is the device's codec tag plus the decoded samples, and
 the 2026-10-21 byte readback was an MP3 this says nothing about. `18,452,689 -> 18,452,703` is
 bookkeeping, not 14 bytes of audio, and the wording that implied otherwise is corrected in
-`docs/WINDOWS_PORT.md`. The track is still on the player because deletion stays its own untested
-gate; item 1 (the 2026-10-21 pair) has still not been heard; nothing has been heard on the PC.
+`docs/WINDOWS_PORT.md`. The track stayed on the player there because deletion was still its own
+untested gate at that point — the paragraph below closes that gate. Item 1 (the 2026-10-21 pair)
+has still not been heard; nothing has been heard on the PC.
+
+**2026-10-30 the first deletion on Windows, and a second session that agreed:**
+`qml/Main.qml` gained `--qa-delete "<artist>|<album>|<title>"`,
+inert without the flag (the flagless run printed no `[qa-delete]` line at all), which
+waits for a connected device that nothing else owns, re-matches the row on artist, album
+and title, and calls the very `DeviceService.purgeItems` the right-click control calls.
+Against a Pavo Zune HD it purged one track in 319 ms - `[worker] purged 16777486 ok` -
+and a *separate* launch afterwards, with no CleanDataStore, no eject and no sync between
+the two, read the player's own truth back: 168 tracks / 10 albums / 10 artists where the
+pre-delete session counted 169 / 11 / 11, the album list missing exactly
+`WL QA 2026-10-29`, the artist list missing exactly `Wakin Chau`, and the seven
+surviving artist tiles carrying their earlier counts unchanged. Free space read
+10,841,047,040 against 10,822,483,968, so the player gave back 18,563,072 bytes for an
+18,452,703-byte file - 110,369 of its own allocation overhead, and 110,369 more than the
+in-session `noteBytesFreed` credit, which was pre-delete free plus the file size to the
+byte. That credit is `DeviceService::onPurgeDone` refusing to re-read on purpose, and the
+comment that justifies it (`src/DeviceService.cpp:1349`, "doesn't re-index until the
+eject-time CleanDataStore") stays **untested**: nothing asked the device in the seconds
+after the DeleteObject, which is the window that sentence is about. Measured instead, and
+narrower: a later session needed no eject to see the truth, so the credit is authoritative
+for the rest of that session rather than until an eject. Neither the code nor the comment
+changed, because settling that means probing the window and this sitting did not. Two
+measurements worth carrying: **a ZMDB payload is not a fingerprint of its inventory** -
+the 169-track/11-album state read 225,160 bytes on 2026-10-29 and 225,196 here, the
+168/10 state 224,940 before the deleted track existed at all and 224,928 after deleting
+it, so deletion restored the counts and not the bytes - and **a delete does not wedge the
+player**, `devicetool` answering `VERDICT=agree` at `os_problem=0` with no bulk timeout
+and no reset attempted, on a tree whose 2026-10-21 record is a `libusb_reset_device()`
+that returned success while recovering nothing. Gates against a `--clean-first` relink:
+`tests\win-compat` 201 checks / 0 failures / 0 skips, `librarytool paths` ALL PASS,
+`i18n\audit.py` AUDIT=ok, and `tests\win-usability -Only fixture,tools` at
+`launches=0 checks=47 failures=0` because those two phases launch nothing and open no
+device handle; the full usability gate was deliberately not run with the player attached,
+since it starts one instance per page and every one of them auto-connects. **Scope:** one
+music object, once, one Pavo. `purgeSpokenItems` has still never run against a player;
+photo, video and playlist deletion and `doPurgeInterruptedObject` stay unmeasured;
+`Zuuned QA / SineQA550` is still on the player by choice and not by oversight; no Linux
+deletion result is inherited here; and the podcast, audiobook and photo/video read
+halves, every model but this Pavo, audible PC-side playback and packaging are untouched.

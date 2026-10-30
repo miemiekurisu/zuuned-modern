@@ -133,8 +133,9 @@ exist and answered truthfully:
   so a gate that scans a Hebrew album folder could not read its own output.
 
 Still not proven on Windows, each its own gate: a Classic, Draco or 80/120 (every
-Windows device fact here is one Pavo Zune HD); deletion or purge; podcast and
-audiobook transfer; photo and video transfer; device-side playback.  At that
+Windows device fact here is one Pavo Zune HD); podcast and audiobook transfer; photo
+and video transfer; device-side playback.  Deletion sat on that list too and closed on
+2026-10-30, in the last section.  At that
 point the finalise, re-index and byte readback evidence was still Linux
 evidence; the next section is what closed part of it the same day.
 
@@ -289,10 +290,11 @@ refuses to breach back in *while* the player re-indexes, on both platforms; the
 ladder is what runs after it.
 
 Neither QA run cleaned up after itself, and this sitting does not claim it could:
-device-side deletion is an open gate on Windows, so `ZuunedQA / SineQA550` is still on
-the Pavo and the copy pulled back from it is still in `Music\Zuuned Imports`.  A
-future run inherits both; removing them is part of closing the deletion gate, not
-housekeeping to do by hand in the meantime.
+device-side deletion was an open gate on Windows, so `ZuunedQA / SineQA550` stayed on
+the Pavo and the copy pulled back from it stayed in `Music\Zuuned Imports`.  A future
+run inherits both.  The deletion gate closed on 2026-10-30, on the
+`Wakin Chau / WL QA 2026-10-29` pair rather than this one, so this pair is still on the
+player - see the last section.
 
 ## Toolchain that works here
 
@@ -2189,7 +2191,8 @@ flight and nothing needing a power cycle.
 
 What this does not change, stated so it is not rediscovered: **nobody has listened**, so the HD
 accepting the bytes is not the HD playing them, and open item 5 above stays open for that reason
-alone. Deletion is still untested, so the test track is still on the player. WMA Lossless stays
+alone. Deletion was still untested here, so the test track stayed on the player; the
+last section is what closed that the next morning. WMA Lossless stays
 documented for the HD alone, and no other model has been offered one. The podcast, audiobook and
 photo/video read halves and packaging are untouched by any of it.
 
@@ -2239,8 +2242,97 @@ MTP side, so after a sync a tag reader can report the device's artist rather tha
 shipped with - the same shape of lesson the GUID-moniker work carries, that a name crossing a
 boundary does not necessarily come back the same name.
 
-Still open and unchanged: the test track is still on the player, because deletion is its own
-untested gate and this sitting did not go near it; open item 1 is about the two files from
+Still open and unchanged: open item 1 is about the two files from
 2026-10-21 and nobody has heard those; PC-side playback is still muted by gate, so nothing has been
 heard here; and the podcast, audiobook and photo/video read halves, every model but this Pavo, and
-packaging are untouched by any of it.
+packaging are untouched by any of it.  The first clause is the one that moved: the
+deleted track came off the player the next morning, in the section below.
+
+## 2026-10-30 - the first deletion on Windows, and a second session that agreed
+
+Closing the deletion gate wanted a probe rather than an eyeball, for the same reason
+`--qa-device` exists: once a row has left a local list, a DeleteObject that worked and
+one that was refused look identical on screen.  `qml/Main.qml` gained
+`--qa-delete "<artist>|<album>|<title>"`, which waits until the device is connected and
+nothing else owns it, re-matches the row on all three identity fields before it sends
+anything, calls the very `DeviceService.purgeItems` the right-click control calls, and
+prints the row inventory and the reported free space before and after.  It is inert
+without the flag - the flagless run below printed no `[qa-delete]` line at all.  The
+candidate was the track the section above deliberately left on the player:
+
+```
+[libzune] connected: [device name] (Zune), battery: 100%, storage: 10822483968/15543730176
+[libzune-zmdb] totalSize=225208, payloadSize=225196, first chunk=12 bytes
+[zunedb] scanned: 169 tracks, 0 videos, 5 photos, 11 albums, 11 artists, 0 playlists, 1 photo albums
+[zmdb] album object 100663580 name="WL QA 2026-10-29" artist="Wakin Chau" tracks=1
+[qa-delete] delete-before deviceTracks=169 itemId=16777486 durationMs=162320
+[worker] purge: 1 item(s) requested
+[worker] purged 16777486 ok
+[qa-delete] delete-settled deviceTracks=168 rowGone=true freeGB=10.840936671
+```
+
+The `status` of that settled line is left out because the launch was in Chinese and
+printed the `zh_CN` form of `Deleted %1 item(s) — freed %2`; what matters is that
+between the `purged` line and the settled line the app asked the player nothing.  Its
+`freeGB` is the `noteBytesFreed` credit - 10,822,483,968 + 18,452,703 =
+10,840,936,671, the file's own size to the byte - which is the optimistic number
+`DeviceService::onPurgeDone` deliberately keeps instead of re-reading.  What the player
+thinks came from a separate flagless launch, with no CleanDataStore, no eject and no
+sync between the two:
+
+```
+[libzune] connected: [device name] (Zune), battery: 100%, storage: 10841047040/15543730176
+[libzune-zmdb] totalSize=224940, payloadSize=224928, first chunk=12 bytes
+[zunedb] scanned: 168 tracks, 0 videos, 5 photos, 10 albums, 10 artists, 0 playlists, 1 photo albums
+```
+
+The player agrees, and the agreement is specific rather than merely smaller.  The track
+list went 169 to 168, the album list 11 to 10 and the artist list 11 to 10; the album
+list lost exactly `WL QA 2026-10-29` and the artist list lost exactly `Wakin Chau`; the
+artist tiles after the moniker rule went 8 to 7 and the seven that remain carry the same
+counts as before (10, 27, 25, 2, 9, 82, 13), including the tile the GUID moniker maps
+into.  Those lists carry Han and Kana names and are not reproduced here; the comparison
+was of the whole list, not of the count.  The device's own free space read
+10,841,047,040 against 10,822,483,968, so the player gave back 18,563,072 bytes for an
+18,452,703-byte file - 110,369 more than the file, which is the player's own allocation
+overhead and nothing this page claims to model - and that is 110,369 bytes above the
+app's credit, so the credit was the conservative one.
+
+Which is how the comment at `src/DeviceService.cpp:1349`, the one that refuses to
+re-read after a purge because a Zune "doesn't re-index until the eject-time
+CleanDataStore", is **still untested** and should not be quoted as measured.  Nothing
+here asked the player in the seconds after the DeleteObject, and that is the window the
+comment is about.  What is measured is narrower and still worth having: by the *next*
+session the player had re-indexed, shrunk its ZMDB and corrected its free space on its
+own, with no CleanDataStore and no eject, so the credit is authoritative for the rest of
+that session rather than until an eject.  Neither the code nor the comment changed,
+because settling that would mean probing the window and this sitting did not.
+
+Two measurements that would otherwise cost the next person the same hour.  **A ZMDB
+payload is not a fingerprint of its inventory.**  The 169-track, 11-album state read
+225,160 bytes on 2026-10-29 and 225,196 here, and the 168-track, 10-album state read
+224,940 on 2026-10-29, before the deleted track existed at all, and 224,928 after
+deleting it - so deletion restored the *counts* exactly and not the bytes, and payload
+size is a directional signal only.  The ground truth was 168/10/10 plus storage, never a
+hash.  And **a delete does not wedge the player**: `build\devicetool.exe` answered
+`VERDICT=agree` at `os_problem=0` afterwards, no bulk OUT timed out, and no reset was
+attempted or needed - worth saying out loud on a page whose 2026-10-21 section is about
+a `libusb_reset_device()` that returned success while recovering nothing.
+
+Not claimed by any of it.  One music object was deleted, once, from one Pavo Zune HD.
+`purgeSpokenItems` has still never run against a player, so podcast and audiobook
+deletion stays open, as do photo, video and playlist deletion and the
+`doPurgeInterruptedObject` recovery path.  `Zuuned QA / SineQA550` is deliberately still
+on the player and still in the library: it is the next candidate and the user's call,
+not a cleanup this page performed.  Every Linux deletion result is Linux evidence and
+none of it is inherited here.  The podcast, audiobook and photo/video read halves, every
+model but this Pavo, audible PC-side playback, and packaging are untouched.
+
+Gates against the relinked build (`cmake --build build --clean-first`, so the QML inside
+`build\zuuned.exe` is the QML that ran): `tests\win-compat` 201 checks, 0 failures, 0
+skips; `librarytool paths` ALL PASS; `i18n\audit.py` AUDIT=ok; and, because it launches
+nothing and opens no device handle, `tests\win-usability -Only fixture,tools` at
+`launches=0 checks=47 failures=0 skips=0`.  The full usability gate was deliberately not
+run: it starts one instance per page and every one of those auto-connects to an attached
+player, and its six desktop-dependent ribbon failures on this 150 per cent panel are
+recorded higher up this page rather than re-derived here.

@@ -42,8 +42,9 @@ converts audio on the way to the player to whichever profile you pick under **Se
 Device -> Audio conversion**, WMA Lossless included; that target is written by the encoder
 the operating system already ships rather than by a bundled codec, and it refuses rather
 than quietly downgrading to lossy. The Windows port carries music in both directions
-against a player; photos and video have been sent from Windows without a byte of either
-coming back, and no Windows deletion has ever been done - see the status page.
+against a player and takes music back off it, one track at a time, with the player
+agreeing in a later session; photos and video have been sent from Windows without a byte
+of either coming back - see the status page.
 
 ## The pages
 
@@ -105,11 +106,14 @@ Hand-tested against one Pavo-generation Zune HD on the development machine:
   container that comes back is not the one that went out: a Zune re-wraps an ASF on ingest and
   rewrites the Author inside the file from the name it holds device-side, so the invariant for this
   format is the codec tag the player serves plus the decoded samples, never the bytes.
+- **Deletion** - one music track purged through the right-click control, and the next
+  launch read 168 tracks in 10 albums by 10 artists back off the player with its own free
+  space 18.5 MB larger. The agreement is the device's, not a row dropped from a list.
 
-**Not yet proven on Windows**, and not inherited from Linux either: deletion and purge,
-the podcast, audiobook, photo and video transfer categories, every Zune model but that one
-Pavo, audible PC-side playback (the automated gate opens WASAPI muted, so no
-automated run has heard anything), and packaging - there is no Windows installer yet, so today the
+**Not yet proven on Windows**, and not inherited from Linux either: any deletion beyond
+that one music track, the podcast, audiobook, photo and video transfer categories, every Zune
+model but that one Pavo, audible PC-side playback (the automated gate opens WASAPI muted, so
+no automated run has heard anything), and packaging - there is no Windows installer yet, so today the
 port is a build-from-source project. **WMA Lossless** is encoded on Windows, by the encoder the
 operating system already ships rather than a bundled codec, and a track written that way has now
 been heard on the HD; the format is documented for the Zune HD alone, so no other model has been
