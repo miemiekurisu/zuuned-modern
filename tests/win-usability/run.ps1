@@ -36,6 +36,7 @@ param(
     [string]$QtDir = 'D:\dev\Qt\6.11.0\msvc2022_64',
     [string]$FfmpegDir = 'D:\dev\zuuned-deps\ffmpeg-master-latest-win64-gpl-shared\bin',
     [int]$Settle = 6,
+    [int]$QaDeadline = 30,
     [int]$CaseTimeout = 180,
     [string[]]$Only = @()
 )
@@ -81,6 +82,9 @@ $script:failed = New-Object System.Collections.Generic.List[string]
 $script:noise = New-Object System.Collections.Generic.List[string]
 $script:caseSeq = 0
 $script:pidScans = 0
+$script:qaWaits = 0
+$script:qaBlind = 0
+$script:qaWaitMax = 0.0
 $script:killed = 0
 $script:pids = New-Object System.Collections.Generic.List[int]
 
@@ -311,6 +315,67 @@ function Wait-ZuunedWindow {
     }
 }
 
+function Read-QaLogText {
+    # The app holds this file open through its own descriptor, so ask for the
+    # loosest share that can still read it and say so by returning '' when even
+    # that is refused: a reader that throws would turn a healthy launch into a
+    # hang in the harness.
+    param([string]$Path)
+    $fs = $null
+    try {
+        $fs = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read,
+                              [IO.FileShare]::ReadWrite)
+        $sr = New-Object IO.StreamReader($fs, [Text.UTF8Encoding]::new($false))
+        try { return $sr.ReadToEnd() } finally { $sr.Dispose() }
+    } catch {
+        return ''
+    } finally {
+        if ($fs) { $fs.Dispose() }
+    }
+}
+
+function Wait-QaSplash {
+    # The splash reports itself when its own animation finishes, and a Qt Quick
+    # animation advances on rendered frames, not on wall time.  Measured over
+    # eighteen launches here that report landed 4.2s to 5.5s after the window was
+    # first seen, against a harness settle of six seconds, so roughly ninety per
+    # cent of the budget was already spent before anything was asserted - and one
+    # launch, whose Zune was mid a full re-index, spent the rest and was called
+    # 'no [qa] splash report' while its page was in fact fine.  That is the same
+    # family of fault as the cached MainWindowHandle: the test measuring its own
+    # clock.  So the case waits for the report, within a deadline, and captures
+    # only afterwards, which also means the screenshot is of the page rather than
+    # of the thing still covering it.  The log is picked by the process id the
+    # session log carries in its own name, so a case that re-opens a shared
+    # profile waits on its own launch and not on an earlier one's report.  A
+    # launch that never reports still fails, just at the deadline instead of at
+    # an arbitrary six seconds: -1 answers 'there is no log to read', which is
+    # recorded, never mistaken for a fast splash.
+    param([string]$Profile, [int]$ProcessId, [int]$Seconds)
+    $folder = Join-Path $Profile 'State\logs'
+    $needle = '-' + [string]$ProcessId + '-'
+    $started = Get-Date
+    $deadline = $started.AddSeconds($Seconds)
+    while ($true) {
+        $own = @(Get-ChildItem -LiteralPath $folder -Filter 'zuuned-*.log' -File -Force `
+                 -ErrorAction SilentlyContinue | Where-Object { $_.Name.Contains($needle) })
+        if ($own.Count -eq 0) {
+            if (((Get-Date) - $started).TotalSeconds -ge 3) { return -1.0 }
+        }
+        else {
+            foreach ($f in $own) {
+                if ((Read-QaLogText -Path $f.FullName) -match '\[qa\] splash ') {
+                    return [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
+                }
+            }
+        }
+        if ((Get-Date) -ge $deadline) {
+            return [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
+        }
+        Start-Sleep -Milliseconds 200
+    }
+}
+
 function Stop-Zuuned {
     # Closing the window is the shutdown path a user takes; Kill is recorded as a
     # defect because it means the app would not come down politely.
@@ -485,6 +550,11 @@ function Invoke-Case {
     $extra = $null
     if ($hwnd -ne [IntPtr]::Zero) {
         Start-Sleep -Seconds $Settle
+        $waited = Wait-QaSplash -Profile $profile -ProcessId $handle.Proc.Id `
+            -Seconds $QaDeadline
+        if ($waited -lt 0) { $script:qaBlind++ }
+        elseif ($waited -gt 0.5) { $script:qaWaits++ }
+        if ($waited -gt $script:qaWaitMax) { $script:qaWaitMax = $waited }
         $shot = Invoke-Capture -Hwnd (ConvertTo-HwndDecimal -Handle $hwnd) -Png (Join-Path $out ('shots\' + $tag + '.png'))
         $verdict = Get-PaintVerdict -Shot $shot
         if ($Drive) { $extra = & $Drive $handle $hwnd $tag }
@@ -1825,7 +1895,9 @@ else {
 }
 Write-Host ('launches=' + $script:caseSeq + ' checks=' + $script:checks +
     ' failures=' + $script:failures + ' skips=' + $script:skips +
-    ' killed=' + $script:killed + ' pid-scan-fallbacks=' + $script:pidScans)
+    ' killed=' + $script:killed + ' pid-scan-fallbacks=' + $script:pidScans +
+    ' splash-waits=' + $script:qaWaits + ' splash-blind=' + $script:qaBlind +
+    ' worst-splash-wait=' + ('{0:N1}' -f $script:qaWaitMax) + 's')
 if ($script:noise.Count) {
     Write-Host ('recorded diagnostics (' + $script:noise.Count + '), not asserted:')
     foreach ($n in @($script:noise | Select-Object -First 25)) { Write-Host ('  note ' + $n) }

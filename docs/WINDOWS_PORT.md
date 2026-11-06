@@ -2336,3 +2336,90 @@ nothing and opens no device handle, `tests\win-usability -Only fixture,tools` at
 run: it starts one instance per page and every one of those auto-connects to an attached
 player, and its six desktop-dependent ribbon failures on this 150 per cent panel are
 recorded higher up this page rather than re-derived here.
+
+## 2026-11-07 - the twenty-sixth pass: the macOS merge, and the clock that measured the harness
+
+Two commits brought the macOS line in: `9bdc7bc` built and launched Zuuned on Apple
+silicon, `cab1834` drove a Zune HD there and wrote `docs/MACOS_PORT.md`. Twenty-nine
+files, +2011/-89, merged fast-forward from `1057caa`. The job here was the other half of
+that sentence: show the Windows build is still the build it was.
+
+**Why the merge cannot move Windows, at the sites where it could have.** Every macOS
+branch is spelled `APPLE`, `__APPLE__` or `Q_OS_MACOS`, and five sites touch code the
+Windows build actually compiles. `src/FileTimestamps.h` exists because macOS spells the
+two `struct stat` timestamps `st_mtimespec`/`st_ctimespec` and has no `st_mtim` at all;
+on Windows it is a rename, and the three call sites - the artwork stamp, the scanner
+fingerprint, the audiobook "changed during inspection" test - fold the same `tv_sec` and
+`tv_nsec` into the same two `qint64` composites, so the bytes compared are identical.
+`transcode/libav_transcode.c` lifted the software-encoder parameters into
+`venc_apply_sw_params()` with the arguments unchanged and put VideoToolbox inside
+`#ifdef __APPLE__`. `src/diagnostics/SessionLog.cpp` grew `makePipe()` and Windows still
+takes `pipe2()` with the same two flags. `src/library/librarytool.cpp` corrected
+expectations in its non-Windows branch, where those POSIX spellings had never been
+compiled before. And the device-wording branches (`usbAccessTitle`, `usbAccessDetail`,
+`installUdevRule`, the breach hint) keep the Windows strings byte-identical in the arm
+Windows takes.
+
+**Rebuilt whole, because a header moved.** `cmake --build build --clean-first`, 341 build
+steps, exit 0. That is the standing rule on this machine, where Ninja's `deps = msvc`
+never matches the localised `/showIncludes` note and an incremental build after a
+header-only edit relinks stale objects while looking busy.
+
+**Gates on that binary.** `tests\win-compat` 201 checks, 0 failures, 0 skips;
+`librarytool paths` ALL PASS; `i18n\audit.py` AUDIT=ok; the full usability gate
+`launches=18 checks=135 failures=0 skips=0 killed=0` and `OVERALL=ok`, with the decode
+phase still naming what the decoder actually returned:
+`decode path: HARDWARE (first frame fmt=cuda)`.
+
+**One gate false positive, removed without weakening the gate.** The rule "no source file
+may build a profile path out of strings" is a text scan over the tree, and a comment the
+macOS commit added near `src/main.cpp:168` quoted the Linux ini path literally, so the
+scan accused `src\main.cpp` of a thing a comment is not. That comment now describes the
+path instead of spelling it, and says why it stays described.
+
+**One real finding, and it belonged to the harness.** The first full run ended
+`FAIL page audiobooks paints and reports itself :: no [qa] splash report`. The
+application was fine: that launch exited 0, closed politely, painted a page, and a
+reproduction of the same case shows the audiobooks page with the device panel beside it.
+Its session log is the honest half - 82 lines, `[qa] startup` there, `[qa] splash` not,
+the Zune still indexing on the last line 7.9 s after startup. Three further runs of
+`-Only fixture,pages`, eighteen launches, repeated nothing. So the question became the
+budget rather than the fault, and the logs answer it: `[qa] startup` arrives 5.0 s to
+6.4 s after the process starts, `[qa] splash` 4.2 s to 5.5 s after that, and the harness
+slept six seconds after first seeing the window, then captured and closed. Roughly
+ninety per cent of that assertion's entire budget was spent before it asserted anything,
+because a Qt Quick animation advances on rendered frames and every one of those launches
+is concurrently re-indexing a real Zune HD. A launch whose render loop is slower than
+usual and the gate calls a healthy application broken - the same family of fault as the
+cached `Process.MainWindowHandle` and the exit code `Process.Kill()` invents: the test
+measuring its own clock.
+
+`Invoke-Case` now waits for the report instead of for a stopwatch, bounded by a new
+`-QaDeadline` (30 s default), and captures only afterwards, which also means the
+screenshot is of the page rather than of the thing still covering it. It reads the one
+session log belonging to that launch, by the process id `SessionLog` already writes into
+the filename, so a case that re-opens a shared profile still waits on its own launch, and
+it answers `-1` for "there was no log to read" rather than reporting a blind wait as a
+fast splash. The assertion is unchanged - it still reads the process's own output at exit
+- and a splash that never finishes is still a failure, just at the deadline. Proved in
+both directions: at the default settle the six page cases report
+`splash-waits=0 splash-blind=0 worst-splash-wait=0.0s`, while `-Settle 1`, a budget no
+launch can meet, returns `splash-waits=6 worst-splash-wait=5.5s` with every page check
+passing.
+
+Two notes that would otherwise cost the next person the same hour. Piping the gate into
+`Select-Object -First N` stops the pipeline mid-phase, and the harness died holding a
+child process: the next run reported `LNK1168: cannot open winshot.exe for writing` and
+three `0 tracks added, 1 updated` scan failures that belonged to the aborted run, not to
+the tree. Redirect a gate to a file and search the file, exactly as with `git diff`. And
+the six ribbon failures this page records for a 150 per cent panel did not reproduce
+today - every launch reported a 1280x800 window and all five compact-phase checks passed
+- which is the state of the desktop deciding it rather than anything in this tree, so the
+caveat stays where it is written.
+
+**No device claim moves.** Eighteen launches browsed the attached Pavo read-only, as every
+usability run has since that behaviour was recorded; `build\devicetool.exe` answered
+`VERDICT=agree` at `os_problem=0` afterwards and the two `Zuuned QA` fixtures are
+untouched. Nothing in this sitting wrote to, deleted from or read back from a player, and
+the macOS commits' device changes sit inside `Q_OS_MACOS`, so the gates on this page are
+neither extended nor retracted by any of it.

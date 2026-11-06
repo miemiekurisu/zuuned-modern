@@ -2089,3 +2089,53 @@ photo, video and playlist deletion and `doPurgeInterruptedObject` stay unmeasure
 `Zuuned QA / SineQA550` is still on the player by choice and not by oversight; no Linux
 deletion result is inherited here; and the podcast, audiobook and photo/video read
 halves, every model but this Pavo, audible PC-side playback and packaging are untouched.
+
+**2026-11-07 macOS merge, and the clock that measured the harness:** `origin/main` merged
+fast-forward (`1057caa..cab1834`, 29 files, +2011/-89): `9bdc7bc` builds and launches on
+Apple silicon, `cab1834` drives a Zune HD there and writes `docs/MACOS_PORT.md`. Every
+macOS branch is spelled `APPLE` / `__APPLE__` / `Q_OS_MACOS`, and at the five sites that
+touch Windows-compiling code the Windows arm keeps its own bytes: the new
+`src/FileTimestamps.h` only renames the `st_mtim`/`st_ctim` reads macOS must spell
+`st_mtimespec`/`st_ctimespec`, so the artwork stamp, the scanner fingerprint and the
+audiobook changed-during-inspection test fold the same fields into the same composites;
+`transcode/libav_transcode.c` lifted software encoder parameters verbatim into
+`venc_apply_sw_params()` with VideoToolbox inside `#ifdef __APPLE__`;
+`src/diagnostics/SessionLog.cpp` grew `makePipe()` and Windows still calls `pipe2()` with
+the same flags; `src/library/librarytool.cpp` fixed expectations in the branch that had
+never compiled outside Linux; and the device-wording branches keep the Windows strings in
+the arm Windows takes. `cmake --build build --clean-first` (341 steps, exit 0 - the
+standing rule while Ninja ignores this machine's localised `/showIncludes`), then gates:
+`tests\win-compat` 201 checks / 0 failures / 0 skips, `librarytool paths` ALL PASS,
+`i18n\audit.py` AUDIT=ok, `tests\win-usability`
+`launches=18 checks=135 failures=0 skips=0 killed=0 OVERALL=ok`, decode still answering
+`HARDWARE (first frame fmt=cuda)`. Two findings. A macOS comment that quoted the Linux ini
+path verbatim tripped the usability rule against building a profile path from strings - a
+text scan accusing a comment - so `src/main.cpp` now describes that path and says why it
+is not spelled out, and the check lost nothing. The real one is the gate, not the app: the
+first full run said `FAIL page audiobooks paints and reports itself :: no [qa] splash
+report` for an application that exited 0, closed politely and painted the page, while its
+session log shows `[qa] startup`, no `[qa] splash`, and the device still indexing on the
+last line 7.9 s after startup. Eighteen further launches never repeated it, so the budget
+was the defect: `[qa] startup` lands 5.0-6.4 s after the process starts and `[qa] splash`
+4.2-5.5 s after that - a Qt Quick animation advances on rendered frames, and every launch
+is concurrently re-indexing a real Zune - against a harness that slept six seconds after
+the window appeared before capturing and closing, so roughly ninety per cent of the
+assertion's budget was gone before it asserted. Same family as the cached
+`MainWindowHandle` and the invented `Process.Kill()` exit code. `Invoke-Case` now waits
+for the report before it captures, bounded by `-QaDeadline` (30 s), reading the session
+log that carries the launch's own pid in its filename - `SessionLog` writes `getpid()`
+there, which is also what lets a shared-profile case wait on the right launch - and
+answering `-1` for "no log to read" so blind is never mistaken for fast; the assertion
+still reads the process's own output at exit, and a splash that never finishes still
+fails, at the deadline. Both directions proved: default settle
+`splash-waits=0 splash-blind=0 worst-splash-wait=0.0s`, and `-Settle 1`, a budget no
+launch can meet, `splash-waits=6 worst-splash-wait=5.5s` with every page check green. Two
+traps worth the ink: piping the gate into `Select-Object -First N` cuts the harness off
+mid-phase holding a child, and the *next* run then reports `LNK1168` on `winshot.exe` plus
+three `0 tracks added, 1 updated` scan failures that belong to the aborted run; redirect a
+gate to a file and search the file. And the six 150%-panel ribbon failures recorded on
+2026-10-22 did not reproduce here (every launch 1280x800, all five compact checks green),
+which is the desktop deciding it and not this tree, so that caveat stays. **No device
+claim moved:** eighteen read-only browses of the attached Pavo, `devicetool`
+`VERDICT=agree` at `os_problem=0` afterwards, the `Zuuned QA` fixtures untouched, and
+nothing written, deleted or read back in this sitting.

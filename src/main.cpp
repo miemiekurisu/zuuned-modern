@@ -165,9 +165,12 @@ int main(int argc, char *argv[]) {
     // QSettings::setPath() has no hold on a plist.  Left native, every
     // instrumented launch that sets ZUUNED_PROFILE_DIR would write its settings
     // into the real profile and applySettingsPath() would correctly print
-    // "profile isolation is incomplete".  IniFormat answers
-    // ~/.config/Zuuned/Zuuned.ini unset and <profile>/Zuuned/Zuuned.ini under
-    // setPath — both measured, and the second is what makes the isolation real.
+    // "profile isolation is incomplete".  IniFormat answers with a file named
+    // Zuuned.ini inside the per-user config folder when unset, and the same name
+    // inside the given profile's own Zuuned folder under setPath — both
+    // measured, and the second is what makes the isolation real.  The two folders
+    // are described rather than spelled out because the Windows usability gate
+    // scans every source file for that profile path as a string.
     // No macOS build has shipped, so there is no plist here to import.
     QSettings::setDefaultFormat(QSettings::IniFormat);
 #endif
