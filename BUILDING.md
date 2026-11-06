@@ -555,6 +555,95 @@ from a terminal is the supported local launch and is what every measurement here
 used. A Launch Services launch (Finder, or `open`) works on this machine too, which
 is newer than that sentence and is what the next section is about.
 
+### Package it for another Mac
+
+The build-tree bundle runs on the machine that built it and nowhere else, because its
+binary still resolves QtCore, libusb, libmpv and every FFmpeg component through
+`/opt/homebrew`. `packaging/macos/deploy.sh` is the counterpart of the Linux AppImage
+builder, and it is a script rather than a CMake install rule because this platform has
+no install rules to extend -- a `.desktop` entry, an hicolor tree and a udev rule all
+have no counterpart here.
+
+```bash
+cmake --build build-macos-release --parallel 8   # the script packages this tree
+./packaging/macos/deploy.sh                      # --no-smoke skips the launch
+```
+
+It stages a copy, deletes the build-tree `qt.conf` (this application's QML is compiled
+into the executable by `qt_add_qml_module`, and a bundle with the file removed paints
+every page), runs `macdeployqt -qmldir=qml -no-strip -no-codesign`, drops the plugins
+whose Qt framework does not exist here -- Homebrew Qt ships no QtPdf, so
+`libpdfquickplugin.dylib` and `libqpdf.dylib` go, and the symlink that pointed at the
+first of them goes with them because a dangling link stops `xattr -c` outright -- gives
+every Mach-O the name it now answers to (`install_names_rewritten=42`: `macdeployqt`
+rewrites every *reference* and leaves the 42 frameworks it copied out of
+`qtdeclarative` still naming themselves `/opt/homebrew/...`), deletes the
+`/opt/homebrew/lib` rpath CMake left on the executable, and then refuses the bundle
+unless all 1936 load commands land on a file that is inside it. It builds the bundle
+icon from the hicolor PNGs the Linux package already installs -- the deepest committed
+tile is 512, so that one tile is enlarged for the 1024 slot -- signs every Mach-O
+ad-hoc and inside-out, `signed_macho=173`, then the 52 frameworks and the bundle, and
+launches what it published before it writes an archive.
+
+**The bundle is assembled and signed in `$TMPDIR`, not in `_tmp`, and copied back when
+it is finished.** That is measured necessity. This repository sits under
+`~/Documents`, whose Desktop-and-Documents sync is owned by iCloud's file provider, and
+that provider stamps `com.apple.FinderInfo` onto every *package* directory -- `.app`,
+`.framework`, `.bundle` -- within about four seconds of one appearing, and writes the
+attribute back within two seconds of deleting it. `codesign` refuses to sign a bundle
+wearing it, so signing in place races a background daemon. Three runs of this script lost
+that race: the first died at the bundle root, which `codesign --verbose=4` named as
+`Disallowed xattr com.apple.FinderInfo found on .../zuuned.app` although it had been
+asked about a file, and the next two only after every Mach-O inside had signed, at a
+`QtQuickControls2.framework` directory. A `.framework`, a `.bundle` and a plain directory
+created here next to three identical ones under `$TMPDIR` acquired the attribute in the
+first place and never acquired it in the second. `_tmp` keeps the logs, the finished
+bundle and the archives, and the `rsync -a` that carries the bundle back copies no
+extended attributes, so what lands there is the signed bytes and nothing else -- for a
+few seconds. The same provider watches `_tmp`, and once it has stamped the bundle the
+signature that passed in the scratch tree is refused in place: `codesign --verify --deep
+--strict` names all 52 frameworks, each one `Disallowed xattr com.apple.FinderInfo`, and
+without `--verbose` the same question answers `resource fork, Finder information, or
+similar detritus not allowed`. That is an inspection refusal, not a broken bundle -- the
+stamped copy launches and paints `[qa] tick1 page=music` with no mapped image from
+`/opt/homebrew` -- but it decides where a signature gets checked: verify an archive, or
+a copy taken outside the synced folders, and judge the bundle in `_tmp` by running it.
+The archives are written from the scratch tree for the same reason: `hdiutil` and
+`ditto` copy attributes the way `rsync` does not, and the metadata fork
+`ditto` writes by default stored every one of them as an in-place AppleDouble file --
+the first zip this script built carried 2,526 `._*` entries, all of them
+`com.apple.provenance`, this machine's own bookkeeping. Hence `--norsrc`, and hence the
+`zip_appledouble_entries=0` the script reads back out of the archive it just wrote.
+
+The launch that finishes the script is the structural proof, and it reads the copy in
+`_tmp` because that is the copy a tester runs: an isolated `ZUUNED_PROFILE_DIR` seeded
+with `onboardingComplete=true`, `DYLD_PRINT_LIBRARIES=1`, and the same `--qa-probe`
+answer the usability gates ask for -- `[qa] tick1 page=music ...`, with 1182 images
+mapped and not one of them from `/opt/homebrew` or `/usr/local`. The count of mapped
+images is asserted before the absence is, because an ignored `DYLD_PRINT_LIBRARIES`
+would otherwise make "nothing outside the bundle" true of a run that mapped nothing.
+Two archives land in `_tmp`, gitignored: `Zuuned-0.2.0-arm64.dmg` and the same bundle as
+a zip, 91 MB and 80 MB, because a disk image and a browser download are different
+Gatekeeper experiences and a zip survives the transport tools that flatten a dmg.
+`spctl` answers `rejected`, which is what an ad-hoc unnotarised bundle means, and is
+recorded rather than treated as a failure.
+
+What a tester does about that, and what was measured about the archives themselves, is
+worth knowing before anyone is handed a file. `xattr -dr com.apple.quarantine` on the
+bundle, or right-click → Open, is the path; there is no Apple Developer licence behind
+this project, so there is nothing to notarise and no promise a fresh macOS will
+volunteer to like what it is. Both archives were opened the way a tester opens them: the
+dmg mounted read-only, and its bundle answered zero AppleDouble entries, zero
+`com.apple.FinderInfo`, `codesign --verify --deep --strict` valid and satisfying its
+Designated Requirement, and a launch from inside the read-only volume rendering
+`[qa] tick1 page=photos` with 99 of 1208 mapped images coming from `/Volumes` and none
+from Homebrew; the zip unpacked by `unzip` left no `._` file on disk and gave the same
+verdict. Packaging is about structure and nothing else: the bundle carries its own
+libraries, which is a statement about this script and not about a device -- the bundle
+that produced every device measurement is the build-tree one, and the device facts
+themselves are [MACOS_PORT.md](docs/MACOS_PORT.md) -- and the Documents-folder consent
+in the next section is still a consent a tester has to answer.
+
 ### First launch, and the privacy consent a Finder launch needs
 
 A `.app` that lives under `~/Documents` is behind macOS privacy protection for the
@@ -628,14 +717,27 @@ way Linux does; the `cfgmgr32` presence pass is Windows-only, and so the "plugge
 in but no driver" card cannot fire here yet. Settings → Device says macOS needs no
 driver rather than naming the Windows-only Zadig utility.
 
-**Nothing in this section is hardware evidence.** No Zune has been opened,
-claimed, read from or written to on macOS, and none of the Windows or Linux device
-results carry over. The checklist to close, in order, is: presence in
-`libusb_get_device_list()`, an interface claim (`libusb_kernel_driver_active` /
-`detach_kernel_driver` / `claim_interface`), the ZMDB music-library read,
-unplug-and-replug hotplug, MTPZ authentication, one send with byte readback, and
-deletion. `build-macos/devicetool` is the first of those seven and answers
-`absent` on a machine with no player attached.
+Two tools answer the interface question before the application is involved. The
+three-platform one is `devicetool`, which with a player attached answers
+`libusb_enumerated=1 libusb_hotplug=1 libusb_sighted=1` and `VERDICT=agree`; the
+macOS-specific one is `packaging/macos/claimprobe.c`, which opens the player, asks
+who holds interface 0, prints the endpoints and claims the interface -- the Mac
+counterpart of `packaging/windows/check-driver.ps1`:
+
+```bash
+cc -Wall -Wextra -o /tmp/claimprobe packaging/macos/claimprobe.c \
+    $(pkg-config --cflags --libs libusb-1.0)
+/tmp/claimprobe                # VERDICT=claim_ok, measured 2026-11-06
+```
+
+Run either tool outside a sandbox. A seatbelt shell denies USB, libusb then
+enumerates **zero** devices, and `VERDICT=absent` from inside one is the sandbox
+answering, not the bus.
+
+What a Mac has actually done to a Zune -- the claim, the ZMDB read, MTPZ
+authentication, one music send judged byte for byte, a deletion -- is
+[MACOS_PORT.md](docs/MACOS_PORT.md). Nothing in this section is device evidence, and no
+device result measured on one platform carries over to another.
 
 ### What the Mac build is measured to do
 
@@ -689,6 +791,12 @@ because they were found by running rather than reading:
 Run these gates outside any sandbox. A seatbelt/sandboxed shell denies
 VideoToolbox and the audio devices, which looks exactly like a broken encoder and
 a broken player and is neither.
+
+Every figure above was taken with no player attached, and none of it says anything
+about a Zune. The device measurements for this platform -- the interface claim, the
+ZMDB read, MTPZ authentication, one music send judged byte for byte, a deletion --
+are [MACOS_PORT.md](docs/MACOS_PORT.md), which is also where a macOS hardware claim
+has to be quoted from rather than inferred from this page.
 
 ## Build the tester AppImage
 

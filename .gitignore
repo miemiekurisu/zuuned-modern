@@ -3,6 +3,12 @@ build/
 # Debug one carries the gate launches, the Release one the measured sweep.
 build-macos/
 build-macos-release/
+# Local Apple-silicon device runs: isolated profiles, QA fixtures and captured
+# session logs. Run artefacts, never source; the directory is recreated per run.
+qa-macos/
+# Where a built .app/.dmg is staged for hand-testing before it is committed or
+# thrown away.  Carrying a 400 MB binary in the index is not repo hygiene.
+_tmp/
 *.pdb
 .codegraph/
 .cache/

@@ -4,7 +4,7 @@
 
 # Zuuned Modern
 
-**让你的 Zune 重回这场反叛——在 Windows 上。**
+**让你的 Zune 重回这场反叛——在 Windows 和 Apple silicon 上。**
 
 Zuuned Modern 是 [Zuuned Linux](https://github.com/badgeromen/zuuned-linux) 的 **Windows
 客户端移植**，Zuuned Linux 是社区为微软 Zune 播放器写的管理应用。这里是同一个
@@ -12,9 +12,14 @@ Qt 6 / QML 与 C++ 应用，也是同一套 [libzune](https://github.com/badgero
 PTP/MTP/MTPZ 协议栈，用 MSVC 在 Windows 上原生构建、原生运行——没有 WSL，没有 MinGW，
 没有 Cygwin，没有虚拟机。
 
-一套源码同时服务两个平台。Windows 的部分全是增量：一个 `compat/win/` 层，让 libzune 和
+同一套源码同时服务三个平台。Windows 的部分全是增量：一个 `compat/win/` 层，让 libzune 和
 转码 C 层继续写它们所依赖的 POSIX 接口；一条 Windows 设备在位检测路径；以及贯穿全局的原生
 路径与编码处理。Linux 那条线属于上游，本仓库负责把移植带着走，直到上游愿意接手。
+
+同一棵树在 Apple silicon 上也是原生构建、原生运行：Qt 6 加 Homebrew 依赖，走的是 Linux 用的
+那条用户态 libusb 路径，而不是苹果的驱动，没有 kext 也没有 DriverKit 扩展——DEXT 不经过苹果
+自己的公证根本加载不了，而这个项目没有苹果开发者授权。2026-11-06 这个构建在 Mac 上打开、鉴权、
+读取、写入了一台真实的 Zune HD，并且从上面删掉过一首歌。
 
 本文件与 [README.md](README.md) 里的每一张图，都是在 Windows 上用本仓库构建出的
 `zuuned.exe` 截取的，并且当时插着一台 Zune HD。
@@ -24,8 +29,9 @@ PTP/MTP/MTPZ 协议栈，用 MSVC 在 Windows 上原生构建、原生运行—�
 *音乐页的专辑视图：封面从本地文件里读出来，歌曲行带着同一批封面，右侧面板里是一台通过
 WinUSB 连接的 Pavo 世代 Zune HD。*
 
-[移植状态](docs/WINDOWS_PORT.md)——**在本仓库相信任何硬件结论之前，先读那一页。**它按能力
-逐项记录：哪些是在 Windows 机器上对真实播放器做过的，哪些至今只在 Linux 上做过。
+[Windows 移植状态](docs/WINDOWS_PORT.md) 与 [macOS 移植状态](docs/MACOS_PORT.md)——
+**在本仓库相信任何硬件结论之前，先读那两页。**它们按能力逐项记录：哪些是在 Windows 或
+Apple silicon 机器上对真实播放器做过的，哪些至今只在 Linux 上做过。
 
 ## 你能用 Zuuned 做什么
 
@@ -158,6 +164,65 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File tests\win-usability\run.ps1
 Zune 一个字都不说——这是故意的，也正是硬件证据放在
 [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) 而不是这里的原因。
 
+## 在 macOS（Apple silicon）上实际做到了哪一步
+
+在一台 Apple silicon 的 Mac 上，对同一台 Pavo 世代的 Zune HD 做过手工实测，一共三次会话，
+会话之间把播放器拔下再插上：
+
+- **不需要驱动，也确实什么都没装**——macOS 不给这个设备绑定任何驱动，所以不装任何东西
+  libusb 就能看见 `045e:063e`，并且第一次尝试就 claim 到了接口 0。
+  [`packaging/macos/claimprobe.c`](packaging/macos/claimprobe.c) 把这份观测打印出来，端点
+  也一并列出。没有安装、没有绑定、没有为内核签名，也没有 Zadig 这一步：DriverKit 扩展是
+  有意排除在构建之外的，因为 DEXT 不经苹果自己的公证就加载不了，而本项目拿不到那个授权。
+- **读取设备**——`GetDeviceInfo`、Pavo 的机型读取、整份 224,928 字节的 ZMDB 负载，以及设备
+  页上浏览到的 168 首歌、10 张专辑、10 位艺术家。
+- **用内置密钥完成的 MTPZ 鉴权**——这次是刻意把 `~/.mtpz-data` 删掉之后测的；正是这一点让
+  下面每一条写路径都成为可达的。
+- **一次音乐上传，判断依据是取回来的东西**——一个没有 ID3v2 标签的 MP3 用普通控件发了进去；
+  播放器自己报的可用空间为一个 193,097 字节的文件少了 196,608 字节，专辑数与曲目数各加一，
+  有界的重连阶梯在第 1 次尝试就读回 169 首，没有人点过任何按钮。第二次会话再把它取下来时，
+  文件落在资料库为音乐声明的那个目录里，因为设备自己写标签而大了 1,186 字节，而音频帧和
+  两边各自解码出来的采样哈希都对得上。
+- **删除**——用右键控件清除，第三次会话从播放器读回 168 首歌，可用空间大了 194,283 字节——
+  正好等于刚从它上面取回的那个文件的大小。
+- **插入方向的热插拔**——三次会话，三条 `Zune arrived`，来自 libusb 回调而不是轮询兜底那条。
+- **打包**——[`packaging/macos/deploy.sh`](packaging/macos/deploy.sh) 产出自包含 bundle、
+  一个 `.dmg` 和一个 zip，两个归档都按使用者打开它们的方式验证过。Windows 至今还没有安装包。
+
+**在 macOS 上尚未证实**，也不会从 Windows 或 Linux 继承过来：除了那一条音乐曲目之外的任何删除、
+播客、有声书、照片与视频这些传输类别、那台 Pavo 之外的每一个 Zune 型号、听得见的 Mac 端播放
+（CoreAudio 量到能绑定、播放头能往前走，但没有人听过）、热插拔的**拔出**那一半——`Zune left`
+在这里的 macOS 日志里一次都没有出现过——以及那个打包好的 bundle 接上播放器的情况，因为上面的
+设备证据来自构建树里的 bundle。播放器至今还会答的那几个响应码、缩略图的失败、以及构建里为什么
+没有 DEXT，都写在 [docs/MACOS_PORT.md](docs/MACOS_PORT.md) 上。
+
+## 在 macOS（Apple silicon）上构建
+
+完整、当前的配方是
+[BUILDING.md 的 macOS 一节](BUILDING.md#build-on-macosapple-silicon)。简版：
+
+- Xcode 命令行工具、CMake、Ninja
+- Homebrew 提供 Qt、libusb、libgcrypt、SQLite、mpv、FFmpeg 与 LAME
+- MTPZ 鉴权数据，除非你只要只读那一种情况——和其他平台一样的那五行文件，放在
+  `~/.mtpz-data`，或者创建 `libzune/src/mtpz_keys.h`
+  （[docs/BUILD_WITH_MTPZ.md](docs/BUILD_WITH_MTPZ.md)）
+
+```bash
+git clone https://github.com/miemiekurisu/zuuned-modern.git
+cd zuuned-modern
+cmake -B build-macos-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-macos-release --parallel 8
+./build-macos-release/zuuned.app/Contents/MacOS/zuuned
+```
+
+`./packaging/macos/deploy.sh` 把这棵树变成自包含 bundle 和两个归档。这个项目背后没有苹果开发者
+授权，所以没有任何公证可言：第一次启动要么右键 -> 打开，要么
+`xattr -dr com.apple.quarantine`；而且建在 `~/Documents` 下面的 bundle 还要答一次「文稿」文件夹
+的隐私授权，因为 macOS 把音乐文件夹放在那里。
+
+任何碰播放器、碰视频解码器、碰音频设备的命令都要在**沙箱之外**跑。沙箱里 libusb 会枚举出零个
+设备，VideoToolbox 会拒绝它的会话，两者看起来都像构建坏了，而实际上只是权限被拒。
+
 ## 在 Linux 上构建
 
 上游的说明依然适用，移植没有改动它们：见 [BUILDING.md](BUILDING.md)、Zune 鉴权数据的
@@ -166,6 +231,23 @@ Zune 一个字都不说——这是故意的，也正是硬件证据放在
 AppImage 工作流和 udev 规则。本仓库也能构建 Linux，但不发布任何 Linux 二进制。Linux 那一侧
 的软件门禁同样在树里：`ci/check.sh` 会在 Linux 机器上驱动 `tests/` 下的其余目录——音乐导入
 与同步、封面、有声媒体、播放列表、诊断等等——那也是那套门禁唯一跑得起来的地方。
+
+## 已知问题
+
+**WMA 无损在 Windows 之外做不出来，macOS 也一样，这一条延后解决。** 这个产品写这个格式所用的
+编码器本来就在 Windows 里面——Windows Media Audio 9.2 Lossless，经由 Windows Media Format
+运行时调用——所以 `CMakeLists.txt` 只在 `if(WIN32)` 下加入 `transcode/wma_lossless_enc.cpp`，
+其余平台链接的是 `transcode/wma_lossless_stub.c`，里面的 `zuuned_wma_lossless_available()`
+老老实实返回 0。这没有把事藏起来：**设置 -> 设备 -> 音频转换** 的格式列表就是由这一个答案
+生成的，所以在 Mac 上 WMA 无损那一行是禁用的，卡片的状态行写着 `not on this platform`，
+而不是拿出一个本构建根本做不出来的格式；除了这一个目标，没有别的格式走这条代码路径。FFmpeg
+也不是出路，这是量出来的不是想当然——Mac 构建用的 Homebrew FFmpeg 9.0.2 里，WMA 编码器只有
+`wmav1` 和 `wmav2`，`wmalossless`、`wmapro`、`wmavoice` 只有解码器，真去要它答的是
+`Unknown encoder 'wmalossless'`。社区里确实存在的编码器走的还是同一个 Windows 编解码库
+（`wmvcore`），所以这里没有一个开源编码器可以拿来内置，只有 Windows 里的那一个可以调用。
+对 Mac 或 Linux 用户来说，代价是少了一个无损去处：FLAC、WAV 或 APE 在 Windows 上有无损的
+地方可去，在这里只能被转小。延后解决，不是忘掉——本地曲库、本地文件以及其余每一种同步格式
+都不受这件事影响。
 
 ## 报告问题
 
@@ -185,13 +267,15 @@ libzune/        随源码附带；共享的 C 协议库
 libzune/tools/  zunetool 与 mtpframingtool，协议侧的探针
 transcode/      FFmpeg 与 LAME 转码，外加系统自带的 WMA 无损编码器
 i18n/           界面措辞；zh_CN.tsv 是可编辑的源
-packaging/      Linux USB 规则、PKGBUILD 与 AppImage 构建器
+packaging/      Linux USB 规则、PKGBUILD、AppImage 构建器与 macOS 打包脚本
 packaging/windows/  WinUSB 驱动指南与 check-driver.ps1
+packaging/macos/    macOS 打包脚本与 claimprobe.c，USB 接口探针
 tests/win-compat/    Windows 兼容性门禁（不碰设备）
 tests/win-usability/ Windows 启动与界面门禁（不碰设备）
 tests/            Linux 门禁套件，由 ci/check.sh 驱动（不碰设备）
 docs/readme-screenshots/  这些截图，以及 zh/ 那一套
 docs/WINDOWS_PORT.md 在 Windows 上证实了什么、没证实什么
+docs/MACOS_PORT.md 在 macOS 上证实了什么、没证实什么
 docs/WINDOWS_COMPAT_AUDIT.md 全树的 Windows 兼容性排查
 docs/SETTINGS_INVENTORY.md 每一个开关，以及每个开关背后的功能
 docs/FEATURE_COMPLETION.md 实现待办清单

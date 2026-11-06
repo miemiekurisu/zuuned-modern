@@ -6,7 +6,8 @@ Updated for the 0.2.0 release candidate on October 14, 2026.
 > [badgeromen/zuuned-linux](https://github.com/badgeromen/zuuned-linux). The fork's
 > source is this repository and it publishes no Linux downloads; the Linux sources,
 > AppImages and release notes linked below are upstream's, kept as shipped. Current
-> Windows status is [WINDOWS_PORT.md](WINDOWS_PORT.md).
+> Windows status is [WINDOWS_PORT.md](WINDOWS_PORT.md) and current Apple-silicon
+> status is [MACOS_PORT.md](MACOS_PORT.md).
 
 Shared protocol development lives at
 [badgeromen/libzune](https://github.com/badgeromen/libzune).
@@ -20,6 +21,7 @@ This application snapshot includes libzune as ordinary source files.
 | Install device permissions or diagnose launch failure | [Tester installation](../packaging/TESTER_INSTALL.md) |
 | Compile the public application source | [Building](../BUILDING.md) |
 | Build or assess the Windows port | [Windows port status](WINDOWS_PORT.md) |
+| Build or assess the macOS (Apple Silicon) port | [macOS port status](MACOS_PORT.md) |
 | Compare this app against the original Zune software | [Zune client feature comparison](ZUNE_CLIENT_FEATURES.md) |
 | Check which screens are actually wired to a backend | [UI wiring audit](UI_WIRING_AUDIT.md) |
 | Know which Settings options do something, and which should exist | [Settings inventory](SETTINGS_INVENTORY.md) |
@@ -61,6 +63,7 @@ for an older migrated executable. Preserve the recorded provenance limitations.
 - Desktop integration: [native file dialogs](DESKTOP_FILE_DIALOGS.md),
   [compact playback layout and dismissal](PLAYER_LAYOUT_AUDIT_2026-10-12.md).
 - Windows: [native port status, what its gates prove and the outstanding device gate](WINDOWS_PORT.md).
+- macOS (Apple Silicon): [native port status, what the interface actually allows on a Mac, and which device gates are still open](MACOS_PORT.md).
 - Maintenance: [cleanup record](CODEBASE_CLEANUP.md), [feature scope](FEATURE_COMPLETION.md),
   [port plan](PORT_PLAN.md).
 - Product scope: [what the original Zune software did, what this app does instead, and

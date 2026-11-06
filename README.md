@@ -4,7 +4,7 @@
 
 # Zuuned Modern
 
-**Bring your Zune back into the rebellion - on Windows.**
+**Bring your Zune back into the rebellion - on Windows and on Apple silicon.**
 
 Zuuned Modern is a **Windows client port** of [Zuuned Linux](https://github.com/badgeromen/zuuned-linux),
 the community app for managing Microsoft Zune players. It is the same Qt 6 / QML and
@@ -12,11 +12,17 @@ C++ application and the same [libzune](https://github.com/badgeromen/libzune) PT
 protocol stack, built and run natively on Windows with MSVC - no WSL, no MinGW, no
 Cygwin, no virtual machine.
 
-One source tree serves both platforms. The Windows work is additive: a
+One source tree serves all three platforms. The Windows work is additive: a
 `compat/win/` layer that keeps the POSIX surface libzune and the transcode C layer are
 written against, a Windows device-presence path, and native path and encoding handling
 throughout. The Linux line is upstream's, and this repository exists to carry the port
 until upstream wants it.
+
+The same tree also builds and runs natively on Apple silicon: Qt 6 and Homebrew
+dependencies, the userspace libusb path Linux uses rather than an Apple driver, and no
+kext or DriverKit extension - a DEXT cannot load unless Apple notarises it and this
+project has no Apple developer licence. On 2026-11-06 that build opened, authenticated,
+read, wrote, read back and deleted a track on a real Zune HD.
 
 Every picture in this file and in [README.zh-CN.md](README.zh-CN.md) was captured from
 `zuuned.exe` built on this repository, on Windows, with a Zune HD plugged in.
@@ -27,9 +33,11 @@ Every picture in this file and in [README.zh-CN.md](README.zh-CN.md) was capture
 carrying the same art, and a Pavo-generation Zune HD connected over WinUSB in the panel
 at the right.*
 
-[Status of the port](docs/WINDOWS_PORT.md) - **read that page before trusting any
-hardware claim in this repository.** It records, per capability, what has been done on a
-Windows machine against a real player and what has only ever been done on Linux.
+[Status of the Windows port](docs/WINDOWS_PORT.md) and
+[status of the macOS port](docs/MACOS_PORT.md) - **read those pages before trusting any
+hardware claim in this repository.** They record, per capability, what has been done on a
+Windows or Apple-silicon machine against a real player and what has only ever been done
+on Linux.
 
 ## What you can do with Zuuned
 
@@ -183,6 +191,75 @@ tree, so read them as a floor rather than an expectation. Neither gate says anyt
 all about a Zune - that is deliberate, and is why the hardware evidence lives on
 [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) instead.
 
+## What has actually been done on macOS (Apple Silicon)
+
+Hand-tested on one Apple-silicon Mac against the same Pavo-generation Zune HD, in three
+sessions with the player unplugged between them:
+
+- **No driver, and none needed** - macOS binds nothing to the player, so libusb sees
+  `045e:063e` with nothing installed and claims interface 0 on the first attempt.
+  [`packaging/macos/claimprobe.c`](packaging/macos/claimprobe.c) prints that sighting,
+  endpoints included. Nothing is installed, bound or signed for the kernel, and there is
+  no Zadig step: a DriverKit extension was ruled out on purpose because one cannot load
+  unless Apple's own notarisation signed it, which this project cannot obtain.
+- **Reading the device** - `GetDeviceInfo`, the Pavo property read, the whole 224,928-byte
+  ZMDB payload, and 168 tracks in 10 albums by 10 artists browsed on the device page.
+- **MTPZ authentication from the embedded keys** - measured with `~/.mtpz-data` deleted on
+  purpose, which is what made every write path below reachable.
+- **One music send, judged by what came back** - an untagged MP3 went in through the
+  ordinary controls; the player's own free space fell by 196,608 bytes for a 193,097-byte
+  file, album and track counts each grew by one, and the bounded re-index ladder read 169
+  tracks back with nobody clicking. Taken off again in a second session it landed in the
+  folder the library declares for music, 1,186 bytes the bigger for the tags the device
+  wrote, with audio frames and decoded samples that both hash to the sent file's.
+- **Deletion** - purged through the right-click control, and a third session read 168
+  tracks back off the player with free space 194,283 bytes larger - exactly the size of
+  the file that had just been pulled off it.
+- **Arrival hotplug** - three sessions, three `Zune arrived` lines from the libusb
+  callback rather than the poll fallback.
+- **Packaging** - [`packaging/macos/deploy.sh`](packaging/macos/deploy.sh) publishes a
+  self-contained bundle, a `.dmg` and a zip, and both archives were opened the way a
+  tester opens them. Windows still has no installer.
+
+**Not yet proven on macOS**, and not inherited from Windows or Linux either: any deletion
+beyond that one music track, the podcast, audiobook, photo and video transfer categories,
+every Zune model but that one Pavo, audible Mac-side playback (CoreAudio is measured to
+bind and the playhead to move; nobody has listened), the *removal* half of hotplug -
+`Zune left` has never once appeared in a macOS log here - and the packaged bundle with a
+player attached, because the evidence above came from the build-tree bundle. The response
+codes this player still answers, the thumbnail failures, and the reason no DEXT is in the
+build are all on [docs/MACOS_PORT.md](docs/MACOS_PORT.md).
+
+## Build on macOS (Apple Silicon)
+
+The full, current recipe is
+[the macOS section of BUILDING.md](BUILDING.md#build-on-macosapple-silicon). Short
+version:
+
+- Xcode command line tools, CMake, Ninja
+- Homebrew for Qt, libusb, libgcrypt, SQLite, mpv, FFmpeg and LAME
+- MTPZ authentication data, unless you want the read-only case - the same five-line file
+  as every other platform, at `~/.mtpz-data`, or `libzune/src/mtpz_keys.h`
+  ([docs/BUILD_WITH_MTPZ.md](docs/BUILD_WITH_MTPZ.md))
+
+```bash
+git clone https://github.com/miemiekurisu/zuuned-modern.git
+cd zuuned-modern
+cmake -B build-macos-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-macos-release --parallel 8
+./build-macos-release/zuuned.app/Contents/MacOS/zuuned
+```
+
+`./packaging/macos/deploy.sh` turns that tree into the self-contained bundle and both
+archives. There is no Apple developer licence behind this project, so nothing is
+notarised: a first launch wants right-click -> Open or
+`xattr -dr com.apple.quarantine`, and a bundle built under `~/Documents` also wants the
+Documents-folder consent, because that is where macOS keeps the Music folder.
+
+Run anything that touches a player, a video decoder or an audio device **outside** a
+sandbox. Inside one libusb enumerates zero devices and VideoToolbox refuses its session,
+and both look exactly like a broken build rather than like a denied permission.
+
 ## Building on Linux
 
 The upstream instructions still apply and are unchanged by the port: see
@@ -194,6 +271,28 @@ Linux too, but it publishes no Linux binaries. The Linux software gates ship her
 `ci/check.sh` drives the other directories under `tests/` - music import and sync,
 artwork, spoken media, playlists, diagnostics and the rest - on a Linux machine, which is
 the only place that suite runs.
+
+## Known issues
+
+**WMA Lossless does not exist outside Windows, on macOS or anywhere else, and closing
+this is deferred.** The encoder this product writes the format with is the one already
+inside Windows - Windows Media Audio 9.2 Lossless, reached through the Windows Media
+Format runtime - so `CMakeLists.txt` adds `transcode/wma_lossless_enc.cpp` under
+`if(WIN32)` and every other platform links `transcode/wma_lossless_stub.c`, whose
+`zuuned_wma_lossless_available()` answers an honest 0. Nothing is hidden by that:
+**Settings -> Device -> Audio conversion** builds its format list from that one answer,
+so on a Mac the WMA Lossless row is disabled and the card's status line reads
+`not on this platform` rather than offering a format this build cannot make, and no
+other destination goes through that code path. FFmpeg is not a way round it, and that
+was checked rather than assumed - the Homebrew FFmpeg 9.0.2 behind the Mac build lists
+`wmav1` and `wmav2` as its only WMA encoders and carries `wmalossless`, `wmapro` and
+`wmavoice` as decoders only, so asking for it answers `Unknown encoder 'wmalossless'`.
+What encoders do exist in the community drive the same Windows codec library through
+`wmvcore`, so there is no open-source encoder here to vendor, only a Windows one to
+call. What that costs a Mac or Linux user is the lossless destination: a FLAC, WAV or
+APE has somewhere lossless to go on Windows and gets converted down here. Deferred, not
+forgotten - and a local library, a local file and every other sync format are
+unaffected by it.
 
 ## Reporting a problem
 
@@ -214,13 +313,15 @@ libzune/        included source; shared C protocol library
 libzune/tools/  zunetool and mtpframingtool, the protocol-side probes
 transcode/      FFmpeg and LAME transcoding, plus the in-box WMA Lossless encoder
 i18n/           the interface wording; zh_CN.tsv is the editable source
-packaging/      Linux USB rule, PKGBUILD and AppImage builder
+packaging/      Linux USB rule, PKGBUILD, AppImage builder and macOS bundle packager
 packaging/windows/  WinUSB driver guide and check-driver.ps1
+packaging/macos/    macOS bundle packager and claimprobe.c, the USB claim probe
 tests/win-compat/    Windows compatibility gate (no device)
 tests/win-usability/ Windows launch and UI gate (no device)
 tests/            the Linux gate suite, driven by ci/check.sh (no device)
 docs/readme-screenshots/  these captures, and the zh/ set
 docs/WINDOWS_PORT.md what is and is not proven on Windows
+docs/MACOS_PORT.md   what is and is not proven on Apple silicon
 docs/WINDOWS_COMPAT_AUDIT.md the whole-tree Windows compatibility sweeps
 docs/SETTINGS_INVENTORY.md every switch, and the feature behind each one
 docs/FEATURE_COMPLETION.md the implementation backlog
