@@ -1,4 +1,8 @@
 build/
+# The two Apple-silicon trees are the same kind of local artefact as build/: the
+# Debug one carries the gate launches, the Release one the measured sweep.
+build-macos/
+build-macos-release/
 *.pdb
 .codegraph/
 .cache/

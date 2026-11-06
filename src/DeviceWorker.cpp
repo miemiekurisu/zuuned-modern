@@ -205,6 +205,11 @@ void DeviceWorker::doBreach() {
 #if defined(Q_OS_WIN)
         // No udev here: a Windows tester needs the driver name, not a Linux rule.
         const QString hint = UiText::tr("check USB and bind the Zune to WinUSB");
+#elif defined(Q_OS_MACOS)
+        // No udev and no driver to bind here either: libusb opens the player through
+        // IOKit, so what a macOS tester can check is the cable and the system's own
+        // USB permission, not a rule file.
+        const QString hint = UiText::tr("check USB and macOS USB access");
 #else
         const QString hint = UiText::tr("check USB + udev rule");
 #endif

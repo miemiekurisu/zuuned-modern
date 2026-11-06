@@ -1167,6 +1167,28 @@ static const VideoProfileParams PROFILES[] = {
     { 1280, 720, 8000000, 192000, 44100, "baseline", "3.1", ZUUNED_H264_ENCODER, "mp4", "mp4" },
 };
 
+/* The parameter set a software H.264/WMV encoder gets: full control over GOP,
+ * B-frames and level, which the VideoToolbox encoder refuses.  One function
+ * because the macOS line needs to hand the software encoder exactly what the
+ * Linux line hands it -- a fallback that produced a different file would be a
+ * second transcode profile wearing a recovery costume. */
+static void venc_apply_sw_params(AVCodecContext *c, const VideoProfileParams *pp,
+                                 const char *enc_name)
+{
+    c->pix_fmt = AV_PIX_FMT_YUV420P;
+    c->gop_size = 30;
+    c->max_b_frames = 0;
+    if (pp->h264_profile) {
+        av_opt_set(c->priv_data, "profile", pp->h264_profile, 0);
+    }
+    if (pp->h264_level) {
+        av_opt_set(c->priv_data, "level", pp->h264_level, 0);
+    }
+    if (strcmp(enc_name, "libx264") == 0) {
+        av_opt_set(c->priv_data, "preset", "fast", 0);
+    }
+}
+
 char *zuuned_transcode_video(const char *input_path, int profile,
                               const char *series, int season, int episode,
                               const char *audio_lang,
@@ -1237,11 +1259,41 @@ char *zuuned_transcode_video(const char *input_path, int profile,
         vdec_ctx->thread_count = 0; /* All CPU cores for SW path */
 
 #ifdef __APPLE__
-        /* Try VideoToolbox HW decode (reuse encoder's hw_device_ref) */
-        if (hw_device_ref) {
-            vdec_ctx->hw_device_ctx = av_buffer_ref(hw_device_ref);
-            vdec_ctx->get_format = get_vt_hw_format;
+        /* VideoToolbox decode, asked for on its own device.
+         *
+         * The old line here tested the *encoder's* hw_device_ref and borrowed
+         * it, and that reference is not created until the encoder opens, below
+         * this block -- so on this platform it was always NULL, hardware decode
+         * was never requested, and every transcode silently decoded on the CPU
+         * while the code above the branch claimed a VideoToolbox selector.
+         * Nothing noticed because the honest proof of a decode path is the
+         * first frame's pixel format, and software answered it both before and
+         * after that comment was written.
+         *
+         * The mode is the Settings acceleration pill that SyncEngine mirrors
+         * (0 software · 1 auto · 2 NVIDIA · 3 AMD).  This platform reaches one
+         * hardware decoder through FFmpeg, so only auto asks for it: 2 and 3
+         * name an API that does not exist here and land on the threaded
+         * software path, exactly as the same pill answers on a Linux box built
+         * without that card, and 0 is the explicit request for software.
+         * Vocabulary of these three log lines is the Linux branch's, so one
+         * gate pattern reads a decode path on either platform. */
+        const int mode = zuuned_hw_decode();
+        if (mode == 1) {
+            int hw_ret = av_hwdevice_ctx_create(&hw_decode_ref,
+                                                AV_HWDEVICE_TYPE_VIDEOTOOLBOX,
+                                                NULL, NULL, 0);
+            if (hw_ret == 0 && hw_decode_ref) {
+                vdec_ctx->hw_device_ctx = av_buffer_ref(hw_decode_ref);
+                vdec_ctx->get_format = get_vt_hw_format;
+            } else {
+                fprintf(stderr, LOG_PREFIX
+                        " video: VideoToolbox device unavailable (%d)\n", hw_ret);
+            }
         }
+        if (!vdec_ctx->hw_device_ctx)
+            fprintf(stderr, LOG_PREFIX
+                    " video: no HW decode (mode %d) — SW decode\n", mode);
 #else
         /* NVDEC: 1080p HEVC decode is the dominant transcode cost and
          * the GPU's dedicated decoder does it nearly for free. Device
@@ -1349,6 +1401,9 @@ char *zuuned_transcode_video(const char *input_path, int profile,
             fprintf(stderr, LOG_PREFIX " video: encoder '%s' not available\n", pp->encoder_name);
             goto vcleanup;
         }
+        /* What the opened encoder is actually called, because the macOS line
+         * can end up on a different one than the profile names. */
+        const char *enc_name = pp->encoder_name;
         venc_ctx = avcodec_alloc_context3(venc);
         venc_ctx->width = pp->width;
         venc_ctx->height = pp->height;
@@ -1395,33 +1450,59 @@ char *zuuned_transcode_video(const char *input_path, int profile,
         {
             /* Software encoders (libx264, wmv2, mpeg4): full control over
              * parameters */
-            venc_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
-            venc_ctx->gop_size = 30;
-            venc_ctx->max_b_frames = 0;
-            if (pp->h264_profile) {
-                av_opt_set(venc_ctx->priv_data, "profile", pp->h264_profile, 0);
-            }
-            if (pp->h264_level) {
-                av_opt_set(venc_ctx->priv_data, "level", pp->h264_level, 0);
-            }
-            if (strcmp(pp->encoder_name, "libx264") == 0) {
-                av_opt_set(venc_ctx->priv_data, "preset", "fast", 0);
-            }
+            venc_apply_sw_params(venc_ctx, pp, enc_name);
         }
 
         if (ofmt_ctx->oformat->flags & AVFMT_GLOBALHEADER)
             venc_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
         int venc_ret = avcodec_open2(venc_ctx, venc, NULL);
+#ifdef __APPLE__
+        /* A VideoToolbox device context can be created and still be unusable.
+         * Measured on this Mac inside a seatbelt sandbox: the device context
+         * came back fine and avcodec_open2 failed with "Cannot create
+         * compression session: -12903", so the whole transcode died at
+         * "can't open encoder" on a machine whose libavcodec holds a working
+         * software H.264 encoder.  A locked or remote session, or any
+         * environment that withholds the GPU from this process, asks the same
+         * question, so ask the same answer: open libx264 with the Linux
+         * parameter set, at the profile's own resolution and bitrate. */
+        if (venc_ret < 0 && is_videotoolbox) {
+            char sw_err[128];
+            av_strerror(venc_ret, sw_err, sizeof(sw_err));
+            fprintf(stderr, LOG_PREFIX
+                    " video: encoder 'h264_videotoolbox' unusable (%s) — SW encode\n", sw_err);
+            avcodec_free_context(&venc_ctx);
+            venc = avcodec_find_encoder_by_name("libx264");
+            if (!venc) {
+                fprintf(stderr, LOG_PREFIX " video: encoder 'libx264' not available\n");
+                goto vcleanup;
+            }
+            enc_name = "libx264";
+            venc_ctx = avcodec_alloc_context3(venc);
+            venc_ctx->width = pp->width;
+            venc_ctx->height = pp->height;
+            venc_ctx->bit_rate = pp->video_bitrate;
+            venc_ctx->time_base = av_inv_q(src_fps);
+            venc_ctx->framerate = src_fps;
+            venc_apply_sw_params(venc_ctx, pp, enc_name);
+            if (ofmt_ctx->oformat->flags & AVFMT_GLOBALHEADER)
+                venc_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+            venc_ret = avcodec_open2(venc_ctx, venc, NULL);
+            /* Every frame path below keys off venc_ctx->pix_fmt, which the
+             * software parameters just set to yuv420p, so nothing downstream
+             * has to know which encoder answered. */
+        }
+#endif
         if (venc_ret < 0) {
             char errbuf[128];
             av_strerror(venc_ret, errbuf, sizeof(errbuf));
             fprintf(stderr, LOG_PREFIX " video: can't open encoder '%s': %s (pix_fmt=%d, %dx%d)\n",
-                    pp->encoder_name, errbuf, venc_ctx->pix_fmt, pp->width, pp->height);
+                    enc_name, errbuf, venc_ctx->pix_fmt, pp->width, pp->height);
             goto vcleanup;
         }
         fprintf(stderr, LOG_PREFIX " video: encoder '%s' opened OK (pix_fmt=%d, %dx%d)\n",
-                pp->encoder_name, venc_ctx->pix_fmt, pp->width, pp->height);
+                enc_name, venc_ctx->pix_fmt, pp->width, pp->height);
 
         AVStream *out_vs = avformat_new_stream(ofmt_ctx, NULL);
         avcodec_parameters_from_context(out_vs->codecpar, venc_ctx);

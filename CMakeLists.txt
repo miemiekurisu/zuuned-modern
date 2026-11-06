@@ -5,8 +5,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # MPRIS (src/player/MprisService.cpp) is the Linux D-Bus media-key bridge, so
-# DBus is only a component where it exists: the Windows Qt build has no Qt6::DBus.
-if(WIN32)
+# DBus is only a component where it exists and is used: the Windows Qt build has
+# no Qt6::DBus at all, and the macOS build has the module but no adaptor to link
+# against -- its media-key surface is MPNowPlayingInfoCenter, not MPRIS.
+if(WIN32 OR APPLE)
     set(ZUUNED_QT_COMPONENTS Quick Gui Concurrent Network OpenGL QuickControls2
         QuickDialogs2 Core5Compat)
 else()
@@ -125,11 +127,32 @@ else()
     set(ZUUNED_COMPAT_DIR "")
     set(ZUUNED_SHIM_FLAGS "")
     set(ZUUNED_WINCOMPAT "")
-    set(ZUUNED_SYSTEM_LIBS gcrypt)
     set(ZUUNED_LIBM m)
-    set(LAME_LIBRARIES mp3lame)
-    set(LAME_INCLUDE_DIRS "")
-    set(GCRYPT_INCLUDE_DIRS "")
+    if(APPLE)
+        # Homebrew keeps its libraries and headers under a prefix that neither the
+        # Apple linker nor the preprocessor searches by default, so the bare
+        # -lgcrypt / -lmp3lame spellings that resolve against a distro's system
+        # tree resolve to nothing here.  Hand back the file CMake actually found:
+        # find_library and find_path do search the Homebrew prefix (/opt/homebrew
+        # on Apple silicon, /usr/local on Intel), and the name stops mattering.
+        # pkg-config's own entry points (libusb, sqlite3, FFmpeg, mpv) keep their
+        # absolute -I paths, and sqlite3 answers with the SDK's own library.
+        find_library(ZUUNED_GCRYPT_LIBRARY NAMES gcrypt REQUIRED)
+        find_library(ZUUNED_LAME_LIBRARY NAMES mp3lame REQUIRED)
+        find_library(ZUUNED_USB_LIBRARY NAMES usb-1.0 REQUIRED)
+        find_path(ZUUNED_LAME_INCLUDE_DIR NAMES lame/lame.h REQUIRED)
+        find_path(ZUUNED_GCRYPT_INCLUDE_DIR NAMES gcrypt.h REQUIRED)
+        set(ZUUNED_SYSTEM_LIBS ${ZUUNED_GCRYPT_LIBRARY})
+        set(LAME_LIBRARIES ${ZUUNED_LAME_LIBRARY})
+        set(LAME_INCLUDE_DIRS ${ZUUNED_LAME_INCLUDE_DIR})
+        set(GCRYPT_INCLUDE_DIRS ${ZUUNED_GCRYPT_INCLUDE_DIR})
+        set(LIBUSB_LIBRARIES ${ZUUNED_USB_LIBRARY})
+    else()
+        set(ZUUNED_SYSTEM_LIBS gcrypt)
+        set(LAME_LIBRARIES mp3lame)
+        set(LAME_INCLUDE_DIRS "")
+        set(GCRYPT_INCLUDE_DIRS "")
+    endif()
     set(PCRE2_INCLUDE_DIR "")
 endif()
 qt_standard_project_setup(REQUIRES 6.8)
@@ -181,10 +204,12 @@ endfunction()
 set(LIBZUNE_DIR ${CMAKE_SOURCE_DIR}/libzune)
 
 if(WIN32)
-    # libzune's own Makefile is Linux-only: pkg-config probes, -l flags and .so
-    # detection.  CMake compiles the same sources here instead.  driverkit_usb.c
-    # is the macOS backend and is deliberately absent.  USE_LIBAV keeps the
-    # in-process FFmpeg thumbnail path that Linux gets via the Makefile.
+    # libzune's own Makefile covers Linux and macOS only: pkg-config probes, -l
+    # flags and .so detection.  CMake compiles the same sources here instead.
+    # driverkit_usb.c is the abandoned macOS DriverKit backend - the macOS build
+    # runs usb_libusb.c through Homebrew libusb, because a DEXT needs paid Apple
+    # signing this project does not have - so it is absent here too.  USE_LIBAV
+    # keeps the in-process FFmpeg thumbnail path that Linux gets via the Makefile.
     set(LIBZUNE_A libzune_build)
 
     add_library(libzune_build STATIC
@@ -225,7 +250,9 @@ if(WIN32)
     target_compile_options(libzune_build PRIVATE
         "$<$<COMPILE_LANGUAGE:C>:/utf-8>" ${ZUUNED_SHIM_FLAGS})
 else()
-    # Built by its own Makefile (auto-selects the libusb backend on Linux).
+    # Built by its own Makefile, which picks the libusb backend on both Linux and
+    # macOS (uname Darwin branch) and links the Homebrew libusb/libgcrypt it finds
+    # through pkg-config.
     # CMake just drives `make` and links the resulting static archive.
     set(LIBZUNE_A ${LIBZUNE_DIR}/libzune.a)
 
@@ -561,6 +588,16 @@ zuuned_long_paths(devicetool)
 if(NOT WIN32)
     pkg_check_modules(FFMPEG REQUIRED
         libavformat libavcodec libavutil libswresample libswscale)
+    if(APPLE)
+        # The same Homebrew-prefix reason as the dependency block above: FFmpeg
+        # sits outside the linker's default search path here, so name the files
+        # CMake resolved rather than the bare -lavformat the probe reports.
+        set(FFMPEG_LIBRARIES "")
+        foreach(component avformat avcodec avutil swresample swscale)
+            find_library(ZUUNED_FFMPEG_${component}_LIBRARY NAMES ${component} REQUIRED)
+            list(APPEND FFMPEG_LIBRARIES "${ZUUNED_FFMPEG_${component}_LIBRARY}")
+        endforeach()
+    endif()
 endif()
 
 add_library(zuuned_transcode STATIC
@@ -606,6 +643,18 @@ if(WIN32)
     target_compile_options(transcodetool PRIVATE "$<$<COMPILE_LANGUAGE:C>:/utf-8>")
 else()
     target_link_libraries(transcodetool PRIVATE zuuned_transcode)
+    if(APPLE)
+        # zuuned_probe_metadata() reaches zune_probe() through a weak reference so
+        # this CLI gate stays linkable without libzune at all.  GNU ld binds an
+        # undefined weak symbol to zero and lets the executable stand; the macOS
+        # linker refuses it outright - measured here, where both the plain weak
+        # reference and weak_import fail the same way.  Name the one expected
+        # absence rather than loosening every undefined symbol with
+        # -undefined dynamic_lookup, which would also hide a real missing library.
+        # The NULL check in zuuned_probe_metadata() still answers -1, which is the
+        # same behaviour this standalone gate has on Linux.
+        target_link_options(transcodetool PRIVATE "-Wl,-U,_zune_probe")
+    endif()
 endif()
 zuuned_long_paths(transcodetool)
 
@@ -679,6 +728,11 @@ zuuned_long_paths(librarytool)
 # ═══════════════════════════════════════════════════════════════════
 if(NOT WIN32)
     pkg_check_modules(MPV REQUIRED mpv)
+    if(APPLE)
+        # libmpv for the same reason as FFmpeg above.
+        find_library(ZUUNED_MPV_LIBRARY NAMES mpv REQUIRED)
+        set(MPV_LIBRARIES "${ZUUNED_MPV_LIBRARY}")
+    endif()
 endif()
 
 target_sources(zuuned PRIVATE
@@ -692,9 +746,11 @@ target_sources(zuuned PRIVATE
     src/player/VideoPlayerService.cpp
     src/player/VideoPlayerService.h
 )
-if(NOT WIN32)
+if(NOT WIN32 AND NOT APPLE)
     # MPRIS is the Linux D-Bus media-key integration.  There is no Windows
     # equivalent yet, and Qt6::DBus is not part of the Windows Qt build either.
+    # macOS has the module and no protocol to speak: MPRIS is not what a Mac
+    # media key talks to, so the adaptor stays off this platform as well.
     target_sources(zuuned PRIVATE
         src/player/MprisService.cpp
         src/player/MprisService.h
@@ -705,8 +761,31 @@ zuuned_long_paths(zuuned)
 
 if(WIN32)
     target_link_libraries(zuuned PRIVATE ${MPV_LIBRARIES} Qt6::OpenGL)
-else()
+elseif(NOT APPLE)
     target_link_libraries(zuuned PRIVATE ${MPV_LIBRARIES} Qt6::OpenGL Qt6::DBus)
+else()
+    target_link_libraries(zuuned PRIVATE ${MPV_LIBRARIES} Qt6::OpenGL)
+endif()
+
+# macOS ships as a bundle, and here that is not a packaging nicety but the only
+# way the link works at all: `qt_add_qml_module(zuuned URI Zuuned)` writes the
+# built module to ./Zuuned/ beside the executable, APFS is case-insensitive by
+# default, and so a flat `-o zuuned` asks the linker to replace that directory
+# with an ordinary file -- `ld: open() failed, errno=21 (Is a directory) for
+# 'zuuned'` after every object has compiled. A bundle puts the binary at
+# zuuned.app/Contents/MacOS/zuuned, which cannot collide, and carries the
+# Info.plist the platform wants. The CLI probes below stay flat on purpose: no
+# QML module, nothing to collide with.
+if(APPLE)
+    set_target_properties(zuuned PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/Info.plist.in"
+        MACOSX_BUNDLE_BUNDLE_NAME "Zuuned"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.zuuned.zuuned"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_COPYRIGHT "Zuuned - an independent Zune manager"
+    )
 endif()
 
 qt_add_executable(playertool
@@ -729,7 +808,12 @@ include(GNUInstallDirs)
 # together with the steps in BUILDING.md (ninja, then windeployqt beside the exe
 # plus the DLLs the vcpkg toolchain already copies next to it), so there is no
 # Windows install layout yet and `cmake --install` deliberately does nothing.
-if(NOT WIN32)
+#
+# macOS is in the same position for a different reason: a .desktop entry, an
+# hicolor icon tree and a udev rule are Linux artifacts, and none of the three
+# has a macOS counterpart wired up yet.  What the Mac build produces is the
+# bundle under the build directory; BUILDING.md says what to do with it.
+if(NOT WIN32 AND NOT APPLE)
     install(TARGETS zuuned RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(FILES LICENSE COPYING.md
             DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/zuuned)

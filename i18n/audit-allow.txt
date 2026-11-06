@@ -48,6 +48,7 @@ SKIP-FILE :: src/UdevSetup.h :: builds a shell command that installs the Linux u
 SKIP-FILE :: src/library/VideoNaming.cpp :: filename-parsing patterns, never shown
 SKIP-FILE :: src/library/VideoMatcher.cpp :: SQL against the video table
 SKIP-LINE :: QByteArrayLiteral|QByteArray::fromHex :: byte sequences, not text
+SKIP-LINE :: at home on %1 :: the operating system names that fill that placeholder, which keep their Latin spelling in Chinese too
 
 # --- identity values, format strings and product names ----------------------
 Zuuned :: the product name; a Zune user reads "Zuuned" in Beijing and in Berlin alike

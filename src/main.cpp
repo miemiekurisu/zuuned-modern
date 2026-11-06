@@ -34,9 +34,11 @@
 #include "spoken/SpokenMediaService.h"
 #include "spoken/PodcastQueuePlanner.h"
 #include "library/ArtworkHttp.h"
-#if !defined(Q_OS_WIN)
+#if defined(Q_OS_LINUX)
 // MPRIS is a D-Bus protocol and the Windows Qt build here has neither the bus
 // nor Qt6::DBus, so the media-key adaptor stays off this platform.
+// macOS has neither: its media-key surface is MPNowPlayingInfoCenter, not MPRIS,
+// and the Homebrew Qt build is not linked against Qt6::DBus for this app.
 #include "player/MprisService.h"
 #endif
 #include "player/PlayerService.h"
@@ -149,13 +151,24 @@ int main(int argc, char *argv[]) {
     // exists. The guard outlives the engine/application and their workers.
     QCoreApplication::setApplicationName(QStringLiteral("Zuuned"));
     QCoreApplication::setOrganizationName(QStringLiteral("Zuuned"));
-#ifdef Q_OS_WIN
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     // Windows' "native" settings format is the registry, but the rest of a
     // Zuuned profile (library, logs, cache, instance lock) is one folder under
     // %LOCALAPPDATA%. Keep settings in that model: an ini in %APPDATA%\Zuuned,
     // so a profile can be inspected, moved, deleted or isolated by a test the
     // way HOME isolates it on Linux. No Windows build shipped a registry
     // profile, so the only values to honour are pre-file ones (see below).
+    //
+    // macOS needs the same decision for a different reason: its native format
+    // is a plist named by reversed domain, measured here as
+    // ~/Library/Preferences/com.zuuned.Zuuned.plist, and
+    // QSettings::setPath() has no hold on a plist.  Left native, every
+    // instrumented launch that sets ZUUNED_PROFILE_DIR would write its settings
+    // into the real profile and applySettingsPath() would correctly print
+    // "profile isolation is incomplete".  IniFormat answers
+    // ~/.config/Zuuned/Zuuned.ini unset and <profile>/Zuuned/Zuuned.ini under
+    // setPath — both measured, and the second is what makes the isolation real.
+    // No macOS build has shipped, so there is no plist here to import.
     QSettings::setDefaultFormat(QSettings::IniFormat);
 #endif
     // ZUUNED_PROFILE_DIR, when set, owns every profile file including the
@@ -175,7 +188,7 @@ int main(int argc, char *argv[]) {
     // Native installs may supply their own Qt integration; otherwise prefer
     // the desktop portal. AppRun pins the matching bundled portal plugin so
     // a host Qt theme plugin cannot fail against the AppImage's Qt version.
-#if !defined(Q_OS_WIN)
+#if defined(Q_OS_LINUX)
     if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORMTHEME"))
         qputenv("QT_QPA_PLATFORMTHEME", "xdgdesktopportal");
 #endif
@@ -510,7 +523,7 @@ int main(int argc, char *argv[]) {
     if (library && qEnvironmentVariableIsSet("ZUUNED_RESCAN_ON_LAUNCH"))
         library->rescan();
 
-#if !defined(Q_OS_WIN)
+#if defined(Q_OS_LINUX)
     // C1: MPRIS2 — media keys, sound applets, now-playing widgets.
     if (player && library)
         new MprisService(player,

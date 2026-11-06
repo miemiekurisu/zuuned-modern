@@ -15,6 +15,7 @@
 #include <limits>
 #include <sys/stat.h>
 #include "../UiText.h"
+#include "../FileTimestamps.h"
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
@@ -171,9 +172,9 @@ bool Audiobooks::probePart(const QString &path, AudiobookPart *out, QString *err
     }
     struct stat after{};
     const bool unchanged = fstat(input.file.handle(), &after) == 0 &&
-        before.st_size == after.st_size && before.st_mtim.tv_sec == after.st_mtim.tv_sec &&
-        before.st_mtim.tv_nsec == after.st_mtim.tv_nsec && before.st_ctim.tv_sec == after.st_ctim.tv_sec &&
-        before.st_ctim.tv_nsec == after.st_ctim.tv_nsec;
+        before.st_size == after.st_size
+        && Zuuned::FileTimestamps::mtimeNs(before) == Zuuned::FileTimestamps::mtimeNs(after)
+        && Zuuned::FileTimestamps::ctimeNs(before) == Zuuned::FileTimestamps::ctimeNs(after);
     release();
     if (input.stopped()) return fail(UiText::tr("Audiobook probe cancelled or timed out"));
     if (!unchanged) return fail(UiText::tr("Audio file changed during inspection; retry import"));

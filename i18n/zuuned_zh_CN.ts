@@ -970,12 +970,20 @@ Arrange them in your reading order.</source>
 <context>
     <name>DeviceService</name>
     <message>
+        <source>your zune is plugged in but macos won&apos;t give it to zuuned</source>
+        <translation>你的 zune 已经插上，但 macOS 不肯把它交给 zuuned</translation>
+    </message>
+    <message>
         <source>your zune is plugged in but windows cannot use it</source>
         <translation>你的 zune 已经插上，但 windows 用不了它</translation>
     </message>
     <message>
         <source>your zune needs a USB permission rule</source>
         <translation>你的 zune 需要一条 USB 权限规则</translation>
+    </message>
+    <message>
+        <source>macos needs no driver installed for zuuned to reach the player - if the player is still shut out, look for a USB prompt to allow in System Settings &gt; Privacy &amp; Security, then replug. zuuned never installs a driver itself.</source>
+        <translation>macOS 不需要为 zuuned 访问播放器安装任何驱动 —— 如果播放器仍然被拒之门外，请到“系统设置 &gt; 隐私与安全性”里查看是否有需要允许的 USB 提示，然后重新插拔。zuuned 自己从不安装驱动。</translation>
     </message>
     <message>
         <source>windows has not bound a driver zuuned can reach. give it WinUSB or libusbK with the Zadig utility, then replug. the device id below is what to pick there - zuuned never installs a driver itself.</source>
@@ -1993,7 +2001,7 @@ browse your zune from the device panel →</source>
         <translation>欢迎来到</translation>
     </message>
     <message>
-        <source>your zune, at home on %1
+        <source>your zune, at home on %1.
 folders first, then make it yours, then a quick tour.</source>
         <translation>把你的 zune 带回家，运行在 %1 上
 先选文件夹，再按你的喜好设置，最后看一遍快速指引。</translation>
@@ -3120,6 +3128,10 @@ or select photos and choose Add.</source>
         <translation>让 zuuned 不必每次都靠 sudo 就能访问 Zune。</translation>
     </message>
     <message>
+        <source>macOS needs no driver and no rules - zuuned reaches the Zune through libusb.</source>
+        <translation>macOS 既不需要驱动也不需要规则 —— zuuned 通过 libusb 访问 Zune。</translation>
+    </message>
+    <message>
         <source>Windows claims the Zune through a WinUSB driver - no rules, no sudo.</source>
         <translation>Windows 通过 WinUSB 驱动接管 Zune —— 不需要规则，也不需要 sudo。</translation>
     </message>
@@ -3134,6 +3146,10 @@ or select photos and choose Add.</source>
     <message>
         <source>No Zune visible to libusb</source>
         <translation>libusb 看不到 Zune</translation>
+    </message>
+    <message>
+        <source>zuuned talks to the Zune through libusb, which on macOS needs no driver installed. If a plugged-in Zune never shows up here, something else already holds its USB interface. zuuned never installs a driver.</source>
+        <translation>zuuned 通过 libusb 与 Zune 通信，在 macOS 上不需要安装任何驱动。如果插上的 Zune 在这里始终不出现，说明它的 USB 接口已被别的进程占用。zuuned 从不安装驱动。</translation>
     </message>
     <message>
         <source>zuuned talks to the Zune through libusb, which on Windows needs a WinUSB driver bound to the device. If a plugged-in Zune never shows up here, install WinUSB for it with the Zadig utility, then replug. zuuned never installs a driver.</source>
@@ -3530,6 +3546,10 @@ or select photos and choose Add.</source>
     <message>
         <source>Bit rate is constant only. A variable-bitrate MP3 header is not written by this build - measured, the LAME/Xing frame is absent and the player then reports a track three minutes shorter than it is - so VBR is not offered.</source>
         <translation>码率只能是恒定的。本版本不会写入可变码率的 MP3 头 —— 实测缺少 LAME/Xing 帧，播放器随后会把曲目时长少报三分钟 —— 因此不提供 VBR。</translation>
+    </message>
+    <message>
+        <source>Auto decodes on the GPU through VideoToolbox, then falls back to software. NVIDIA and AMD name an API this platform cannot reach, so both pills are inert here and those picks decode on the CPU. The H.264 encoder is VideoToolbox whatever this pill says, and reaches the CPU only if macOS refuses a VideoToolbox session.</source>
+        <translation>自动会先通过 VideoToolbox 在 GPU 上解码，失败则回落到软件解码。NVIDIA 与 AMD 指的是本平台无法访问的接口，因此这两个选项在这里都不生效，选中它们就在 CPU 上解码。无论这里的选项是什么，H.264 编码器都是 VideoToolbox，只有在 macOS 拒绝建立 VideoToolbox 会话时才会改用 CPU 编码。</translation>
     </message>
     <message>
         <source>FFmpeg command-line tools</source>
@@ -4741,6 +4761,10 @@ Star an episode in any show to find it here.</source>
         <translation>已取回 %1 个%2 到资料库</translation>
     </message>
     <message>
+        <source>macOS has no udev rules - zuuned reaches the Zune through libusb and needs nothing installed</source>
+        <translation>macOS 没有 udev 规则 —— zuuned 通过 libusb 访问 Zune，不需要安装任何东西</translation>
+    </message>
+    <message>
         <source>Windows needs a WinUSB driver for the Zune rather than a udev rule - install WinUSB with Zadig, then replug</source>
         <translation>Windows 需要为 Zune 绑定 WinUSB 驱动而不是 udev 规则 —— 请用 Zadig 安装 WinUSB，然后重新插拔</translation>
     </message>
@@ -4827,6 +4851,10 @@ Star an episode in any show to find it here.</source>
     <message>
         <source>check USB and bind the Zune to WinUSB</source>
         <translation>请检查 USB，并把 Zune 绑定到 WinUSB</translation>
+    </message>
+    <message>
+        <source>check USB and macOS USB access</source>
+        <translation>请检查 USB 连接与 macOS 的 USB 访问权限</translation>
     </message>
     <message>
         <source>check USB + udev rule</source>

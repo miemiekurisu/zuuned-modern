@@ -1263,8 +1263,11 @@ Item {
                         title: qsTr("USB access")
                         desc: DeviceService.udevRulesApply
                             ? qsTr("let zuuned own the Zune without sudo each time.")
-                            : qsTr("Windows claims the Zune through a WinUSB driver - no rules, no sudo.")
-                        // Windows has no udev: name WinUSB instead of offering a rule install.
+                            : Qt.platform.os === "osx"
+                              ? qsTr("macOS needs no driver and no rules - zuuned reaches the Zune through libusb.")
+                              : qsTr("Windows claims the Zune through a WinUSB driver - no rules, no sudo.")
+                        // Windows and macOS have no udev: name WinUSB, or nothing at
+                        // all, instead of offering a rule install.
                         ColumnLayout {
                             id: usbAccessCol
                             visible: !DeviceService.udevRulesApply
@@ -1301,7 +1304,13 @@ Item {
                             }
                             Text {
                                 Layout.fillWidth: true
-                                text: qsTr("zuuned talks to the Zune through libusb, which on Windows needs a WinUSB driver bound to the device. If a plugged-in Zune never shows up here, install WinUSB for it with the Zadig utility, then replug. zuuned never installs a driver.")
+                                // Zadig is a Windows utility: naming it on a Mac
+                                // sends a tester to a tool that cannot help. The
+                                // transport is libusb on both platforms, only what
+                                // the operating system wants first differs.
+                                text: Qt.platform.os === "osx"
+                                      ? qsTr("zuuned talks to the Zune through libusb, which on macOS needs no driver installed. If a plugged-in Zune never shows up here, something else already holds its USB interface. zuuned never installs a driver.")
+                                      : qsTr("zuuned talks to the Zune through libusb, which on Windows needs a WinUSB driver bound to the device. If a plugged-in Zune never shows up here, install WinUSB for it with the Zadig utility, then replug. zuuned never installs a driver.")
                                 font.pixelSize: 11; font.weight: Font.Light
                                 color: Theme.textDim
                                 wrapMode: Text.WordWrap
@@ -1366,9 +1375,11 @@ Item {
                         desc: qsTr("hardware video decode when your GPU supports it — ~4x faster transcodes.")
                         Seg {
                             options: [{ label: qsTr("Auto"), value: "auto" },
-                                      { label: qsTr("NVIDIA"), value: "nvenc" },
+                                      { label: qsTr("NVIDIA"), value: "nvenc",
+                                        disabled: Qt.platform.os === "osx" },
                                       { label: qsTr("AMD"), value: "amd",
-                                        disabled: Qt.platform.os === "windows" },
+                                        disabled: Qt.platform.os === "windows"
+                                                  || Qt.platform.os === "osx" },
                                       { label: qsTr("CPU"), value: "cpu" }]
                             current: AppSettings.transcodeAccel
                             onPicked: (v) => AppSettings.transcodeAccel = v
@@ -1378,10 +1389,20 @@ Item {
                         // always fails on Windows, which is why the AMD pill is
                         // inert here instead of promising a decode that cannot
                         // happen. Measured on this machine, auto answers NVDEC.
+                        // macOS is the same story with the names exchanged: the
+                        // one hardware decoder this platform's FFmpeg reaches is
+                        // VideoToolbox, so both vendor pills are inert and only
+                        // auto asks the GPU at all. The encoder half is not a
+                        // choice here at all -- h264_videotoolbox is the encoder
+                        // this platform is built to ask for, and since this
+                        // checkpoint a refused compression session retries the
+                        // open on libx264 rather than failing the transcode.
                         PhaseNote {
                             text: Qt.platform.os === "windows"
                                   ? qsTr("Auto tries NVDEC, then software. VAAPI, the way an AMD or Intel card decodes on Linux, does not exist on Windows, so AMD is inert here and those GPUs transcode on the CPU.")
-                                  : qsTr("Auto tries NVDEC, then VAAPI, then software. A missing GPU falls back to software either way.")
+                                  : Qt.platform.os === "osx"
+                                    ? qsTr("Auto decodes on the GPU through VideoToolbox, then falls back to software. NVIDIA and AMD name an API this platform cannot reach, so both pills are inert here and those picks decode on the CPU. The H.264 encoder is VideoToolbox whatever this pill says, and reaches the CPU only if macOS refuses a VideoToolbox session.")
+                                    : qsTr("Auto tries NVDEC, then VAAPI, then software. A missing GPU falls back to software either way.")
                         }
                     }
 

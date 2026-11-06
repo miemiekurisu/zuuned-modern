@@ -200,8 +200,14 @@ Item {
                             // W15: promise the flow — folders, then make-it-
                             // yours, then the tour (mixtapes are the showpiece).
                             Layout.topMargin: Theme.spaceSm
-                            text: qsTr("your zune, at home on %1\nfolders first, then make it yours, then a quick tour.")
-                                  .arg(Qt.platform.os === "windows" ? "Windows." : "Linux.")
+                            // The sentence-ending period belongs to the
+                            // translatable string, not the platform name: the
+                            // Chinese wording puts the placeholder mid-sentence
+                            // ("running on %1") so a period carried in with the
+                            // name rendered as "running on macOS. ".
+                            text: qsTr("your zune, at home on %1.\nfolders first, then make it yours, then a quick tour.")
+                                  .arg(Qt.platform.os === "windows" ? "Windows"
+                                       : Qt.platform.os === "osx" ? "macOS" : "Linux")
                             font.pixelSize: 14
                             font.weight: Font.Light
                             lineHeight: 1.35

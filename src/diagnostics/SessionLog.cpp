@@ -54,6 +54,31 @@ void closeFd(int &fd)
     if (fd >= 0) ::close(fd);
     fd = -1;
 }
+
+// One pipe with the two flags this file needs, spelled the way this platform
+// can spell them.  pipe2() is Linux; the Windows build gets it from
+// compat/win/posix_shim.h.  macOS grew pipe2 in version 27, so a binary built
+// against the 26 SDK cannot call it (the compiler says so outright: "pipe2 is
+// only available on macOS 27.0 or newer"), and setting the same two flags by
+// hand is the honest equivalent rather than a downgrade.  The window O_CLOEXEC
+// exists to close — a fork/exec between pipe() and fcntl() — does not exist
+// here: both descriptors are used by the statements that follow and no child is
+// spawned between them.
+bool makePipe(int fds[2], bool nonBlock)
+{
+#if defined(Q_OS_MACOS)
+    if (::pipe(fds) != 0) return false;
+    ::fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+    ::fcntl(fds[1], F_SETFD, FD_CLOEXEC);
+    if (nonBlock) {
+        ::fcntl(fds[0], F_SETFL, O_NONBLOCK);
+        ::fcntl(fds[1], F_SETFL, O_NONBLOCK);
+    }
+    return true;
+#else
+    return ::pipe2(fds, O_CLOEXEC | (nonBlock ? O_NONBLOCK : 0)) == 0;
+#endif
+}
 }
 
 struct SessionLog::Impl {
@@ -323,7 +348,7 @@ bool SessionLog::start(const QString &directory, Limits limits)
     if (!d->openPart()) return failed();
 
     int capture[2] {-1, -1}, control[2] {-1, -1};
-    if (::pipe2(capture, O_CLOEXEC) != 0 || ::pipe2(control, O_CLOEXEC | O_NONBLOCK) != 0) {
+    if (!makePipe(capture, false) || !makePipe(control, true)) {
         d->failure = systemError(QStringLiteral("Could not start diagnostic capture"));
         closeFd(capture[0]); closeFd(capture[1]); closeFd(control[0]); closeFd(control[1]);
         return failed();
@@ -339,6 +364,18 @@ bool SessionLog::start(const QString &directory, Limits limits)
         // There is no /proc/self/fd here: the helper duplicates the inherited
         // stderr descriptor, so mirroring never changes the caller flags.
         d->consoleFd = zuuned_open_self_fd(STDERR_FILENO);
+#elif defined(Q_OS_MACOS)
+        // Same reason as Windows, different missing file: macOS has no
+        // /proc/self/fd, so a duplicate of the inherited stderr is the honest
+        // way to get a second writer of it, and unlike opening /dev/tty it
+        // still follows an fd 2 the caller redirected into a file.  The copy
+        // shares the caller's open file description, so O_NONBLOCK is
+        // deliberately not set here — doing that would flip the caller's own
+        // stderr to non-blocking, which is exactly what reopening avoids on
+        // Linux.  The mirror does not need it: every write is already behind a
+        // zero-timeout POLLOUT poll (see Impl::append), so a slow terminal can
+        // lose mirrored lines without ever parking the capture thread.
+        d->consoleFd = ::fcntl(STDERR_FILENO, F_DUPFD_CLOEXEC, 3);
 #else
         d->consoleFd = ::open("/proc/self/fd/2", O_WRONLY | O_NONBLOCK | O_CLOEXEC | O_APPEND);
 #endif

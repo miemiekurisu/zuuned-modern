@@ -6,8 +6,7 @@
 #
 # Dependencies:
 #   - libgcrypt (for MTPZ authentication)
-#   - macOS: IOKit framework (for DEXT IOUserClient)
-#   - Linux: libusb-1.0
+#   - libusb-1.0 (Linux and macOS)
 #   - ffmpeg CLI (runtime, for transcode/thumbnail functions)
 
 # ---- OS detection ----
@@ -72,14 +71,27 @@ SRCS     := $(SRCDIR)/device.c \
 # ---- Platform-specific USB backend + dependencies ----
 
 ifeq ($(UNAME),Darwin)
-  # macOS: DEXT IOUserClient backend, no libusb
-  SRCS    += $(SRCDIR)/driverkit_usb.c
-  CFLAGS  += -I/opt/homebrew/opt/libgcrypt/include \
-             -I/opt/homebrew/opt/libgpg-error/include \
+  # macOS: the libusb backend, the same one Linux uses.
+  #
+  # This branch used to build src/driverkit_usb.c, the IOUserClient client for
+  # an out-of-tree DriverKit extension.  A DEXT cannot be loaded unless it is
+  # signed by an Apple Developer account and notarised, so that backend is
+  # unreachable for anyone without a paid licence - which is everyone who builds
+  # this tree.  Homebrew libusb reaches the player through IOKit in userspace
+  # with no signing at all, which is the route every other Zune tool on macOS
+  # takes.  Nothing here needs IOKit directly: libusb owns that call.
+  #
+  # pkg-config is the path resolver because Homebrew lives in /opt/homebrew on
+  # Apple silicon and /usr/local on Intel, and both are already in pkg-config's
+  # default search path.  The literal /opt/homebrew hints this line replaces
+  # only ever worked on the newer of the two.
+  SRCS    += $(SRCDIR)/usb_libusb.c
+  CFLAGS  += $(shell pkg-config --cflags libusb-1.0 libgcrypt 2>/dev/null) \
              -DUSE_LIBAV \
-             -Ivendor/ffmpeg-include
-  LIBS += -L/opt/homebrew/opt/libgcrypt/lib -lgcrypt \
-             -framework IOKit -framework CoreFoundation
+             $(shell pkg-config --cflags libavformat libavutil 2>/dev/null)
+  LIBS += $(shell pkg-config --libs libgcrypt 2>/dev/null || echo -lgcrypt) \
+             $(shell pkg-config --libs libusb-1.0 2>/dev/null || echo -lusb-1.0) \
+             $(shell pkg-config --libs libavformat libavutil 2>/dev/null || echo -lavformat -lavutil)
 else
   # Linux: libusb-1.0 backend + in-process libav probe (no ffprobe
   # subprocess — same USE_LIBAV path the macOS build uses)

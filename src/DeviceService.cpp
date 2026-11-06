@@ -1007,6 +1007,12 @@ bool DeviceService::udevRulesApply() const {
 #if defined(Q_OS_WIN)
     // Windows claims the Zune with a WinUSB driver; there is no udev here.
     return false;
+#elif defined(Q_OS_MACOS)
+    // macOS has no udev and no rules directory at all: libusb reaches the player
+    // through IOKit, and whether a process may open it is not decided by a file this
+    // app could own.  A one-click installer here would promise something that does
+    // not exist, so the fix-it card must not offer it.
+    return false;
 #else
     return true;
 #endif
@@ -1020,19 +1026,32 @@ bool DeviceService::usbAccessProblem() const {
 
 bool DeviceService::usbAccessFixable() const {
     // One click means pkexec plus a rule file this app owns.  Where that is not a
-    // thing - Windows - the card must not offer it.
+    // thing - Windows, macOS - the card must not offer it.
     return udevRulesApply();
 }
 
 QString DeviceService::usbAccessTitle() const {
-    if (!m_usbBlockDetail.isEmpty())
+    if (!m_usbBlockDetail.isEmpty()) {
+#if defined(Q_OS_MACOS)
+        // Unreachable today: zuneBlocked() is only emitted from the Windows-only
+        // pollPresence pass.  Branch it anyway so the day a macOS presence pass
+        // lands, this card cannot print the word "windows" on a Mac.
+        return tr("your zune is plugged in but macos won't give it to zuuned");
+#else
         return tr("your zune is plugged in but windows cannot use it");
+#endif
+    }
     return tr("your zune needs a USB permission rule");
 }
 
 QString DeviceService::usbAccessDetail() const {
-    if (!m_usbBlockDetail.isEmpty())
+    if (!m_usbBlockDetail.isEmpty()) {
+#if defined(Q_OS_MACOS)
+        return tr("macos needs no driver installed for zuuned to reach the player - if the player is still shut out, look for a USB prompt to allow in System Settings > Privacy & Security, then replug. zuuned never installs a driver itself.");
+#else
         return tr("windows has not bound a driver zuuned can reach. give it WinUSB or libusbK with the Zadig utility, then replug. the device id below is what to pick there - zuuned never installs a driver itself.");
+#endif
+    }
     return tr("one click installs it — you'll get your system's password prompt, no terminal needed.");
 }
 
@@ -1051,9 +1070,15 @@ QString DeviceService::udevInstallCommand() const {
 
 void DeviceService::installUdevRule() {
     if (!udevRulesApply()) {
-        // No udev and no pkexec on Windows: name what actually fixes it.
         emit udevRuleInstalled(false,
+#if defined(Q_OS_MACOS)
+            // No udev, no rules directory, and no system extension zuuned may
+            // install: say what is true instead of naming a tool that cannot help.
+            UiText::tr("macOS has no udev rules - zuuned reaches the Zune through libusb and needs nothing installed"));
+#else
+            // No udev and no pkexec on Windows: name what actually fixes it.
             UiText::tr("Windows needs a WinUSB driver for the Zune rather than a udev rule - install WinUSB with Zadig, then replug"));
+#endif
         return;
     }
 

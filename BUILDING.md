@@ -443,6 +443,253 @@ expected answer is `blocked`:
     os_supported=1 os_present=1 os_usable=0 os_problem=28
     VERDICT=blocked
 
+## Build on macOS (Apple Silicon)
+
+There is no macOS branch and no macOS source tree. One tree builds Linux, Windows
+and macOS, and the platform choice is made where it has to be: `if(WIN32)` /
+`if(APPLE)` in `CMakeLists.txt`, `Q_OS_MACOS` in the C++, `Qt.platform.os` in the
+QML. Nothing is duplicated and nothing is merged back, because there is only one
+line of development.
+
+### Toolchain and dependencies
+
+The Apple toolchain is clang from the Command Line Tools (`xcode-select
+--install`). The SDK already supplies `regex.h`, `sqlite3` and `m`, so unlike the
+Windows tree this one needs no POSIX compatibility layer and no PCRE2, and unlike
+Linux it needs no udev.
+
+```bash
+xcode-select --install
+brew install cmake ninja pkg-config libusb libgcrypt lame mpv ffmpeg \
+  qtbase qtdeclarative qt5compat qtsvg qtshadertools qttools
+```
+
+Those six formulae are the whole Qt surface this tree uses, and Homebrew now ships
+Qt as exactly that: separate formulae, no `qt` umbrella keg. `qtbase` carries Core,
+Gui, Network, Concurrent and OpenGL; `qtdeclarative` carries Quick, QML, the Quick
+Controls and the Quick Dialogs; `qt5compat` is the `Core5Compat` component the
+language file loader uses and the `Qt5Compat.GraphicalEffects` import almost every
+`qml/` card makes; `qtshadertools` builds the `FastBlur` behind the settings
+backdrop; `qttools` is `lupdate`/`lrelease` for `i18n/`; and `qtsvg` is the icon
+engine the theme loads at run time rather than link time, so it is missing from
+`find_package` and still required. `brew install qt` remains a metapackage that
+pulls all of this plus `qtwebengine`, which `zuuned` does not link — `rg WebEngine
+CMakeLists.txt` answers nothing — so a `qtwebengine` left at an older version than
+its upgraded dependencies is untidy and irrelevant, and a Mac with no `qt` umbrella
+keg at all builds normally.
+
+One Homebrew upgrade hazard is worth its own paragraph because it silently invalidates
+evidence. A Qt upgrade replaces `/opt/homebrew/Cellar/qtdeclarative/<version>/...`,
+which is what the recorded `deps` of every QML-cache and moc object name, and Ninja
+does not treat a vanished dependency as dirty: it reports `no work to do`, the old
+executable stays in place, and it then loads the *new* dylibs through
+`/opt/homebrew/opt/qtbase` and `/opt/homebrew/opt/qtdeclarative`. `otool -L
+build-macos-release/zuuned.app/Contents/MacOS/zuuned` is how to tell — the `current
+version 6.12.0` it prints belongs to the link, not to the headers it was compiled
+against. After any Qt upgrade, `cmake --build build-macos-release --clean-first`, and
+prefer a cold `-B <new-dir>` configure when the point being proven is that a fresh
+checkout builds. Both were done here after the 2026-11-06 upgrade that moved
+`qtdeclarative`, `qtsvg`, `qtwebchannel`, `qtserialport`, `qtpositioning` and
+`qttools` onto 6.12.0 beside `qtbase` 6.12.0_2: the cold tree configured and built 311
+targets with `build_exit=0`, and the rebuilt in-tree Release passed the twelve-launch
+page sweep again with the same figures and the same `pos=1906 → 3343 → 4807` against
+`dur=6000` from a Launch Services launch.
+
+Homebrew installs under `/opt/homebrew` on Apple silicon and `/usr/local` on
+Intel, and neither is on the Apple linker's or the preprocessor's default search
+path. So the bare `-lgcrypt` / `-lmp3lame` / `-lavformat` spellings that resolve
+against a Linux distribution's system tree resolve to nothing here, and the Apple
+linker exits on an unresolved symbol rather than warning. `CMakeLists.txt` handles
+this once, in the `APPLE` branches: `find_library`/`find_path` (which do search the
+Homebrew prefix) hand back the resolved file for gcrypt, lame, libusb, every
+FFmpeg component and libmpv, and the include directories come from `find_path`
+too. Linux keeps its bare names.
+
+One link difference has no dependency reason behind it. `transcodetool` reaches
+`zune_probe()` through a weak reference so the gate still links without libzune:
+GNU ld binds an undefined weak symbol to zero and lets the executable stand, the
+macOS linker refuses it outright (measured here — the plain weak reference and
+`weak_import` fail the same way). So `transcodetool` gets
+`-Wl,-U,_zune_probe`, naming the one expected absence instead of loosening every
+undefined symbol with `-undefined dynamic_lookup`, which would also hide a real
+missing library. `zuuned_probe_metadata()`'s NULL check still answers `-1`, which
+is what this standalone gate does on Linux.
+
+### Configure and build
+
+```bash
+cmake -B build-macos -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-macos --parallel 8
+open build-macos/zuuned.app
+```
+
+`libzune/Makefile` has always had a Darwin branch and builds `libzune.a` against
+the Homebrew libusb and libgcrypt through `pkg-config`; the abandoned
+`driverkit_usb.c` backend is deliberately not compiled (see [Device
+access](#device-access) below). CMake drives that `make` and links the archive, as
+it does on Linux.
+
+The application is a bundle, and on this platform that is not packaging polish
+but the only way the link works: `qt_add_qml_module(zuuned URI Zuuned)` writes the
+compiled QML module into a `Zuuned/` directory beside the executable, APFS is
+case-insensitive by default, and so a flat `-o zuuned` asks the linker to replace
+that directory with an ordinary file — `ld: open() failed, errno=21 (Is a
+directory) for 'zuuned'` after every object has already compiled. A bundle puts
+the binary at `build-macos/zuuned.app/Contents/MacOS/zuuned`, which cannot
+collide, and carries the `Info.plist`. The CLI probes stay flat on purpose: no QML
+module, nothing to collide with.
+
+```
+build-macos/zuuned.app         the Qt application
+build-macos/librarytool        local-library / scanner diagnostics
+build-macos/playertool         playback diagnostics
+build-macos/transcodetool      media conversion diagnostics
+build-macos/devicetool         one-command "what is plugged in"
+```
+
+The bundle is unsigned and ad-hoc at best — this project has no Apple Developer
+licence, and a USB DriverKit extension would need one. `codesign -s -
+build-macos/zuuned.app` is an ad-hoc signature: it satisfies nothing Gatekeeper
+would otherwise demand and buys nothing across a download. Running the executable
+from a terminal is the supported local launch and is what every measurement here
+used. A Launch Services launch (Finder, or `open`) works on this machine too, which
+is newer than that sentence and is what the next section is about.
+
+### First launch, and the privacy consent a Finder launch needs
+
+A `.app` that lives under `~/Documents` is behind macOS privacy protection for the
+Documents folder, and the two ways of starting it meet that gate differently.
+Starting `build-macos/zuuned.app/Contents/MacOS/zuuned` from a terminal inherits
+whatever the terminal already has, which is why every measurement here could run
+before any consent existed. Starting the same bundle through Launch Services —
+Finder double-click, or `open build-macos/zuuned.app` — makes the app its own TCC
+subject, and until the answer exists the `open()` that resolves a path under
+`~/Documents` does not return. Measured on this machine: the process starts, writes
+five session-log lines, then the main thread waits in `QWaitCondition::wait` for
+`QQmlThread`, which is parked in `__open_nocancel` inside `populateFileSet` →
+`QDirListing` while Qt locates the `Zuuned` module's `qmldir`. No window ever
+appears, nothing crashes, and `sample` names no path. `sandboxd` is the only thing
+that says why:
+`tcc_server_message_request_authorization(kTCCServiceSystemPolicyDocumentsFolder)
+failed: Error Domain=kTCCErrorDomain Code=5 "server error: Failed to create
+Attribution Chain from message."` — an ad-hoc-signed bundle with no developer team
+cannot build the attribution chain a prompt needs, so no dialog is ever offered and
+the syscall simply never comes back.
+
+Two facts were measured to rule out the wrong explanations. Copying the bundle to
+`/tmp` and launching it there hangs identically, so this is the Launch Services path,
+not one path string. And a `QML_IMPORT_TRACE=1` run stops after
+`importExtension: loaded ":/qt/qml/Zuuned/qmldir"`, which is the same instruction the
+stack is sitting on — the app is not slow, it is blocked.
+
+What to do about it, in the order a tester should try:
+
+1. Answer the consent when it is offered. On a machine where the responsible process
+   can be resolved, System Settings → Privacy & Security → Files and Folders lists the
+   Documents-folder ask; granting it is what turned the hang into a rendered window on
+   this machine, and the same launch then reported `[qa] splash page=music` with
+   mpv and the USB watcher both up. Re-run after the grant, through `open` alone, both
+   answers came back: a seeded profile reported `page=music onboarding=false tracks=2
+   wfRows=3 errs=0` and its screenshot is a native window, and a brand new empty
+   profile reported `onboarding=true tracks=0 wfRows=0` and painted the first-run page
+   — Chinese UI, and the step that reads `running on macOS` rather than a Linux or
+   Windows sentence.
+2. Or keep the build outside every protected folder — a tree under `/Users/<name>/dev`
+   or `/tmp` is asked about nothing, and the terminal launch needs no consent either way.
+
+A real user's first run will be asked for more than the Documents folder once watch
+folders point at `~/Music`, `~/Pictures` and `~/Movies`; expect those prompts too, and
+treat a windowless zuuned as an unanswered prompt rather than a hung player. A stray
+`AddressBook` authorisation request was logged beside the Documents one and comes from
+a system framework, not from this application, which opens no contacts API.
+
+### Interface language
+
+`packaging/macos/Info.plist.in` declares `CFBundleLocalizations` as `en` and
+`zh-Hans`. macOS matches that list against the user's preferred languages and
+hands the result to `CFPreferences`, which is where `QLocale::system()` reads — a
+bundle that declares only a development region is told it is an English app even
+on a Chinese macOS, and Settings → Language → "system" silently resolves to
+English there while it follows the desktop on every other platform.
+
+### Device access
+
+The Mac build runs `libzune/src/usb_libusb.c` over Homebrew libusb, the same
+userspace path Linux uses: no kernel extension, no DriverKit extension, no udev
+rule, nothing installed, nothing to sign. `libzune/driver/` and its
+`driverkit_usb.c` backend stay out of the build. `driverkit_usb.c` was the
+abandoned original approach — an out-of-process DEXT is the officially supported
+way to own a USB interface on a modern macOS, and it cannot be loaded unless
+Apple's own notarisation signed it, which this project cannot obtain. The source
+stays in the tree at `libzune/src/driverkit_usb.c`, unread by either build.
+
+`src/DevicePresence.cpp` therefore answers from libusb alone on this platform, the
+way Linux does; the `cfgmgr32` presence pass is Windows-only, and so the "plugged
+in but no driver" card cannot fire here yet. Settings → Device says macOS needs no
+driver rather than naming the Windows-only Zadig utility.
+
+**Nothing in this section is hardware evidence.** No Zune has been opened,
+claimed, read from or written to on macOS, and none of the Windows or Linux device
+results carry over. The checklist to close, in order, is: presence in
+`libusb_get_device_list()`, an interface claim (`libusb_kernel_driver_active` /
+`detach_kernel_driver` / `claim_interface`), the ZMDB music-library read,
+unplug-and-replug hotplug, MTPZ authentication, one send with byte readback, and
+deletion. `build-macos/devicetool` is the first of those seven and answers
+`absent` on a machine with no player attached.
+
+### What the Mac build is measured to do
+
+Software only, measured on Apple silicon (macOS 26, Qt 6.12, FFmpeg 9, libusb
+1.0.30): the application starts, the Chinese catalogue loads, every page and every
+Settings tab paints, one file plays through CoreAudio, the CLI gates that need no
+device pass, and the transcoder decodes on the GPU through VideoToolbox and falls
+back to the CPU when told to or when the system refuses a session.
+
+That sentence is two sweeps, not one. `build-macos/` (Debug) and
+`build-macos-release/` (Release, `cmake -B build-macos-release -G Ninja
+-DCMAKE_BUILD_TYPE=Release`) each launched once per page and once per Settings tab —
+twelve launches apiece — in an isolated `ZUUNED_PROFILE_DIR` seeded with two tone
+files, one video and one photo, and all twenty-four reported `state=alive errs=0`
+with the `[qa] splash` page agreeing with the last tick and the same figures:
+`tracks=2 photos=1 albums=1 wfRows=3 wfDefaults=3`. `librarytool names`, `customize`,
+`paths` and `videofloor` answer `ALL PASS (0 failures)` from the Release tree too, and
+Release `devicetool` answers `VERDICT=absent` — the honest answer for this machine,
+which has no player attached. The Release binary is `Mach-O 64-bit executable arm64`
+carrying `flags=0x20002(adhoc,linker-signed)` and no TeamIdentifier: it is arm64-only,
+so nothing here has run under Rosetta, and it runs because it is a local build, not
+because anything signed it.
+
+Sound and discipline were measured in the same two configurations. With
+`ZUUNED_MPV_AO=coreaudio` and `--qa-play`, `playing=true` carried
+`pos=1906 → 3292 → 5041` against `dur=6000` from the Release tree, and
+`pos=1905 → 3345 → 4807` from the Launch Services launch of that same bundle — so
+CoreAudio is reached both from a terminal and from a Finder-shaped launch, and nobody
+has listened to either. A second instance pointed at the same profile prints
+`another instance is already running — this one is bowing out` and leaves the first one
+alone, which is the profile lock living where `ZUUNED_PROFILE_DIR` put it. A podcasts
+launch leaves a readable `spoken/spoken.db` in that profile — `items` plus
+`spoken_parent`, `integrity_check ok` — so the spoken store opens on this platform
+rather than beside the profile. Sample the ticks early: a six-second tone is over
+before the third tick, and an ended track reports `playing=false pos=0 dur=0`, which is
+the end of the file rather than a silent player.
+
+Two things a first Mac build gets wrong if you believe it blindly, both recorded
+because they were found by running rather than reading:
+
+- A refused VideoToolbox *encoder* session used to fail the whole transcode.
+  `transcode/libav_transcode.c` now retries the open on `libx264` on this platform
+  only, so the encoder choice degrades the way the decoder choice already did
+  instead of ending the job.
+- `librarytool paths` had never been run on POSIX. Two of its 67 checks carried a
+  Windows expectation while one of them was titled "…on Linux", and the other
+  disagreed with what the code has always produced; both branches are pinned now.
+  The Linux line would have failed the same two, and `ci/check.sh` has never
+  called `paths`, so nothing was covering it.
+
+Run these gates outside any sandbox. A seatbelt/sandboxed shell denies
+VideoToolbox and the audio devices, which looks exactly like a broken encoder and
+a broken player and is neither.
+
 ## Build the tester AppImage
 
 The exporter supports both the private submodule checkout and the public

@@ -124,6 +124,18 @@ inline QString applicationDataLocation() {
     const QString roaming = qEnvironmentVariable("APPDATA");
     if (!roaming.isEmpty())
         return QDir::cleanPath(roaming + QStringLiteral("/Zuuned/Zuuned"));
+#elif defined(Q_OS_MACOS)
+    // Not the XDG line.  Measured on macOS 26 with Qt 6.12: AppDataLocation is
+    // ~/Library/Application Support/Zuuned/Zuuned and GenericDataLocation is
+    // its parent, so generic plus the two names is the application's own
+    // folder here too.  It still has to be built that way rather than asked
+    // for as AppDataLocation, for the reason this function exists: a tool that
+    // sets its own application name would get the tool's folder back.
+    // macOS has no XDG_DATA_HOME equivalent, and ~/Library/Application Support
+    // is where the folder actually lives, so nothing is being overridden.
+    const QString support = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
+    if (!support.isEmpty())
+        return QDir::cleanPath(support + QStringLiteral("/Zuuned/Zuuned"));
 #else
     const QString dataHome = qEnvironmentVariable("XDG_DATA_HOME");
     if (!dataHome.isEmpty())
@@ -141,6 +153,14 @@ inline QString applicationCacheLocation() {
     const QString local = qEnvironmentVariable("LOCALAPPDATA");
     if (!local.isEmpty())
         return QDir::cleanPath(local + QStringLiteral("/Zuuned/Zuuned/cache"));
+#elif defined(Q_OS_MACOS)
+    // Same measurement: CacheLocation is ~/Library/Caches/Zuuned/Zuuned and
+    // GenericCacheLocation is ~/Library/Caches.  The trailing /cache keeps the
+    // folder one level below the application's, which is what art, artistart,
+    // stills and vidthumbs expect to sit inside on every platform.
+    const QString caches = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);
+    if (!caches.isEmpty())
+        return QDir::cleanPath(caches + QStringLiteral("/Zuuned/Zuuned/cache"));
 #else
     const QString cacheHome = qEnvironmentVariable("XDG_CACHE_HOME");
     if (!cacheHome.isEmpty())

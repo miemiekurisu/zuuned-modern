@@ -373,11 +373,19 @@ static int runPathsSelfTest() {
     };
 
     /* ---- what one filesystem component may be called ---- */
-    eq("safeComponent: a colon in an album title is an ordinary character on Linux",
+    /* The answer is the question, so the expectation is branched: a colon is an
+     * ordinary character on POSIX and one of the eight Windows refuses.  Written
+     * unbranched with the Windows answer, this case passed where it was written
+     * and failed on every POSIX build -- macOS is the first place it ran. */
+    eq("safeComponent: a colon in an album title is a character here, an illegal one on Windows",
        LibraryPaths::safeComponent(
            QStringLiteral("The Dark Side of the Moon: Immersion"),
            QStringLiteral("fallback")),
+#ifdef Q_OS_WIN
        QStringLiteral("The Dark Side of the Moon_ Immersion"));
+#else
+       QStringLiteral("The Dark Side of the Moon: Immersion"));
+#endif
     eq("safeComponent: a slash is a separator on every platform",
        LibraryPaths::safeComponent(QStringLiteral("Drake/Mixtape"),
                                    QStringLiteral("fallback")),
@@ -432,7 +440,7 @@ static int runPathsSelfTest() {
     eq("safeComponent: POSIX touches nothing but the slash",
        LibraryPaths::safeComponent(QStringLiteral("a<b>c|d?e*f\"g\\h/i:j"),
                                    QStringLiteral("fallback")),
-       QStringLiteral("a<b>c|d?e*f\"g_h:i:j"));
+       QStringLiteral("a<b>c|d?e*f\"g\\h_i:j"));
     eq("safeComponent: POSIX keeps a trailing dot and space - they are legal",
        LibraryPaths::safeComponent(QStringLiteral("Trailing.  "),
                                    QStringLiteral("fallback")),

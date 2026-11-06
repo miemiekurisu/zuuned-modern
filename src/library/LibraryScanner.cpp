@@ -12,6 +12,7 @@
 #include "VideoNaming.h"
 #include "AudioCopyFingerprint.h"
 #include "MusicIdentity.h"
+#include "../FileTimestamps.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -92,9 +93,9 @@ bool fingerprint(const QString &path, WorkItem &out) {
     if (::stat(pathBytes(path).constData(), &info) != 0 || !S_ISREG(info.st_mode)) return false;
     out.filepath = path;
     out.filesize = info.st_size;
-    out.mtime = info.st_mtim.tv_sec;
-    out.mtimeNs = qint64(info.st_mtim.tv_sec) * 1000000000LL + info.st_mtim.tv_nsec;
-    out.ctimeNs = qint64(info.st_ctim.tv_sec) * 1000000000LL + info.st_ctim.tv_nsec;
+    out.mtime = Zuuned::FileTimestamps::mtimeSec(info);
+    out.mtimeNs = Zuuned::FileTimestamps::mtimeNs(info);
+    out.ctimeNs = Zuuned::FileTimestamps::ctimeNs(info);
     return true;
 }
 

@@ -9,6 +9,7 @@
 
 #include "ArtworkPipeline.h"
 #include "../ProfilePaths.h"
+#include "../FileTimestamps.h"
 
 #include <QBuffer>
 #include <QCache>
@@ -62,8 +63,8 @@ Stamp stamp(const QString &path)
     // with such a name would come back empty on every call.
     if (::stat(path.toUtf8().constData(), &value) != 0 || !S_ISREG(value.st_mode)) return {};
     return {quint64(value.st_dev), quint64(value.st_ino), value.st_size,
-            qint64(value.st_mtim.tv_sec) * 1000000000 + value.st_mtim.tv_nsec,
-            qint64(value.st_ctim.tv_sec) * 1000000000 + value.st_ctim.tv_nsec};
+            Zuuned::FileTimestamps::mtimeNs(value),
+            Zuuned::FileTimestamps::ctimeNs(value)};
 }
 
 Options normalized(Options value)

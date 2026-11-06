@@ -18,7 +18,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSysInfo>
-#if defined(Q_OS_WIN)
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
 #include <libusb.h>
 #endif
 #include <unistd.h>
@@ -66,13 +66,15 @@ QJsonObject systemInformation() {
     }
     info.insert(QStringLiteral("graphics_devices"), graphics);
 
-    // Enumerated one way per platform below, reported the same way on both.
+    // Enumerated one way per platform below, reported the same way on every one.
     QJsonArray usb;
-#if defined(Q_OS_WIN)
+#if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     // No sysfs on Windows.  libusb enumeration is the closest honest
     // equivalent, and descriptors alone are enough: opening a device here
     // would contend with a transfer the app may already own, so this reports
     // identity and location only - never whether the device is claimable.
+    // macOS has no sysfs either and reaches the same libusb backend libzune
+    // uses, so the same answer comes from the same source.
     libusb_context *context = nullptr;
     if (libusb_init(&context) == 0) {
         libusb_device **found = nullptr;
@@ -115,8 +117,8 @@ QJsonObject systemInformation() {
         usb.append(item);
     }
 #endif
-    // Either branch may fill it, and a Windows report needs it most: the USB
-    // identity is the first thing a driver problem is answered with.
+    // Any branch may fill it, and a Windows or macOS report needs it most: the
+    // USB identity is the first thing a driver problem is answered with.
     info.insert(QStringLiteral("zune_usb_devices"), usb);
     return info;
 }

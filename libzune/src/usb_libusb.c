@@ -1,7 +1,14 @@
 /*
  * usb_libusb.c — libusb-1.0 USB backend for libzune
  *
- * Used on Linux, and on macOS for testing (bypasses DEXT).
+ * Built on Linux and on macOS.  On macOS this is the only backend: the
+ * alternative in this directory, driverkit_usb.c, talks to a DriverKit
+ * extension, and a DEXT cannot be loaded unless Apple signed it, so it is
+ * unreachable without a paid Developer account.  libusb reaches the player
+ * through IOKit from user space instead, which is what every other Zune tool
+ * on macOS does.  Where macOS behaviour differs from Linux it is marked
+ * __APPLE__ below and the reason is written out at the call.
+ *
  * Implements zune_usb_backend_t from usb.h.
  */
 
@@ -40,18 +47,48 @@ static int libusb_backend_open(zune_usb_handle_t *handle, uint16_t vid, uint16_t
         return ZUNE_USB_ERROR;
     }
 
-    /* Detach kernel driver if attached */
+#ifndef __APPLE__
+    /* Detach kernel driver if attached.
+     *
+     * Linux only, and not merely because macOS has nothing to detach.
+     * darwin_kernel_driver_active() answers "does this interface's IORegistry
+     * entry have a child", and darwin_detach_kernel_driver() without the
+     * com.apple.vm.device-access entitlement or root returns
+     * LIBUSB_ERROR_ACCESS (os/darwin_usb.c, get_capture_entitlements /
+     * geteuid).  This build carries no entitlement — that key is signed, so it
+     * costs an Apple Developer account — so the honest macOS answer to "may I
+     * take this interface from its driver" is "I am not allowed to ask", and
+     * asking produces a failure no caller can act on.  It also does not need
+     * to: macOS 26 ships no driver for a Zune at all (no PTPCamera, no
+     * ptpcamerad, no still-image class driver in /System/Library/
+     * DriverExtensions), so interface 0 arrives free and the claim below is
+     * the only question that matters. */
     if (libusb_kernel_driver_active(bd->handle, 0) == 1) {
         libusb_detach_kernel_driver(bd->handle, 0);
     }
 
     /* Set configuration */
     libusb_set_configuration(bd->handle, 1);
+#endif
 
     /* Claim interface 0 */
     int ret = libusb_claim_interface(bd->handle, 0);
     if (ret != 0) {
         fprintf(stderr, "[libusb] claim_interface failed: %s\n", libusb_strerror(ret));
+#ifdef __APPLE__
+        /* The mechanism libusb reports is kIOReturnExclusiveAccess: something
+         * already owns the interface.  On macOS that is usually another
+         * process, and the thing to try next is a replug plus the macOS
+         * accessory allowance, because since macOS 13 Apple silicon asks the
+         * user to permit a new USB accessory and an unallowed one answers
+         * ordinary I/O - reads and writes, not this call - as though the
+         * player were deaf.  Naming both beats a bare error code, because
+         * neither is visible anywhere else in the log.  Which of the two this
+         * is stays unmeasured here: no Zune has been claimed on macOS yet. */
+        fprintf(stderr, "[libusb] on macOS: another process may hold the player, or"
+                        " macOS has not allowed this USB accessory yet — check"
+                        " System Settings → Privacy & Security → USB\n");
+#endif
         libusb_close(bd->handle);
         libusb_exit(bd->ctx);
         free(bd);
