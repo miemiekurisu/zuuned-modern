@@ -2211,7 +2211,7 @@ because no string there names a person and nobody here can rewrite them. `tests/
 `git ls-files`: no tracked log, database, settings file, archive, binary or Finder/Explorer metadata, no
 identity string in a tracked path or text byte outside the published repository name, every tracked
 picture under a reviewed prefix with a reason beside it, and the count of drive-letter lines printed
-rather than hidden. Green: `817 tracked files, 9 checks, 0 failures`, and that counter was wrong when first written: its pattern asked for a drive letter at the end of a line while these documents end their lines with a carriage return, so it reported 38 where the honest count is 158. A gate whose numbers are quietly too small is worse than no gate. It caught a tracked
+rather than hidden. Green: `817 tracked files, 9 checks, 0 failures`, and that counter was wrong when first written: its pattern asked for a drive letter at the end of a line while these documents end their lines with a carriage return, so it reported 38 where the honest count was 158. That counter moves every time a document here gains or loses a quoted path, so the number in force is the one printed by the newest paragraph, and the gate is 19 checks now, not 9. A gate whose numbers are quietly too small is worse than no gate. It caught a tracked
 `libzune/.DS_Store` immediately, now untracked, with `.DS_Store` and `Thumbs.db` added to `.gitignore`,
 and it was tested the only way that means anything - a staged file naming a real account failed it with
 exit 1. **Known open rather than quietly allowed:** 32 screenshots under `docs/readme-screenshots/` came
@@ -2242,3 +2242,77 @@ dependency). The trap the new check sets for the next shipper: `-Release` from a
 until the tree is recompiled, which is the point of it. **Device evidence unchanged** - the attached
 Pavo was bound for the smoke launch, which the run itself declares read-only, and nothing was written,
 deleted or read back.
+**2026-11-08 the privacy byte reader is one file, and it had been answering "clean" about bytes
+it never read:** the repository gate (`tests/privacy/run.ps1`), the staged-folder pass in
+`packaging/windows/deploy.ps1` and the new audit of a finished `.zip`
+(`packaging/windows/verify-zip.ps1`) now share `packaging/windows/PrivacyProbe.ps1`, and
+getting there found two defects that each produce a false clean rather than an error. A zip
+member is a `DeflateStream`: not seekable, so `Position` answers nothing, it returns fewer
+bytes than asked, and sometimes none between two reads - the loop that drove off `Position`
+declared `avcodec-63.dll` finished at 2.4 MB of 115 MB and called the largest file in the
+package clean. Progress is counted in bytes that arrive now, a silent read is retried, and a
+stream that stops short of its declared size is `unreadable`, never clean. And binding `$null`
+to a `[ref]` parameter *throws*, which the surrounding `catch` folded into an empty hit list -
+so every caller that did not pass `-ReadError`, in both this reader's ancestors, was told the
+bytes were clean whether they were or not, including the UTF-16LE half of the search. Both
+callers also stopped filtering by extension: the whitelist decided in advance which files got
+to be unjudged, which is the one claim a privacy pass may not make. Measured on the shipped
+archive: 1,539 file members and 72 directories, **418.1 MB decompressed read to the end and
+searched in ASCII and UTF-16LE, 16 checks, 0 failures**, no account/host/home/`testmusic`/
+`smoke-profile` hit either way, and no `.exe` this project linked names a build folder. The
+clause about third-party members is withdrawn below, by a stricter run of the same script,
+which counts five of them. `deploy.ps1` calls that audit itself, so no future folder can be called
+clean on the strength of the tree it was packed from (the shipped archive was audited after
+the fact, which is why its run still reports 43 checks). `tests/privacy/run.ps1` is 19 checks:
+eight of them test the reader before trusting it - wide-only hit, bytes-only needle against
+a wide-only occurrence, plain bytes both ways, a path and an account each spelled in the
+other's case, clean file, missing file reported unreadable, a needle straddling a chunk
+edge, and the no-`-ReadError` regression - and the identity scan now
+reads **all 817 tracked files to their end** instead of skipping 96 as binary. The README
+screenshots stopped being `KNOWN OPEN` the same way a script can stop being unproven, which is
+by hand: `deviceSerial` reaches the screen in exactly two places, `qml/SettingsPage.qml:1669`
+and the remembered-device list at `qml/SettingsPage.qml:1755`, both below the fold of
+`settings-device.png` in each language, and it is only ever a key on the spoken pages
+(`qml/DeviceSpokenPage.qml:15`); across the 32 shots the player is the friendly name its owner
+typed plus `Zune HD · 16GB / 97% / 4.7 GB used`, no 8-4-4-4-12 hex string appears, and
+`settings-library.png` has its watch-folder home path masked in both languages - a person read
+those pixels, and the next screenshot has to be read the same way before it is committed. **No
+packaging or audit run of any of these scripts has opened a device handle, and none of them
+adds, removes or softens a capability on `docs/WINDOWS_PORT.md`.**
+
+**2026-11-08 the archive gate had a hole shaped like a serial number:** the `.zip` this
+sitting was about to publish names the tail of a USB device instance path - the serial
+number of the one Zune HD this repository has ever driven - inside
+`driver/DRIVER_INSTALL.md`, and names `D:\dev` in the same file. A stricter hand run of
+`packaging/windows/verify-zip.ps1` said so while the release run of the same file said
+nothing, because that run had been handed two of the probes and not the list. Nothing was
+published: `gh release list` and `git tag -l` both answer empty, so the file exists on this
+machine and no download of it has ever existed. The driver guide transcribes a real
+`Get-PnpDevice` answer, which is exactly how a serial ends up in documentation, and it reads
+`USB\VID_045E&PID_063E\<serial>` now with `<generated-guid>` and `<your-guid>` in the other
+two slots; `git grep` for the strings that used to stand there answers zero hits in a
+tracked file. Three structural changes come out of it, because repairing one document would
+not have stopped the next one. (1) A needle list cannot hold a serial number, because nobody
+types one, so the rule is a pattern - `Get-PrivacySerialRule` in
+`packaging/windows/PrivacyProbe.ps1`, anchored on `VID_xxxx&PID_xxxx\` so an album GUID
+moniker, a MusicBrainz id, the USB class GUID and the `11111111-...` fixtures all stay clear
+of it. It is the 19th check of `tests/privacy/run.ps1`, and in
+`packaging/windows/verify-zip.ps1` it is a second pass over the members this project
+authored, which have to be opened again because a member stream is forward-only and cannot
+be rewound; a member that fails to open on that pass lands in the unreadable list with the
+name of the pass beside it, so a double count is visible rather than silent. (2) The archive
+call inside `deploy.ps1` now gets every probe the folder pass was given, and the folders
+*above* those roots go in as `-AncestorRoot`, which the audit asks of a third-party binary
+and never of a document - the staging parent sits on the same drive as `E:\Temp\testmusic`,
+a library this tree records on purpose, and an ancestor probe aimed at documents would fail
+a release for writing the truth. (3) A hand invocation that left out one parameter name
+pushed a path into `-ExpectBytes`, where the binder tried to read it as a number, so
+`verify-zip.ps1` binds only its archive positionally now and a typo fails at the command
+line. Case was the third way that reader could call bytes clean: matching had been
+case-sensitive, so a path or an account spelled differently than the list was invisible.
+It is ordinal and case-insensitive in both halves now, and its reader cases are eight. Measured on the tree as it stands here: repository gate
+`817 tracked files, 19 checks, 0 failures`; that same archive under the wider probe
+`checks 12, failures 2`, both failures naming `driver/DRIVER_INSTALL.md`; and the artifact
+rebuilt from the masked tree, with its own size and digest, in the paragraph beside this
+one. **No run of any of these scripts opened a device handle, and none of it adds, removes
+or softens a capability on `docs/WINDOWS_PORT.md`.**

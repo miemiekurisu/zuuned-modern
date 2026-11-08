@@ -116,7 +116,7 @@ says which kind of artifact was produced and which rules were run.
 
 ## The repository's side of the same rule
 
-`tests/privacy/run.ps1` is the counterpart for what gets committed: nine checks over
+`tests/privacy/run.ps1` is the counterpart for what gets committed: nineteen checks over
 `git ls-files` and the bytes of what it lists. No log, database, settings file,
 archive, binary or Finder/Explorer metadata may be tracked; no tracked path or text
 byte may carry the account, host, profile folder or commit identity of the person who
@@ -126,24 +126,45 @@ own clone URL; every tracked picture must sit under a prefix named in
 lines quoting a drive-letter path is printed rather than hidden, because in this
 repository those lines are recorded build and device evidence and a new one should
 change a visible number. Green on 2026-11-08, after the commit above: `817 tracked
-files, 9 checks, 0 failures`, 3 identity strings, 90 reviewed pictures, 96 files
-skipped as binary, 158 lines quoting a drive letter. The gate was proved by staging a file naming a real account
+files, 19 checks, 0 failures`, 3 identity strings, 90 reviewed pictures, 164 lines in
+31 files quoting a drive letter. Every tracked file is now opened and searched to its end, in
+ASCII and in UTF-16LE - the 96 pictures, fonts and other files that an earlier version
+of this gate answered `skipped as binary` are judged rather than assumed, which is the
+difference between a clean tree and a clean-looking one, and 721 of the 817 are
+additionally read as text for the line counter. The gate was proved by staging a file naming a real account
 and watching it exit 1; the drive-letter counter needed a fix before it meant anything,
 because its pattern asked for a path at the end of a line and this markdown ends its lines
-with a carriage return, so the honest number is four times the first one.
+with a carriage return, so the honest number is four times the first one. The newest check
+is not a string at all. A device serial is the one identifier nobody would ever put in a
+needle list, so its rule is a pattern shared with the archive audit below: the tail of a
+USB device instance path, everything after `VID_0000&PID_0000\`.
+`packaging/windows/DRIVER_INSTALL.md` transcribed one, because that is what a real devnode
+answer looks like, and it prints `<serial>` now.
 
 It found one real tracked offender immediately: `libzune/.DS_Store`, Finder metadata
 that records which files a folder held. It is untracked now and `.gitignore` refuses
 it.
 
-**Known open.** `docs/readme-screenshots/` and `docs/readme-screenshots/zh/` hold 32
-screenshots taken from the real library on this machine, and the pixels show a device
-name, real music-folder paths and the actual collection. Pixels cannot be scanned by
-this or any text gate, which is why the prefix is listed as `KNOWN OPEN` rather than
-silently allowed. Replacing them needs a capture from an isolated profile pointed at a
-generated fixture, and the device-page ones additionally need the player unplugged;
-the git history keeps the originals either way, and rewriting it is a decision that
-belongs to the owner of the repository, not to a script.
+**Screenshots: read, not assumed.** `docs/readme-screenshots/` and
+`docs/readme-screenshots/zh/` hold 32 screenshots taken from the real library on this
+machine, and the pixels show real music-folder paths and the actual collection. That is
+what the owner of this repository chose to publish. The half that was asked for is the
+other one: no device identifier. Pixels cannot be scanned by a text gate, so each picture
+was looked at, and the question was aimed first at the two places in the interface that
+can render a serial at all - the `Serial` row under `This Zune`
+(`qml/SettingsPage.qml:1669`) and the remembered-device list's `serial %1`
+(`qml/SettingsPage.qml:1755`) - both of which sit below the visible fold in
+`settings-device.png` in each language, where the page is scrolled to its top and the
+`This Zune` heading is the last thing on screen. Everywhere else the player appears as
+its friendly name `Kurisus ZuneHD` beside `Zune HD · 16GB`, `97%` and
+`4.7 GB used · 10.8 GB free`: a label the owner typed into the device and the same
+identity the repository is published under, not a serial number, and no
+8-4-4-4-12 hex GUID appears in any shot. `deviceService.deviceSerial` is bound on the
+spoken-media device pages (`qml/DeviceSpokenPage.qml:15`) but only as a key that refuses
+a stale request, never as text. `settings-library.png` has its watch-folder home path
+masked in both languages. What remains outside proof is stated rather than glossed: this
+is a person reading 32 images, and any later screenshot has to be read the same way
+before it is committed.
 
 ## What this artifact does not prove
 
@@ -186,6 +207,56 @@ the folder agrees with the revision the run was told it was packaging, and that 
 smoke log and smoke profile really are gone after the run rather than merely written
 somewhere else.
 
+## The archive was audited after it was written
+
+A folder that passes and an archive written from it are two files. The entries of that
+archive were therefore read one by one, without unpacking anything, by
+`packaging/windows/verify-zip.ps1`:
+
+```text
+members    1,539 files and 72 directories, every one relative and under the package folder
+bytes      418.1 MB decompressed, all of it read to the end and searched in ASCII and UTF-16LE
+identity   no account, host, home folder, test library or scratch profile name in any byte
+build tree no executable this project linked names the folder that built it
+checks     16, failures 0        RESULT: archive clean - fit to publish
+```
+
+Nothing is skipped by extension. The first version of the reader opened only the kinds
+everybody thinks to name - `.exe`, `.dll`, `.qm`, a list of text suffixes - which quietly
+meant that everything else got to be unjudged; a photo, a playlist or a settings file
+would have had to arrive under an extension nobody had written down, and that is exactly
+the hole this step exists to close.
+
+Three defects were found in the byte reader itself while writing it, and each is the kind
+that produces a clean verdict about bytes that were never read:
+
+- A zip member is a `DeflateStream`, which is not seekable: `Position` answers nothing, a
+  read returns fewer bytes than asked for, and sometimes it returns none between two
+  reads. The loop drove off `Position`, so it declared `avcodec-63.dll` finished at
+  2.4 MB of 115 MB and called the rest of the largest file in the package clean. Progress
+  is now counted in bytes that arrived, a silent read is retried, and a stream that stops
+  short of its declared size is reported as unreadable rather than as clean.
+- Binding `$null` to a `[ref]` parameter throws. The `catch` wrapped that call and folded
+  the throw into an empty hit list, so every caller that did not pass `-ReadError` - most
+  of them, in both this gate and the one that reads the repository - was told the bytes
+  were clean whether they were or not, including the UTF-16LE half of the search.
+- Matching was case-sensitive, so a needle spelled one way walked past a byte string
+  spelled another, and an object file keeps whatever case the shell happened to hold while
+  it was built. A build folder hid in plain sight by being typed differently than the list
+  said it was. The search is ordinal and case-insensitive in both halves now, and the
+  eighth reader case names a path and an account each in the other's case.
+
+That reader is now one file, `packaging/windows/PrivacyProbe.ps1`, shared by the
+repository gate, the staged-folder pass in `deploy.ps1` and this archive audit, and
+`tests/privacy/run.ps1` tests it before it is trusted: eight cases, one per way a scan
+has been watched answering `clean` about bytes that were not clean. `deploy.ps1` calls
+this audit itself as of the commit that ships with it, so no later release folder can be
+declared clean on the strength of the tree it was packed from.
+
+Wiring it in changed nothing about what the artifact is: 1,539 files, 418.1 MB, the same
+`sha256` above, and **no packaging or audit run of either script has ever opened a
+device handle or added a device capability.**
+
 What that run measured, beyond the counts. It dropped `avdevice-63.dll` (4.7 MB) and
 `avfilter-12.dll` (35.8 MB) because nothing else imports them, refused `icuuc.dll`
 because a Windows copy is byte-identical, and kept the QML debugger out. It read back
@@ -197,7 +268,8 @@ answered `agree`, the app painted a page from an isolated empty profile
 loaded modules nothing came from a development tree - 57 modules from inside the
 package, 137 from Windows, 1 from neither. Its privacy pass is the one described above:
 1,539 staged paths name no account, host, build tree or test library; the 668 scannable
-text files are byte-clean in ASCII and UTF-16; no `.mtpz-data` is anywhere in it; and
+text files are byte-clean in ASCII and UTF-16 (that pass has since been widened to every
+file the folder holds, by the same shared reader - see the archive section below); no `.mtpz-data` is anywhere in it; and
 the five third-party DLLs whose own build paths they carry are the stated limit, not a
 finding.
 
@@ -211,3 +283,44 @@ records its digest is later - that is what a digest means. Re-running `-Release`
 the newer checkout would now *fail*, correctly, because nothing was recompiled; to ship
 a later revision, rebuild with `--clean-first` first and let the run name the new
 sha256.
+
+## The archive was audited again, with the folders it was built in
+
+The audit above ran with the two build roots that were obvious to type. The same file
+audited a second time with the whole probe list `deploy.ps1` hands its folder pass - the
+dependency root and the staging parent included, and the folders above them asked of the
+binaries this project does not compile - answered differently:
+
+```text
+FAIL  driver/DRIVER_INSTALL.md names the serial tail of a USB device instance path
+FAIL  driver/DRIVER_INSTALL.md names D:\dev, a folder on the machine that built it
+note  5 build-folder hit(s) inside third-party binaries: gcrypt.dll, gpg-error.dll,
+      libmp3lame.DLL, libusb-1.0.dll and one more the line truncates; none names a person
+checks 12, failures 2       RESULT: archive not clean
+```
+
+Both failures sit in a document this project writes, so both have a fix and neither has an
+excuse. The driver guide transcribes a real `Get-PnpDevice` answer, and the tail of a USB
+device instance path is the serial number of the one physical player this repository has
+ever driven. It reads `USB\VID_045E&PID_063E\<serial>` now, the generated package name is
+`<generated-guid>` and the registry line sets `<your-guid>`, and `git grep` for what used
+to stand in those slots answers zero hits in a tracked file. The `D:\dev` quotation went
+the same way.
+
+Two changes keep that from happening quietly again. `deploy.ps1` now hands its own archive
+audit the probes it hands the folder audit: the automated call named two of them, so the
+run wired into a release had passed the very archive a stricter invocation of the same
+script failed. And the folders *above* those roots go in as ancestors, which are asked of a
+third-party binary and never of a document - the staging parent sits under the same drive
+as `E:\Temp\testmusic`, which this documentation names on purpose because that is where the
+hand tests ran. A needle list cannot hold a serial number, because nobody would type one,
+so the rule is a pattern: `Get-PrivacySerialRule` in `packaging/windows/PrivacyProbe.ps1`,
+anchored on the `VID_xxxx&PID_xxxx\` prefix so that album GUID monikers, MusicBrainz ids
+and the `11111111-...` fixtures stay out of its way. It runs over every tracked file in
+`tests/privacy/run.ps1` and over the members this project authored in an archive.
+
+So the archive recorded above is withdrawn and a rebuild takes its place, with its digest
+in the commit that follows the run that staged it. `gh release list` answers empty and
+`git tag -l` answers empty: the withdrawn file was never published and no download of it
+exists. **No audit run of either script opened a device handle, and none of this moves a
+capability on `docs/WINDOWS_PORT.md`.**

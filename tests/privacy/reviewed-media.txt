@@ -10,4 +10,11 @@ packaging/icons/|application icons drawn for this project
 mockups/|design mockups and the generated fixtures they show
 tools/font-studio/|font specimens rendered from generated names
 qa-screens/|Linux QA captures that predate this fork, kept as design history
-docs/readme-screenshots/|KNOWN OPEN: shot from a real library on the real machine
+# The README shots are published on purpose from the real library and the real player.
+# What was checked, by eye, because no text gate can read pixels: none of the 32 shows a
+# device serial or a hex GUID - the player appears only under the friendly name its owner
+# typed - and the watch-folder home path in settings-library.png is masked in both
+# languages. One real account name did reach the tracked tree once, as an artist name
+# in three test fixtures; docs/releases/BETA_WINDOWS_2026-11-08.md records when that
+# happened and what replaced it, and git grep answers zero hits for it today.
+docs/readme-screenshots/|real library and player by choice; read for a serial or GUID, none

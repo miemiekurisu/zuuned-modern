@@ -11,8 +11,12 @@ is a one-time manual step per machine, done by whoever is testing hardware.
 development machine went from problem 28 to `CM_PROB_NONE`, is bound to `WinUSB`,
 registers an interface GUID, is sighted by libusb, and has been opened and read by
 `build\zuuned.exe`.  Both captures are below, before and after, as the script
-actually printed them.  What this page still does not cover is anything past the
-library read - that lives in `docs/WINDOWS_PORT.md`.
+actually printed them, except for two strings and both of them on purpose: the serial
+number in the devnode instance path and the interface GUID Zadig generated appear here
+as `<serial>` and `<generated-guid>`, because those two identify one person's player on
+one person's machine, and this page ships inside the release archive.  What this page
+still does not cover is anything past the library read - that lives in
+`docs/WINDOWS_PORT.md`.
 
 ## What has to be true afterwards
 
@@ -20,7 +24,7 @@ Both of these, not just the first.  Measured on the development machine with a
 Zune HD attached (`check-driver.ps1`), before anything was installed:
 
 ```
-devnode : USB\VID_045E&PID_063E\ae55b7c9-1b54-40e4-aa77-0264d29f3080
+devnode : USB\VID_045E&PID_063E\<serial>
 status  : Error  problem=CM_PROB_FAILED_INSTALL
 hwids   : USB\VID_045E&PID_063E&REV_0100 USB\VID_045E&PID_063E
 compat  : USB\MS_COMP_MTPZ USB\Class_FF&SubClass_FF&Prot_FF USB\Class_FF&SubClass_FF USB\Class_FF
@@ -30,14 +34,14 @@ children: none - single function
 And after, same script, 2026-10-20:
 
 ```
-devnode  : USB\VID_045E&PID_063E\AE55B7C9-1B54-40E4-AA77-0264D29F3080
+devnode  : USB\VID_045E&PID_063E\<serial>
 status   : OK  problem=CM_PROB_NONE
 hwids    : USB\VID_045E&PID_063E&REV_0100 USB\VID_045E&PID_063E
 compat   : USB\MS_COMP_MTPZ USB\Class_FF&SubClass_FF&Prot_FF USB\Class_FF&SubClass_FF USB\Class_FF
 driver   : {88bae032-5a81-49f0-bc3d-a4ff138216d6}\0000
 service  : WinUSB
 children : none - single function
-ifaces   : {B24CA24C-56E2-4EDC-AC70-9DF2DB15D415}  [registry Device Parameters]
+ifaces   : {<generated-guid>}  [registry Device Parameters]
 ```
 
 `pnputil /enum-drivers` names the package that got there, and its fingerprint is
@@ -67,8 +71,8 @@ bound to WinUSB without a registered GUID enumerates and still cannot be opened.
 Zadig, by Pete Batard, upstream of libwdi: <https://zadig.akeo.ie>, or
 `winget install akeo.ie.Zadig` - the Microsoft package repository carries the
 upstream binary under the publisher `akeo.ie`, so there is nothing to build and
-no INF to write.  The development machine already has 2.8 at
-`D:\dev\sdrsharp-x64\zadig-2.8.exe`.
+no INF to write.  Any recent build will do; 2.8 is the one the development machine
+used, and where it kept the file is a fact about that machine rather than about yours.
 
 Run it as administrator with the player attached:
 

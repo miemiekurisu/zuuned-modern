@@ -954,52 +954,13 @@ Step 'privacy'
 # fails a release, and for a DLL somebody else built it is baked into bytes this project
 # cannot rewrite and names nobody, so it is counted and said out loud instead of failed on.
 
-function Find-Needles {
-    # A binary is decoded as Latin-1 so that every byte maps to exactly one character and
-    # a name cannot hide in a translation between encodings.  An ASCII needle then matches
-    # its own UTF-16LE form by following every character with a zero byte, which is worth
-    # doing because wide strings are how a Windows path sits in a .rdata section.  Each
-    # window carries the tail of the previous one: a string straddling an edge is the only
-    # way a chunked read produces a false clean, so it is the one thing not to optimise.
-    param([string]$Path, [string[]]$Ascii, [string[]]$Wide)
-    $probe = New-Object System.Collections.Generic.List[string]
-    $kind = New-Object System.Collections.Generic.List[string]
-    foreach ($n in @($Ascii)) { if ($n) { $probe.Add($n); $kind.Add($n) } }
-    foreach ($n in @($Wide)) {
-        if (-not $n) { continue }
-        $probe.Add($n); $kind.Add($n)
-        $w = ''
-        foreach ($ch in $n.ToCharArray()) { $w = $w + $ch + [char]0 }
-        $probe.Add($w); $kind.Add($n)
-    }
-    $hits = New-Object System.Collections.Generic.List[string]
-    if ($probe.Count -eq 0) { return $hits }
-    $fs = $null
-    try {
-        $fs = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read,
-                              [IO.FileShare]::ReadWrite)
-        $tail = ''
-        while ($fs.Length -gt $fs.Position) {
-            $len = [int][math]::Min(4194304, $fs.Length - $fs.Position)
-            $buf = New-Object byte[] $len
-            [void]$fs.Read($buf, 0, $len)
-            $s = $tail + $latin.GetString($buf)
-            for ($i = 0; $i -lt $probe.Count; $i++) {
-                if ($s.IndexOf($probe[$i], [StringComparison]::Ordinal) -ge 0) {
-                    if (-not $hits.Contains($kind[$i])) { $hits.Add($kind[$i]) }
-                }
-            }
-            $tail = $s.Substring([math]::Max(0, $s.Length - 128))
-        }
-    } catch {
-        return $hits
-    } finally {
-        if ($fs) { $fs.Dispose() }
-    }
-    return $hits
-}
-
-$latin = [Text.Encoding]::GetEncoding(28591)
+# The byte reader lives in packaging/windows/PrivacyProbe.ps1, shared with the audit of the
+# finished .zip in packaging/windows/verify-zip.ps1 and with tests/privacy/run.ps1.  It used to
+# be a private Find-Needles in this file, and that copy had two ways to call a file clean that
+# it had not finished reading: it measured progress by stream Position, and it folded every
+# read error into an empty hit list.  The three gates now push the same bytes through the same
+# decoder, which is the only reason their three verdicts mean the same thing.
+. (Join-Path $PSScriptRoot 'PrivacyProbe.ps1')
 # Shorter than four characters and the token stops being a name: a three-letter account
 # would be found in half of Qt.  The path test below uses every token regardless of
 # length, because a path in a file name is never an accident.
@@ -1035,7 +996,9 @@ foreach ($t in @($here)) {
 $stagedFiles = @(Get-ChildItem -LiteralPath $stage -Recurse -File -Force)
 $textExts = @('.txt', '.md', '.json', '.conf', '.xml', '.ps1', '.qml', '.ts', '.ini', '.csv',
               '.html', '.py', '.sh', '.c', '.h', '.qrc', '.pro')
-$binExts = @('.exe', '.dll', '.qm')
+# .exe, .dll and .qm used to be the only binary kinds this pass opened, alongside a list of
+# text kinds.  The list stays for one purpose only - to tell a file this project authored from
+# one it merely shipped - and not to decide what gets read.
 # No log, no database, no settings file, no debug symbols and above all no media: the
 # point of this list is that a tester's download cannot contain another person's library,
 # camera roll, playlist or session.  PNG stays out of it - Qt's own icons and QML imports
@@ -1088,32 +1051,34 @@ if ($nameLeaks.Count) {
 $personHits = New-Object System.Collections.Generic.List[string]
 $ownPathHits = New-Object System.Collections.Generic.List[string]
 $foreignPathHits = New-Object System.Collections.Generic.List[string]
+$unreadable = New-Object System.Collections.Generic.List[string]
 $scanned = 0
 foreach ($f in $stagedFiles) {
     $ext = $f.Extension.ToLowerInvariant()
     $isText = ($textExts -contains $ext)
-    $isBin = ($binExts -contains $ext)
-    if (-not ($isText -or $isBin)) { continue }
+    $own = $ownNames.Contains($f.Name.ToLowerInvariant())
     $scanned++
     $rel = $f.FullName.Substring($stage.Length + 1)
-    $ascii = @()
-    $wide = @()
-    if ($isText) {
-        $ascii = @($here)
-        $wide = @($who)
-    } elseif ($ownNames.Contains($f.Name.ToLowerInvariant())) {
-        $ascii = @($here)
-        $wide = @($who)
+    # A person's name is looked for in both encodings everywhere, because it is a wide string
+    # in the .rdata of a DLL and a plain one in a text file.  A build folder is matched as
+    # bytes only, which is what keeps the split below honest: for an image this project linked
+    # that path is a defect with a known fix, for anything else it is baked into bytes somebody
+    # else wrote and names nobody.  No file is skipped by extension - the whitelist used to
+    # read .exe/.dll/.qm plus the text kinds, which quietly meant that everything else got to
+    # be unjudged - and a file that cannot be read is a failure, not a pass.
+    $err = $null
+    if ($isText -or $own) {
+        $hits = @(Find-PrivacyNeedles -Path $f.FullName -Needles @($who) -BytesOnlyNeedles @($here) `
+                    -ReadError ([ref]$err))
     } else {
-        $ascii = @($ancestors)
-        $wide = @($who)
+        $hits = @(Find-PrivacyNeedles -Path $f.FullName -Needles @($who) `
+                    -BytesOnlyNeedles @($ancestors) -ReadError ([ref]$err))
     }
-    $hits = @(Find-Needles -Path $f.FullName -Ascii $ascii -Wide $wide)
-    if ($hits.Count -eq 0) { continue }
+    if ($err) { $unreadable.Add($rel + ': ' + $err); continue }
     foreach ($h in $hits) {
         if ($who.Contains($h)) {
             if (-not $personHits.Contains($h)) { $personHits.Add($h) }
-        } elseif ($isText -or $ownNames.Contains($f.Name.ToLowerInvariant())) {
+        } elseif ($isText -or $own) {
             $ownPathHits.Add($h + ' in ' + $rel)
         } else {
             $foreignPathHits.Add($h + ' in ' + $rel)
@@ -1123,8 +1088,8 @@ foreach ($f in $stagedFiles) {
 if ($personHits.Count) {
     Fail ('a staged file carries this account or machine: ' + ($personHits -join ' '))
 } else {
-    Pass ('no account name, host name or test-library name in any byte of the ' +
-        $scanned.ToString() + ' scanned files, in ASCII or UTF-16')
+    Pass ('no account name, host name or test-library name in any of the ' +
+        $scanned.ToString() + ' staged files, in ASCII or UTF-16')
 }
 if ($ownPathHits.Count) {
     if ($Release) {
@@ -1144,6 +1109,15 @@ if ($foreignPathHits.Count) {
         (($foreignPathHits | Select-Object -First 4) -join '; '))
 } else {
     Pass 'no third-party binary in the package names a folder on this machine either'
+}
+if ($unreadable.Count) {
+    # Same rule as the archive gate, and for the same reason: a privacy pass that shrugs at a
+    # file it could not open has measured nothing about that file, and a preview that ships
+    # unjudged bytes is not a preview anyone can trust the rest of.
+    Fail ($unreadable.Count.ToString() + ' staged file(s) could not be read to their end, so ' +
+        'their bytes were never judged: ' + (($unreadable | Select-Object -First 4) -join '; '))
+} else {
+    Pass ('every staged file was opened and read to its end; none was skipped by extension')
 }
 
 if ($Release) {
@@ -1241,6 +1215,38 @@ if (Test-Path -LiteralPath $zip) {
     $sha256 = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
     Pass ('archive written: ' + [math]::Round($zipInfo.Length / 1MB, 1) + ' MB')
 }
+if ($zipInfo) {
+    # The archive is the deliverable and the folder is not, so the archive gets the audit too -
+    # every member opened, read to its end and searched in both encodings, by
+    # packaging/windows/verify-zip.ps1.  A folder that passes and an archive written from it
+    # are two files: entries can gain a prefix, lose a byte to a rewrite, or arrive from
+    # wherever else was in the parent folder, and the thing a tester downloads is the second.
+    Step 'archive audited'
+    $verifier = Join-Path $PSScriptRoot 'verify-zip.ps1'
+    if (-not (Test-Path -LiteralPath $verifier)) {
+        Fail 'packaging/windows/verify-zip.ps1 is missing, so the archive was never read'
+    } else {
+        $eapWas = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        # Every probe the folder audit was handed, not the two obvious ones.  The leak this
+        # line is written after was found by a hand run of verify-zip.ps1 that named the
+        # dependency root in -BuildRoot, while this call named only the repository and the
+        # build tree - so the automated run had passed the very archive a stricter invocation
+        # of the same script failed.  The archive is the deliverable, so it gets the whole
+        # list, and the ancestors go in as the ancestors: asked of foreign binaries only.
+        $vOut = & $verifier $zip -ExpectBytes $zipInfo.Length -ExpectSha256 $sha256 `
+                -RootName $name -BuildRoot (@($root, $Build) + @($here) | Select-Object -Unique) `
+                -AncestorRoot @($ancestors) 2>&1
+        $vCode = $LASTEXITCODE
+        $ErrorActionPreference = $eapWas
+        foreach ($l in @($vOut | Select-Object -Last 4)) { Write-Host ('    ' + $l) }
+        if ($vCode -ne 0) {
+            Fail ('the .zip did not pass the audit of its own bytes, exit code ' + $vCode.ToString())
+        } else {
+            Pass 'the finished .zip passed the same byte audit, member by member'
+        }
+    }
+}
 # ---------------------------------------------------------------------------- summary
 Step 'summary'
 $scope = New-Object System.Collections.Generic.List[string]
@@ -1270,7 +1276,9 @@ if ($Release) {
     $scope.Add('  - what the release pass adds is about the folder and nothing else: no FFmpeg')
     $scope.Add('    command-line program, no copy of a Windows system binary, no QML debugger,')
     $scope.Add('    and no account name, host name, build path, log, database, music, photo or')
-    $scope.Add('    video of whoever built it is inside it.  It says nothing new about a Zune.')
+    $scope.Add('    video of whoever built it is inside it - a rule the finished .zip is audited')
+    $scope.Add('    against member by member, not only the folder it was packed from.  It says')
+    $scope.Add('    nothing new about a Zune.')
     $scope.Add('  - this is a beta build of a GNU GPL program that is not signed, not')
     $scope.Add('    installed, and not a finished product.')
 } else {

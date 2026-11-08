@@ -8,19 +8,23 @@
 # It takes the file list from git and the bytes from the working tree and asks
 # four questions.  Is any tracked file somebody's music, photograph, video,
 # playlist, database, log or scratch file rather than source?  Does any tracked
-# path or text byte spell the account, the host, the home folder or the commit
-# identity of whoever made this checkout?  How many tracked lines quote a
-# machine-local absolute path, which is how build and device evidence is written
-# down in this project and therefore has to be counted out loud rather than
-# silently allowed?  And which tracked pictures cannot be read as text at all, so
-# that each one sits in tests/privacy/reviewed-media.txt with a reason beside it
-# instead of having slipped in?
+# path or any byte at all of any tracked file - picture, font, binary or source -
+# spell the account, the host, the home folder, the commit identity of whoever made
+# this checkout, or the serial number of the player that was plugged in while it was
+# made?  How many tracked lines quote a machine-local absolute path, which is how build
+# and device evidence is written down in this project and therefore has to be counted
+# out loud rather than silently allowed?  And which tracked pictures cannot be read as
+# text at all, so that each one sits in tests/privacy/reviewed-media.txt with a reason
+# beside it instead of having slipped in?
 #
 # No device, no build, no network, and nothing here writes to the tree.
 param()
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $reviewedPath = Join-Path $PSScriptRoot 'reviewed-media.txt'
+# One byte reader for the repository, the staged release folder and the finished .zip, so
+# that the three of them cannot disagree about what a name looks like in a file.
+. (Join-Path $root 'packaging\windows\PrivacyProbe.ps1')
 $checks = 0
 $failures = 0
 function Step { param([string]$m) Write-Host ('== ' + $m) }
@@ -70,6 +74,68 @@ try {
         Pass ($needles.Count.ToString() + ' identity strings this checkout must not put in the tree')
     }
     foreach ($s in $skipped) { Note ('not treated as private: ' + $s) }
+
+    # ------------------------------------------------------- the byte reader itself
+    # Every identity verdict below comes out of Find-PrivacyNeedles, the same reader
+    # packaging/windows/deploy.ps1 aims at a staged folder and verify-zip.ps1 aims at a
+    # finished .zip.  So the reader is tested before it is trusted, one case per way a
+    # scan has been watched answering "clean" about bytes that were not clean.
+    Step 'the byte reader itself'
+    $scratch = Join-Path ([IO.Path]::GetTempPath()) ('zuuned-probe-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $scratch -Force | Out-Null
+    try {
+        $wideOnly = Join-Path $scratch 'wide.bin'
+        [IO.File]::WriteAllBytes($wideOnly, [Text.Encoding]::Unicode.GetBytes('ZTESTWIDE marker'))
+        $plain = Join-Path $scratch 'plain.txt'
+        [IO.File]::WriteAllText($plain, "nothing here but ZTESTPLAIN and prose`n")
+        $clean = Join-Path $scratch 'clean.txt'
+        [IO.File]::WriteAllText($clean, "an ordinary source file says nothing about anyone`n")
+        $edge = Join-Path $scratch 'edge.bin'
+        [IO.File]::WriteAllBytes($edge, [Text.Encoding]::ASCII.GetBytes(
+            (('x' * 1020) + 'ZTESTEDGE' + ('y' * 200))))
+
+        $h = @(Find-PrivacyNeedles -Path $wideOnly -Needles @('ZTESTWIDE'))
+        if ($h.Count -eq 1) { Pass 'a name stored only as UTF-16LE is found by -Needles' }
+        else { Fail ('a name stored only as UTF-16LE was missed, hits ' + $h.Count.ToString()) }
+        $h = @(Find-PrivacyNeedles -Path $wideOnly -BytesOnlyNeedles @('ZTESTWIDE'))
+        if ($h.Count -eq 0) { Pass 'a bytes-only needle does not match a wide-only occurrence' }
+        else { Fail '-BytesOnlyNeedles matched bytes that are not there' }
+        $a = @(Find-PrivacyNeedles -Path $plain -Needles @('ZTESTPLAIN'))
+        $b = @(Find-PrivacyNeedles -Path $plain -BytesOnlyNeedles @('ZTESTPLAIN'))
+        if ($a.Count -eq 1 -and $b.Count -eq 1) { Pass 'a name stored as plain bytes is found both ways' }
+        else { Fail ('a plain-byte name was found ' + $a.Count.ToString() + '/' +
+            $b.Count.ToString() + ' of the two ways') }
+        # Case is not a hiding place either: an object file keeps whatever case the shell
+        # happened to have, a log writes the same account lower-case, and the drive letter of
+        # a build root is spelled whichever way the tool that wrote it felt like.
+        $cased = Join-Path $scratch 'cased.txt'
+        [IO.File]::WriteAllText($cased, ('compiled in D:\DEV\deps and run by ZTestAccount' + [char]10))
+        $a = @(Find-PrivacyNeedles -Path $cased -Needles @('ztestaccount'))
+        $b = @(Find-PrivacyNeedles -Path $cased -BytesOnlyNeedles @('d:\dev'))
+        if ($a.Count -eq 1 -and $b.Count -eq 1) { Pass 'a name stored in another case is found' }
+        else { Fail ('a name differing only in case was found ' + $a.Count.ToString() + '/' +
+            $b.Count.ToString() + ' of the two ways') }
+        $h = @(Find-PrivacyNeedles -Path $clean -Needles @('ZTESTWIDE', 'ZTESTPLAIN'))
+        if ($h.Count -eq 0) { Pass 'a clean file is reported clean' }
+        else { Fail ('a clean file reported ' + (($h | Select-Object -First 3) -join ' ') + ' as present') }
+        $err = $null
+        $h = @(Find-PrivacyNeedles -Path (Join-Path $scratch 'no-such-file.bin') `
+                -Needles @('ZTESTWIDE') -ReadError ([ref]$err))
+        if ($err -and $h.Count -eq 0) { Pass 'a file it cannot open is reported unreadable, not clean' }
+        else { Fail 'a file that does not exist was reported clean' }
+        $h = @(Find-PrivacyNeedles -Path $edge -Needles @('ZTESTEDGE') -ChunkBytes 1024)
+        if ($h.Count -eq 1) { Pass 'a name straddling a chunk boundary is found' }
+        else { Fail 'a chunked read missed a name sitting on the chunk edge' }
+        # The regression the shared reader exists for: binding $null to a [ref] parameter
+        # throws, and a catch around that call folded the throw into an empty hit list, so
+        # every caller that did not pass -ReadError - which is most of them - was told the
+        # bytes were clean whether they were or not.
+        $h = @(Find-PrivacyNeedles -Path $wideOnly -Needles @('ZTESTWIDE'))
+        if ($h.Count -eq 1) { Pass 'a call with no -ReadError still searches the wide half' }
+        else { Fail 'a call with no -ReadError reported a wide name as absent' }
+    } finally {
+        Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
+    }
 
     # --------------------------------------------------------------- the tracked set
     Step 'tracked set'
@@ -164,34 +230,51 @@ try {
 
     $latin = [Text.Encoding]::GetEncoding(28591)
     $hits = New-Object System.Collections.Generic.List[string]
+    $unreadable = New-Object System.Collections.Generic.List[string]
+    $serialHits = New-Object System.Collections.Generic.List[string]
     $pathHits = 0
     $pathFiles = 0
     $roots = @{ }
     $scanned = 0
-    $notScanned = 0
+    $textFiles = 0
+
+    # The serial tail of a USB device instance path names one physical player.  The rule and
+    # the reason for it live in packaging/windows/PrivacyProbe.ps1, dot-sourced at the top of
+    # this file, so the repository and the release gates cannot disagree about what to look for.
+    $serialRule = Get-PrivacySerialRule
+    # Every tracked file is searched, whatever it is and however big it is: a picture, a
+    # font or a 12 MB fixture used to be answered "skipped as binary", which is the same
+    # claim a leak needs.  A name is matched as bytes and as UTF-16LE for the same reason
+    # the release gates do it.  The two counters underneath stay text-only, because a
+    # drive letter inside a PNG is not a line anyone can read.
     foreach ($f in $files) {
         if (-not (Test-Path -LiteralPath $f)) { continue }
+        $scanned++
+        $err = $null
+        foreach ($t in @(Find-PrivacyNeedles -Path $f -Needles @($needles) -ReadError ([ref]$err))) {
+            $hits.Add($f + ' carries ' + $t)
+        }
+        if ($err) { $unreadable.Add($f + ': ' + $err); continue }
         $item = Get-Item -LiteralPath $f -Force
-        if ($item.Length -gt 4MB) { $notScanned++; continue }
+        if ($item.Length -gt 4MB) { continue }
         $bytes = [IO.File]::ReadAllBytes($f)
         $head = [Math]::Min(8191, $bytes.Length - 1)
         $binary = $false
         for ($i = 0; $i -le $head; $i++) { if ($bytes[$i] -eq 0) { $binary = $true; break } }
-        if ($binary) { $notScanned++; continue }
-        $scanned++
+        if ($binary) { continue }
+        $textFiles++
         $text = $latin.GetString($bytes)
-        foreach ($t in $needles) {
-            if ($text.IndexOf($t, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
-                $hits.Add($f + ' carries ' + $t)
-                break
-            }
-        }
         $n = 0
         # A Windows checkout has CRLF everywhere, and a line anchored on $ matches nothing while the
         # carriage return is still in the way, so this counter would read 0 over every document in
         # the tree. Normalise the line endings before asking the question of them.
         $flat = $text.Replace("`r`n", "`n")
         foreach ($m in [regex]::Matches($flat, '(?im)^[^\r\n]*\b[a-z]:[\\/][^\r\n]*$')) { $n++ }
+        # The serial rule reads the raw text rather than the newline-flattened copy: an
+        # instance path is one token, and a carriage return inside it is beside the point.
+        foreach ($m in [regex]::Matches($text, $serialRule)) {
+            if (-not $serialHits.Contains($f)) { $serialHits.Add($f) }
+        }
         if ($n) {
             $pathHits += $n
             $pathFiles++
@@ -205,10 +288,23 @@ try {
         Fail ($hits.Count.ToString() + ' tracked text file(s) carry this account, host or home' +
             ' folder: ' + (($hits | Select-Object -First 5) -join '; '))
     } else {
-        Pass ('no identity string in any byte of the ' + $scanned.ToString() + ' text files')
+        Pass ('no identity string in any byte of all ' + $scanned.ToString() + ' tracked files,' +
+            ' in ASCII or UTF-16')
     }
-    Pass ($notScanned.ToString() + ' files skipped as binary or oversized: their bytes are judged by' +
-        ' the media rule above, not here')
+    if ($unreadable.Count) {
+        Fail ($unreadable.Count.ToString() + ' tracked file(s) could not be read to their end, so' +
+            ' their bytes were never judged: ' + (($unreadable | Select-Object -First 4) -join '; '))
+    } else {
+        Pass 'every tracked file was opened and read to its end, none skipped as binary'
+    }
+    if ($serialHits.Count) {
+        Fail ($serialHits.Count.ToString() + ' tracked file(s) name the serial tail of a USB' +
+            ' device instance path, which belongs to one physical player: ' +
+            (($serialHits | Select-Object -First 4) -join '; '))
+    } else {
+        Pass 'no tracked file names the serial tail of a USB device instance path'
+    }
+    Pass ($textFiles.ToString() + ' of them are read as text for the path counter below')
 
     Step 'machine-local paths'
     Pass ($pathHits.ToString() + ' line(s) in ' + $pathFiles.ToString() + ' tracked file(s) quote an' +

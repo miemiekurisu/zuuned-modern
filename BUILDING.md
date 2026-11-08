@@ -245,12 +245,18 @@ time does not move it. A release whose stamp names another revision, or names th
 as built from a dirty tree, fails.
 
 A release then reads what it just staged for the sake of whoever built it: every
-relative path, and every byte of every staged text file, executable and `.qm`
-catalogue, once as Latin-1 and once looking for UTF-16 code points, against the
-account name, host name, profile folder, build tree and test-library folder - and
-the entries of the `.zip` after writing it, because a folder that passes does not
-guarantee the archive written from it does. Two real leaks came out of the first
-such pass: a byte-for-byte copy of `C:\Windows\System32\icuuc.dll`, and the build
+relative path, and every byte of every staged file whatever it is - an earlier version
+opened only the extensions somebody thought to name, which only decides in advance what
+gets to be unjudged - once as Latin-1 and once looking for UTF-16 code points, against
+the account name, host name, profile folder, build tree and test-library folder. That
+reader is one file, `packaging/windows/PrivacyProbe.ps1`, shared with the repository gate
+`tests/privacy/run.ps1`, which tests the reader on eight cases before it trusts it, and
+with `packaging/windows/verify-zip.ps1`, which `deploy.ps1` calls on the finished `.zip`
+after writing it: a folder that passes does not guarantee the archive written from it
+does, and a zip member is a non-seekable stream that can return nothing between two reads
+and still report success - which is how the first version of that reader declared the
+largest file in the package clean after reading a twentieth of it. Two real leaks came
+out of the first such pass: a byte-for-byte copy of `C:\Windows\System32\icuuc.dll`, and the build
 folder recorded inside `zuuned.exe` and `devicetool.exe` by the linker as the path
 of their program databases, now suppressed with `/PDBALTPATH:%_OBJNAME%` in
 `CMakeLists.txt`. Five third-party DLLs this project does not compile still record
