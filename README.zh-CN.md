@@ -190,7 +190,7 @@ QML 模块都到位，最后为 `.zip` 打出一个 SHA-256。不加参数时这
 而且这一次运行会自查是谁构建了它：包里的每一条相对路径、每一个文本文件、可执行文件与 `.qm` 语言目录
 的每一个字节，都会按 Latin-1 读一遍、再按 UTF-16 码点找一遍，去比对账户名、主机名、profile 目录、
 构建树与测试曲库目录；`.zip` 写完之后还要把里面的条目再读回来核一遍。2026-11-08 的一次全绿 `-Release`
-运行在 1,539 个文件、158.5 MB 的归档上报出 `40 checks, 0 failures`，其中 57 个模块从包内映射、136 个
+运行在 1,539 个文件、158.5 MB 的归档上报出 `43 checks, 0 failures`，其中 57 个模块从包内映射、137 个
 来自 Windows、还有一个是这台桌面往每个进程里注入的 shell 工具。release 还拒绝在脏树上运行，并且会把
 `zuuned-build.json` 里刻着的 revision 与 `git rev-parse HEAD` 比对：那个时间戳是编译时写进去的，光有
 干净的工作树并不能证明字节就是那个 commit，所以两个答案不一致的 release 直接判失败。
@@ -200,7 +200,7 @@ QML 模块都到位，最后为 `.zip` 打出一个 SHA-256。不加参数时这
 日志、数据库、配置文件、归档、媒体文件或 Finder/资源管理器元数据；除了仓库发布时用的那个名字之外，
 拒绝任何被跟踪的路径或文本字节里出现提交者的账户名、主机名或 profile 目录；并且要求每一张被跟踪的
 图片都落在 [`tests/privacy/reviewed-media.txt`](tests/privacy/reviewed-media.txt) 里写明理由的前缀之下。
-2026-11-08 全绿：`813 tracked files, 9 checks, 0 failures`，当天它抓到的唯一真实问题是仓库里跟踪了一个
+2026-11-08 全绿：`817 tracked files, 9 checks, 0 failures`，当天它抓到的唯一真实问题是仓库里跟踪了一个
 `libzune/.DS_Store`。完整经过，包括文本门禁看不见的那一部分，写在
 [`docs/releases/BETA_WINDOWS_2026-11-08.md`](docs/releases/BETA_WINDOWS_2026-11-08.md)。
 

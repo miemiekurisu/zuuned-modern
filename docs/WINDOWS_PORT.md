@@ -2518,7 +2518,7 @@ required: a missing notice fails the run.
 | files staged | 1,557 | 1,539 |
 | staged size | 460.4 MB | 418.1 MB |
 | archive | 176.8 MB | 158.5 MB |
-| checks | 30, 0 failures | 40, 0 failures |
+| checks | 30, 0 failures | 43, 0 failures |
 
 The 18 files and 42 MB a release refuses: the two FFmpeg programs (0.7 MB), `avdevice-63.dll` (4.7 MB)
 and `avfilter-12.dll` (35.8 MB), which `dumpbin` shows nothing else in the folder imports, `icuuc.dll`,
@@ -2554,7 +2554,7 @@ metadata; no tracked path or text byte carrying the account, host, profile folde
 whoever made the checkout, except the name the repository is published under, which is on its own clone
 URL; every tracked picture under a prefix named in `tests/privacy/reviewed-media.txt` with a reason
 beside it; and the count of tracked lines quoting a drive-letter path printed rather than hidden,
-because here those lines are build and device evidence. Green 2026-11-08 at `813 tracked files, 9
+because here those lines are build and device evidence. Green 2026-11-08, re-run after the artifact was staged: `817 tracked files, 9
 checks, 0 failures`: 90 reviewed pictures, 96 files skipped as binary, 158 drive-letter lines - the counter first printed 38, because its pattern asked for a drive letter at the end of a line and this markdown ends its lines with a carriage return; the figure counts the lines this page itself quotes. It found
 one real tracked offender the first time it ran - `libzune/.DS_Store`, which records which files a
 folder held - now untracked, with `.gitignore` refusing it and `Thumbs.db` beside it. It was tested by
@@ -2573,3 +2573,24 @@ the closed list on this page. What remains open is unchanged in kind and now als
 this folder opened on a machine that did not build it, an installer, code signing and a SmartScreen
 history. The privacy pass and the licence notice are statements about a folder and about a licence, not
 about a Zune.
+
+**2026-11-08 the archive that carries its own digest:** `deploy.ps1 -Release` was run again against a
+`--clean-first` relink of this checkout (341/341, `EXITCODE=0`), and for the first time the two
+answers the new check compares were the same text - `zuuned-build.json` `f4430dc79b6700b987bd26e5c65c74b31c6683ba`
+with `applicationDirty: false`, and `git rev-parse HEAD` the same 40 characters - so "the bytes in
+this folder are that commit" is a measurement here rather than an inference from a clean working tree.
+1,539 files / 418.1 MB staged into a folder outside the repository, 158.5 MB archive, `43 checks, 0
+failures`; the sha256 is recorded in `docs/releases/BETA_WINDOWS_2026-11-08.md`, which is the commit
+after the run because an archive cannot contain its own digest. 43 is three more than the same day's
+first release run: the stamp agreement, and the smoke log and smoke profile being confirmed deleted
+instead of merely asserted. What the staged folder proved about itself - `devicetool` answering
+`agree` from inside it, one page painted from an isolated profile with an empty library
+(`onboarding=true tracks=0 wfRows=0`), self-closed with exit 0, and 195 loaded modules resolved as 57
+inside the package, 137 from Windows and 1 from neither, that one being this desktop's shell utility
+injected into every process. The folder's own privacy pass ran over it: 1,539 relative paths and the
+bytes of 668 scannable files naming no account, host, build tree or test library, and no `.mtpz-data`
+anywhere in it. **Device evidence does not move:** the attached Pavo was bound for that launch and the
+run states in its own output that the launch browses it read-only, as every gate launch here does;
+nothing was written to, deleted from or read back from a player, and no gate on this page closed or
+opened. The one consequence of the new agreement check worth remembering: re-running `-Release` from
+a newer checkout now fails until the tree is recompiled, which is exactly what it is for.

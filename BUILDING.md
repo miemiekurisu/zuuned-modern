@@ -257,7 +257,7 @@ of their program databases, now suppressed with `/PDBALTPATH:%_OBJNAME%` in
 where *their* build happened, in their own debug and `assert` strings; a release
 records that and says so, which is the stated limit of the pass. A release run also
 deletes its own smoke profile and log, and says so as a check rather than a
-promise. A green `-Release` run on 2026-11-08 reported `40 checks, 0 failures` over
+promise. A green `-Release` run on 2026-11-08 reported `43 checks, 0 failures` over
 1,539 files, 418.1 MB staged and a 158.5 MB archive.
 `docs/releases/BETA_WINDOWS_2026-11-08.md` is the record of that artifact.
 
@@ -275,7 +275,7 @@ under, which is on its own clone URL; every tracked picture has to sit under a
 prefix named with a reason in `tests/privacy/reviewed-media.txt`; and the count of
 tracked lines quoting a drive-letter path is printed rather than hidden, because in
 this repository those lines are build and device evidence and a new one should move
-a visible number. Green on 2026-11-08: `813 tracked files, 9 checks, 0 failures`.
+a visible number. Green on 2026-11-08, after the artifact was staged: `817 tracked files, 9 checks, 0 failures`.
 It found `libzune/.DS_Store` the day it was written, and that file is untracked now.
 
 The script compiles nothing, installs no driver, opens no device handle, signs

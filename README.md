@@ -223,8 +223,8 @@ relinkable and which is static, and say where the corresponding source is. And t
 for whoever built it: every staged path and every byte of every staged text file, executable and
 `.qm` catalogue is read once as Latin-1 and once looking for UTF-16 code points, against the account
 name, host name, profile folder, build tree and test-library folder, and the entries of the `.zip`
-are read back after writing it. A green `-Release` run on 2026-11-08 reported `40 checks, 0 failures`
-over 1,539 files and a 158.5 MB archive, with 57 modules mapped from inside the package, 136 from
+are read back after writing it. A green `-Release` run on 2026-11-08 reported `43 checks, 0 failures`
+over 1,539 files and a 158.5 MB archive, with 57 modules mapped from inside the package, 137 from
 Windows and one that is this desktop injecting a shell utility into every process. A release also
 refuses a dirty tree, and reads the revision stamped in `zuuned-build.json` back against
 `git rev-parse HEAD`: the stamp is written at build time, so a clean tree on its own does
@@ -236,7 +236,7 @@ refuses a tracked log, database, settings file, archive, media file or Finder/Ex
 refuses the account, host or profile folder of whoever made the checkout, outside the name the
 repository is published under; and it requires every tracked picture to sit under a prefix named with
 a reason beside it in [`tests/privacy/reviewed-media.txt`](tests/privacy/reviewed-media.txt). Green on
-2026-11-08: `813 tracked files, 9 checks, 0 failures`, and the one real offender it found the same day
+2026-11-08: `817 tracked files, 9 checks, 0 failures`, and the one real offender it found the same day
 was a tracked `libzune/.DS_Store`. The whole account, including the part no text gate can see, is in
 [`docs/releases/BETA_WINDOWS_2026-11-08.md`](docs/releases/BETA_WINDOWS_2026-11-08.md).
 

@@ -2179,7 +2179,7 @@ right to carry FFmpeg, and whether it carries anything about whoever built it. `
 the answer to the first by subtraction: `tools\ffmpeg.exe`, `tools\ffprobe.exe`, `avdevice-63.dll`,
 `avfilter-12.dll` (the only importer of either, per `dumpbin`), `icuuc.dll` and the 13 files of
 `qmltooling\` - 18 files and 42 MB, 1,539 files and 418.1 MB staged instead of 1,557 and 460.4, a
-158.5 MB archive instead of 176.8, 40 checks instead of 30, 0 failures. The FFmpeg **libraries** stay,
+158.5 MB archive instead of 176.8, 43 checks instead of 30, 0 failures. The FFmpeg **libraries** stay,
 because the application loads them: `transcode/libav_transcode.c` uses `libx264` and
 `libzune/src/util.c` probes through libav in-process, so an LGPL-only FFmpeg is a codec-pipeline rewrite
 judged against codecs a Zune cannot play, and a delay-load or plugin boundary saves nothing the app does
@@ -2211,7 +2211,7 @@ because no string there names a person and nobody here can rewrite them. `tests/
 `git ls-files`: no tracked log, database, settings file, archive, binary or Finder/Explorer metadata, no
 identity string in a tracked path or text byte outside the published repository name, every tracked
 picture under a reviewed prefix with a reason beside it, and the count of drive-letter lines printed
-rather than hidden. Green: `813 tracked files, 9 checks, 0 failures`, and that counter was wrong when first written: its pattern asked for a drive letter at the end of a line while these documents end their lines with a carriage return, so it reported 38 where the honest count is 158. A gate whose numbers are quietly too small is worse than no gate. It caught a tracked
+rather than hidden. Green: `817 tracked files, 9 checks, 0 failures`, and that counter was wrong when first written: its pattern asked for a drive letter at the end of a line while these documents end their lines with a carriage return, so it reported 38 where the honest count is 158. A gate whose numbers are quietly too small is worse than no gate. It caught a tracked
 `libzune/.DS_Store` immediately, now untracked, with `.DS_Store` and `Thumbs.db` added to `.gitignore`,
 and it was tested the only way that means anything - a staged file naming a real account failed it with
 exit 1. **Known open rather than quietly allowed:** 32 screenshots under `docs/readme-screenshots/` came
@@ -2227,3 +2227,18 @@ claim moved:** a Pavo (Zune HD) was attached for the release smoke run and was b
 every launch here has been; nothing was written, deleted or read back, nobody has heard audio out of
 this application, and there is still no installer, no signing, and no capture of this folder on a machine
 that did not build it.
+
+**2026-11-08 the folder and the commit name each other now:** the relinked tree was packaged again, and
+the two answers the new agreement check compares came out as the same text - `zuuned-build.json`
+`f4430dc79b6700b987bd26e5c65c74b31c6683ba`, `applicationDirty: false`, and `git rev-parse HEAD`
+the same 40 characters - so "the archive is that revision" is measured, not inferred from a clean tree.
+1,539 files / 418.1 MB staged outside the repository, 158.5 MB archive, `43 checks, 0 failures`, the
+sha256 recorded in `docs/releases/BETA_WINDOWS_2026-11-08.md`. Three of those checks are new since
+the first run that day: the stamp agreement, and the smoke log and smoke profile confirmed deleted
+rather than asserted. The folder answered for itself - `devicetool` `agree` from inside it, one page
+painted from an isolated profile with an empty library, clean exit 0, 195 modules resolved as 57 inside
+the package, 137 from Windows, 1 from neither (this desktop's injected shell utility, not a missing
+dependency). The trap the new check sets for the next shipper: `-Release` from a newer checkout fails
+until the tree is recompiled, which is the point of it. **Device evidence unchanged** - the attached
+Pavo was bound for the smoke launch, which the run itself declares read-only, and nothing was written,
+deleted or read back.

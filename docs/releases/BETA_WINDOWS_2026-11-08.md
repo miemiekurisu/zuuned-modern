@@ -50,7 +50,7 @@ come from a `-NoSmoke` run, which is why its check count is lower.
 | files staged | 1,557 | 1,539 |
 | staged size | 460.4 MB | 418.1 MB |
 | archive | 176.8 MB | 158.5 MB |
-| checks | 30, 0 failures | 40, 0 failures |
+| checks | 30, 0 failures | 43, 0 failures |
 
 The 18 files and 42 MB that a release refuses to carry:
 
@@ -125,9 +125,9 @@ own clone URL; every tracked picture must sit under a prefix named in
 `tests/privacy/reviewed-media.txt` with a reason beside it; and the number of tracked
 lines quoting a drive-letter path is printed rather than hidden, because in this
 repository those lines are recorded build and device evidence and a new one should
-change a visible number. Green on 2026-11-08: `813 tracked files, 9 checks, 0
-failures`, 3 identity strings, 90 reviewed pictures, 96 files skipped as binary, 155
-lines quoting a drive letter. The gate was proved by staging a file naming a real account
+change a visible number. Green on 2026-11-08, after the commit above: `817 tracked
+files, 9 checks, 0 failures`, 3 identity strings, 90 reviewed pictures, 96 files
+skipped as binary, 158 lines quoting a drive letter. The gate was proved by staging a file naming a real account
 and watching it exit 1; the drive-letter counter needed a fix before it meant anything,
 because its pattern asked for a path at the end of a line and this markdown ends its lines
 with a carriage return, so the honest number is four times the first one.
@@ -165,3 +165,49 @@ The packaging pass is about the folder and nothing else.
 The digest of the published archive is added by the commit that follows the run that
 staged it, because the run refuses a dirty tree and a document cannot contain the
 digest of an archive that does not exist yet.
+
+## The published archive
+
+The run that produced the folder now shipped staged a tree whose build record reads
+`f4430dc`, with `applicationDirty: false`, and said out loud that the record and the
+tree name the same revision:
+
+```text
+revision   f4430dc79b6700b987bd26e5c65c74b31c6683ba, clean tree
+staged     1,539 files, 418.1 MB
+archive    158.5 MB, 1,539 entries, every one relative and under Zuuned-0.2.0-win64/
+sha256     ACC557F7F03B247D11EEC853DE3FBEC25F0610CA7EC02651023E199737AB1CB9
+checks     43, failures 0
+```
+
+Three checks longer than the table above first recorded, and all three are things this
+repository used to assert in prose instead of measuring: that the build record inside
+the folder agrees with the revision the run was told it was packaging, and that the
+smoke log and smoke profile really are gone after the run rather than merely written
+somewhere else.
+
+What that run measured, beyond the counts. It dropped `avdevice-63.dll` (4.7 MB) and
+`avfilter-12.dll` (35.8 MB) because nothing else imports them, refused `icuuc.dll`
+because a Windows copy is byte-identical, and kept the QML debugger out. It read back
+`qt.conf`, the manifest's `asInvoker` and `longPathAware` entries, and the catalogue. It
+inventoried 107 binaries and resolved every import inside the package, in Windows, or
+an api set, and then launched the staged folder with its own PATH: `devicetool`
+answered `agree`, the app painted a page from an isolated empty profile
+(`onboarding=true tracks=0 wfRows=0`), closed itself with exit code 0, and across 195
+loaded modules nothing came from a development tree - 57 modules from inside the
+package, 137 from Windows, 1 from neither. Its privacy pass is the one described above:
+1,539 staged paths name no account, host, build tree or test library; the 668 scannable
+text files are byte-clean in ASCII and UTF-16; no `.mtpz-data` is anywhere in it; and
+the five third-party DLLs whose own build paths they carry are the stated limit, not a
+finding.
+
+That launch happened with a Zune HD still bound on this machine, and the application browsed
+it read-only exactly as every gate launch here does. Nothing in this sitting wrote to,
+deleted from or read back from a player, and no capability on `docs/WINDOWS_PORT.md` moved.
+
+One consequence of the agreement check is worth writing down for whoever ships the next
+folder. The revision inside this archive stays `f4430dc` even though the commit that
+records its digest is later - that is what a digest means. Re-running `-Release` from
+the newer checkout would now *fail*, correctly, because nothing was recompiled; to ship
+a later revision, rebuild with `--clean-first` first and let the run name the new
+sha256.
