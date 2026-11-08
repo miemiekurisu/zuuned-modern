@@ -1,0 +1,13 @@
+# Every picture or sound git tracks, and why it is here.
+#
+# tests/privacy/run.ps1 fails on a tracked media file under no prefix listed here,
+# so putting a screenshot in the repository means writing a line here first: a
+# checked-in picture is a decision somebody made, not something that slipped in.
+# One prefix per line before a |, matched case-insensitively against the path as
+# git spells it; the rest of the line is the reason a reader gets to see.
+qml/images/|interface art drawn for this project
+packaging/icons/|application icons drawn for this project
+mockups/|design mockups and the generated fixtures they show
+tools/font-studio/|font specimens rendered from generated names
+qa-screens/|Linux QA captures that predate this fork, kept as design history
+docs/readme-screenshots/|KNOWN OPEN: shot from a real library on the real machine

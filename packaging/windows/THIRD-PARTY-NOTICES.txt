@@ -1,0 +1,142 @@
+Zuuned Modern - third-party runtime components
+==============================================
+
+Zuuned Modern is free software under the GNU General Public License version 3
+or later.  LICENSE and COPYING.md in this folder carry that licence.  The
+corresponding source for the build in this folder is the git revision named by
+zuuned-build.json, which "zuuned.exe --version" also prints, and it is
+available at
+
+    https://github.com/miemiekurisu/zuuned-modern
+
+Every third-party runtime component below is a shared library, so this program
+can be relinked against a modified version of any of them, which is what the
+LGPL and GPL terms ask for.  The one exception is named "linked statically"
+under PCRE2.
+
+What is in this folder
+----------------------
+
+Qt 6.11.0  (Qt6*.dll, qml\, platforms\ and the other plugin folders,
+translations\)
+    LGPL-3.0-or-later with the Qt runtime exception for application use.
+    Copyright (C) The Qt Company Ltd. and contributors.  https://www.qt.io
+    The catalogue of licences Qt itself bundles is at
+    https://doc.qt.io/qt-6/licenses.html
+    No commercial Qt licence was used, and none is implied.
+
+FFmpeg libraries  (avcodec-63.dll, avformat-63.dll, avutil-61.dll,
+swresample-7.dll, swscale-10.dll)
+    GPL-3.0-or-later.  These come from the FFmpeg shared build
+    "ffmpeg-master-latest-win64-gpl" at https://www.gyan.dev/ffmpeg/builds/,
+    configured with --enable-gpl, so the copy here contains libx264; that is
+    why these are the GPL libraries and not the LGPL ones.  Copyright (C) the
+    FFmpeg developers.  https://ffmpeg.org
+    Zuuned Modern is itself GPL-3.0-or-later, so the two combine on the same
+    terms and the whole folder stays under the GPL.
+    The corresponding source for these libraries is the FFmpeg release that this
+    build was made from, configured as above: https://ffmpeg.org/download.html
+    names the sources and the build page above names the revision.  This folder
+    re-hosts none of that source, and asks for nothing that replaces it.
+    What they are for: the WMA Lossless and WMV profiles a Zune plays, mp3 and
+    video conversion, and the metadata and duration probe that libzune runs
+    while it reads a player's music library.  The application resolves them at
+    load time, so zuuned.exe does not start without them.
+
+libmpv  (libmpv-2.dll, v0.41.0-1224-g6a262d11f)
+    GPL-3.0-or-later.  Windows build of the mpv playback engine, which embeds
+    its own copy of FFmpeg.  Copyright (C) the mpv contributors.
+    https://mpv.io
+    All playback in Zuuned Modern goes through libmpv.
+LAME 3.100  (libmp3lame.DLL)
+    LGPL-2.0-only, from the vcpkg port "mp3lame".
+    Copyright (C) 1998-2011 The LAME Project.  https://lame.sourceforge.io
+    Used for mp3 output when converting.
+
+SQLite 3.53.0  (sqlite3.dll)
+    Public domain.  https://www.sqlite.org/copyright.html
+    Holds the music library and the podcast and audiobook state.
+
+libusb 1.0.29  (libusb-1.0.dll)
+    LGPL-2.1-or-later, from the vcpkg port "libusb".
+    Copyright (C) 2001-2023 USB Library Development Team.  https://libusb.info
+    This is what talks to the player over WinUSB.  The WinUSB driver itself
+    comes from Windows and is not in this folder: see driver\DRIVER_INSTALL.md.
+
+libgcrypt 1.10.3  (gcrypt.dll)  and  libgpg-error 1.45  (gpg-error.dll)
+    LGPL-2.1-or-later, from the vcpkg ports "shiftmedia-libgcrypt" and
+    "shiftmedia-libgpg-error".  Copyright (C) g10 Code GmbH.
+    https://gnupg.org/software/libgcrypt
+    https://gnupg.org/software/libgpg-error
+    Reached through libusb's dependency graph on this build.
+
+Microsoft Visual C++ runtime  (msvcp140*.dll, vcruntime140*.dll,
+vccorlib140.dll, concrt140.dll)
+    Version 14.44 of the Microsoft Visual C++ 2015-2022 Redistributable, placed
+    app-local inside this folder under Microsoft's redistributable terms.  They
+    are not offered here as a standalone install.
+
+Shader tools  (dxcompiler.dll, dxil.dll, D3Dcompiler_47.dll)
+    dxcompiler.dll and dxil.dll are the DirectX Shader Compiler under the MIT
+    licence; D3Dcompiler_47.dll is the Microsoft D3D compiler, redistributed
+    under the Windows SDK licence terms.  windeployqt stages all three for Qt's
+    Direct3D 11 backend.
+
+opengl32sw.dll
+    Qt's software OpenGL build, MIT-style licence, shipped with Qt for machines
+    where no hardware OpenGL driver is worth trusting.
+
+PCRE2 10.45  (no file - linked statically into zuuned.exe)
+    BSD-3-Clause.  Copyright (c) 1997-2024 University of Cambridge.
+    https://pcre.org
+    The Windows build gives libzune a POSIX regex.h, and PCRE2's posix front
+    end is what answers it.  Being static it is the one component that is part
+    of zuuned.exe rather than beside it; the BSD terms ask for the
+    acknowledgement in this file, which is this entry.
+
+Fonts  (qml\fonts\)
+    Permanent Marker, by Sora Sagano, Apache-2.0.
+    Specimen Alien, drawn for this project in tools\font-studio.
+What is deliberately NOT in this folder
+---------------------------------------
+
+ffmpeg.exe and ffprobe.exe  (the FFmpeg command-line programs)
+    Not shipped, because they are a separate program with their own download,
+    not part of this application.  Conversion, WMA Lossless and every probe use
+    the FFmpeg libraries above and need nothing extra.  Two features ask for
+    the standalone programs instead: a video thumbnail, and a file that the
+    built-in library cannot open.  When one of them is missing the app says so
+    and points at
+        https://www.gyan.dev/ffmpeg/builds/
+    from Settings, Device, FFmpeg command-line tools, where you can name your
+    own path instead.  Nothing is downloaded for you, and running without them
+    is a supported state.
+
+Windows system binaries
+    Nothing is copied out of C:\Windows\System32.  In particular WMVCore.dll
+    and WMVXEnc.dll, which is how WMA Lossless is encoded on Windows, are part
+    of the operating system; WinUSB, the driver this app needs for the player,
+    is part of the operating system; and icuuc.dll, which Qt6Core names in its
+    import table, has been part of the operating system since Windows 10
+    version 1903.  A deployment tool that copies whatever an import table names
+    picks all of those up; this one refuses to, and says so in its own log.
+
+MTPZ credentials  (.mtpz-data)
+    Reading a player needs no extra file.  Writing to one needs MTPZ
+    credentials, which are not part of this build and are not shipped with it.
+    If you hold credentials you may use, put them in your user folder and
+    restart.
+
+Your own data
+    No music, photo, video, playlist, log, database, settings file or scratch
+    folder from the machine that built this package is inside it, and the
+    packager stops with a failure rather than shipping one.
+
+Questions about this file
+-------------------------
+Open an issue at https://github.com/miemiekurisu/zuuned-modern/issues.  If a
+component here is mislabelled, that is a defect we want to hear about.
+
+Zuuned Modern comes with ABSOLUTELY NO WARRANTY; see LICENSE.  Each third-party
+component above carries its own terms in addition.
+

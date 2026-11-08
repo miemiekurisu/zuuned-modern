@@ -155,6 +155,16 @@ else()
     endif()
     set(PCRE2_INCLUDE_DIR "")
 endif()
+# A shipped Windows image must not carry the folder that built it.  The CodeView
+# debug directory of every MSVC executable records the absolute path of its .pdb,
+# so a build linked inside the workspace hands every tester that workspace path -
+# the one place a machine's own folder names escape a release without anybody
+# committing them.  /PDBALTPATH rewrites the record to the bare file name; the .pdb
+# itself stays where the build put it, so a local debugger still finds it.
+if(MSVC)
+    add_link_options("/PDBALTPATH:%_OBJNAME%")
+endif()
+
 qt_standard_project_setup(REQUIRES 6.8)
 qt_policy(SET QTP0004 NEW)
 include(packaging/CheckQmlImports.cmake)

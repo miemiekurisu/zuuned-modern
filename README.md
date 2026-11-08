@@ -203,15 +203,44 @@ which DLLs the loader actually mapped:
 pwsh -NoProfile -ExecutionPolicy Bypass -File packaging\windows\deploy.ps1 -Out E:\Temp\zuuned-package
 ```
 
-It stages the Qt runtime and its QML modules through `windeployqt`, the FFmpeg tools, `libmpv`,
+It stages the Qt runtime and its QML modules through `windeployqt`, the FFmpeg libraries, `libmpv`,
 SQLite, libusb, LAME and the VC++ runtime, the Chinese catalogue, the driver document and a
 `README-Windows.txt` that says out loud what has and has not been tested; it reads the manifest back
 out of the compiled executable, inventories the import table of every binary in the folder, checks
-that each QML module the sources import arrived, and prints a SHA-256 for the `.zip`. A green run on
-2026-11-08 reported `31 checks, 0 failures` over 1,556 files and a 176.8 MB archive, with 58 modules
-mapped from inside the package, 135 from Windows and none from a development tree. It compiles
-nothing, installs no driver, opens no device handle, signs nothing and builds no installer: the
-artifact is a preview, and it is the build tree's own device evidence, not a new one.
+that each QML module the sources import arrived, and prints a SHA-256 for the `.zip`. Given no switch
+the folder is a **preview**, and one of the things its README says out loud is that it carries the
+`ffmpeg` and `ffprobe` command-line programs.
+
+`-Release` is the beta, and three things change. Those two programs leave, with the two DLLs nothing
+else in the folder imports and 42 MB in total, because FFmpeg is somebody else's GNU GPL program and
+a lightweight client has no business handing out tools nothing inside the package has to run. The
+FFmpeg libraries the application really does load stay, and where a feature genuinely wants the
+command line the app says so and names the page to download it from (`Settings -> Device`).
+`LICENSE`, `COPYING.md` and
+[`packaging/windows/THIRD-PARTY-NOTICES.txt`](packaging/windows/THIRD-PARTY-NOTICES.txt) stop being
+optional, and those notices name every component, say which parts are shared libraries and therefore
+relinkable and which is static, and say where the corresponding source is. And the run audits itself
+for whoever built it: every staged path and every byte of every staged text file, executable and
+`.qm` catalogue is read once as Latin-1 and once looking for UTF-16 code points, against the account
+name, host name, profile folder, build tree and test-library folder, and the entries of the `.zip`
+are read back after writing it. A green `-Release` run on 2026-11-08 reported `40 checks, 0 failures`
+over 1,539 files and a 158.5 MB archive, with 57 modules mapped from inside the package, 136 from
+Windows and one that is this desktop injecting a shell utility into every process. A release also
+refuses a dirty tree, because an artifact that names a revision has to be that revision.
+
+What gets committed obeys the same rule from the other end.
+[`tests/privacy/run.ps1`](tests/privacy/run.ps1) reads `git ls-files` and the bytes behind it, and
+refuses a tracked log, database, settings file, archive, media file or Finder/Explorer metadata; it
+refuses the account, host or profile folder of whoever made the checkout, outside the name the
+repository is published under; and it requires every tracked picture to sit under a prefix named with
+a reason beside it in [`tests/privacy/reviewed-media.txt`](tests/privacy/reviewed-media.txt). Green on
+2026-11-08: `813 tracked files, 9 checks, 0 failures`, and the one real offender it found the same day
+was a tracked `libzune/.DS_Store`. The whole account, including the part no text gate can see, is in
+[`docs/releases/BETA_WINDOWS_2026-11-08.md`](docs/releases/BETA_WINDOWS_2026-11-08.md).
+
+None of it compiles anything, installs a driver, opens a device handle, signs anything or builds an
+installer: the artifact is a preview or a beta, and the device evidence inside it is the build tree's
+own, never a new sighting.
 
 ## What has actually been done on macOS (Apple Silicon)
 
@@ -241,7 +270,9 @@ sessions with the player unplugged between them:
   callback rather than the poll fallback.
 - **Packaging** - [`packaging/macos/deploy.sh`](packaging/macos/deploy.sh) publishes a
   self-contained bundle, a `.dmg` and a zip, and both archives were opened the way a
-  tester opens them. Windows still has no installer.
+  tester opens them. Windows still has no installer, but since 2026-11-08
+  [`packaging/windows/deploy.ps1`](packaging/windows/deploy.ps1) produces the same kind of self-contained
+  folder and zip, described above.
 
 **Not yet proven on macOS**, and not inherited from Windows or Linux either: any deletion
 beyond that one music track, the podcast, audiobook, photo and video transfer categories,

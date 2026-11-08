@@ -217,7 +217,7 @@ The other direction was a right-click on a row of the device browser:
 `Save to Library` wrote 20,992,730 bytes to
 
 ```
-C:\Users\Kurisu Chan\Music\Zuuned Imports\J. S. Bach\Messe in h-Moll, BWV 232\ Gloria- Cum Sancto Spiritu.mp3
+C:\Users\<account>\Music\Zuuned Imports\J. S. Bach\Messe in h-Moll, BWV 232\ Gloria- Cum Sancto Spiritu.mp3
 ```
 
 and the library re-counted itself to `8 source rows, 6 displayed songs` and pulled
@@ -240,7 +240,7 @@ keeping because none of them was expected:
   `docs/WINDOWS_COMPAT_AUDIT.md`.
 
 Settings said the rest without being asked: the Library tab lists both roots the
-way Windows spells them (`C:\Users\Kurisu Chan\Music\Zuuned Imports` and
+way Windows spells them (`C:\Users\<account>\Music\Zuuned Imports` and
 `E:\Temp\testmusic`), and the Health tab reads `Watch folders reachable` `2 of 2`
 and `Zune connected` `ready`.  That display has assertions behind it now rather
 than a screenshot - see the path-spelling bullet under what the software gates
@@ -882,7 +882,7 @@ every support report exported from this port kept the real user name in plain te
 the home path next to it was folded to `~`.  It falls back to `USERNAME` now, and both
 halves of that are measured rather than argued - one sample line, the real `Redactor`, a
 context built the old way and a context built the new way, which come out
-`for user Kurisu Chan root ~` and `for user [user] root ~`.
+`for user <the real account name> root ~` and `for user [user] root ~`.
 
 Neither fix gained a gate.  The redactor's rules belong to `tests/diagnostics` and
 `tests/diagnostics-report`, both bash, and the `USER`-or-`USERNAME` line lives in a file no
@@ -2488,3 +2488,85 @@ not inside the package; a folder assembled here reads the ones this machine keep
 describes. What is still open, and is now the whole of the packaging gap: an installer, code
 signing, SmartScreen history, this folder on a machine that did not build it, and the packaged
 folder with a player attached to it.
+
+## 2026-11-08 - the same folder as a beta, and what a beta refuses to carry
+
+The section above staged everything the build tree had. This one decides what a folder is allowed to
+carry, and says which things it would rather not be asked about later.
+
+**Licence first, because it decided the shape of the folder.** Nothing here forks or rebuilds FFmpeg.
+`-Release` leaves `tools\ffmpeg.exe` and `tools\ffprobe.exe` out of the folder and the application
+points at the download instead - `Settings -> Device`, `FFmpeg command-line tools`, and the fix-it card
+`src/LibraryService.cpp` raises when a file needs a probe the library could not do. Conversion,
+WMA Lossless, the WMV profiles and every metadata probe keep working, because they run through the
+FFmpeg *libraries*, which the application genuinely loads: `transcode/libav_transcode.c` uses `libx264`
+and `libzune/src/util.c` probes media through libav in-process, so an LGPL-only FFmpeg would mean
+re-verifying the whole transcode layer and the device scanner against a configuration chosen for codecs
+a Zune cannot play. Moving the CLI behind a plugin or a delay-load boundary was considered and dropped:
+the libraries are not optional, so splitting the programs out saves nothing that has to ship anyway.
+What is left is the honest route for a GPL-3.0-or-later application - stay on the GPL build, name it,
+and ship `packaging/windows/THIRD-PARTY-NOTICES.txt`, which states that this FFmpeg is configured
+`--enable-gpl` and therefore contains `libx264`, names the static exception (PCRE2, BSD-3), says which
+components are shared libraries and so relinkable, and says where the corresponding source is for the
+application and for the bundled FFmpeg. A release folder treats `LICENSE`, `COPYING.md` and that file as
+required: a missing notice fails the run.
+
+**Measured.** The same build tree, twice:
+
+| | preview | `-Release` |
+| --- | --- | --- |
+| files staged | 1,557 | 1,539 |
+| staged size | 460.4 MB | 418.1 MB |
+| archive | 176.8 MB | 158.5 MB |
+| checks | 30, 0 failures | 40, 0 failures |
+
+The 18 files and 42 MB a release refuses: the two FFmpeg programs (0.7 MB), `avdevice-63.dll` (4.7 MB)
+and `avfilter-12.dll` (35.8 MB), which `dumpbin` shows nothing else in the folder imports, `icuuc.dll`,
+byte-identical to the file already in `C:\Windows\System32` and verified as such by SHA-256, and the
+13 files of `qmltooling\`, the QML debugger. What a release adds is rules, not files. It requires a
+clean tree, because an artifact that prints a revision has to be that revision. It reads every staged
+relative path and every byte of every staged text file, executable and `.qm` catalogue - once as
+Latin-1, once looking for UTF-16 code points - against the account name, host name, profile folder,
+build tree and test-library folder of whoever ran the script, and it reads the entries of the `.zip`
+back after writing it rather than trusting the folder they came from. It then deletes its own smoke
+profile and smoke log, both written outside the stage, and proves that as a check.
+
+**Two real leaks, found by reading the folder instead of describing it.** `icuuc.dll`, which
+`windeployqt` copies because `Qt6Core` imports it and which Windows has shipped since 1903; a release
+lets the loader answer from the operating system. And `D:\workspace\github\zuuned-moden` inside
+`zuuned.exe` and `devicetool.exe`, written there by the linker as the recorded path of each program
+database. That one is fixed at the root, not stripped afterwards: `/PDBALTPATH:%_OBJNAME%` under `MSVC`
+in `CMakeLists.txt`, so the table names the database and not the folder that built it, which also means
+a crash report off someone else's machine resolves symbols without saying where this tree lives. The
+three test strings in `src/library/librarytool.cpp` that used a real account name as an artist name are
+`Test Artist` now, and three quotations of it in this page are redacted. Five DLLs this project does not
+compile - `gcrypt`, `gpg-error`, `libmp3lame`, `libusb-1.0`, `sqlite3` - still record where *their*
+build was made, in their own debug-path and `assert` strings. Nobody here can rewrite them and none of
+the strings names a person, so the pass records them and says so out loud. That sentence is the stated
+limit of the privacy pass, not an oversight.
+
+**The repository half of the rule is `tests/privacy/run.ps1`.** Nine checks over `git ls-files` and the
+bytes of what it lists: no tracked log, database, settings file, archive, binary or Finder/Explorer
+metadata; no tracked path or text byte carrying the account, host, profile folder or commit identity of
+whoever made the checkout, except the name the repository is published under, which is on its own clone
+URL; every tracked picture under a prefix named in `tests/privacy/reviewed-media.txt` with a reason
+beside it; and the count of tracked lines quoting a drive-letter path printed rather than hidden,
+because here those lines are build and device evidence. Green 2026-11-08 at `813 tracked files, 9
+checks, 0 failures`: 90 reviewed pictures, 96 files skipped as binary, 158 drive-letter lines - the counter first printed 38, because its pattern asked for a drive letter at the end of a line and this markdown ends its lines with a carriage return; the figure counts the lines this page itself quotes. It found
+one real tracked offender the first time it ran - `libzune/.DS_Store`, which records which files a
+folder held - now untracked, with `.gitignore` refusing it and `Thumbs.db` beside it. It was tested by
+staging a file that names a real account and watching the gate fail with exit 1. **Known open, and
+deliberately not swept under the prefix list:** 32 screenshots under `docs/readme-screenshots/` were
+captured from the real library on this machine, and pixels show a device name and real music paths.
+Pixels are not readable by this or any text gate; a replacement wants an isolated profile over a
+generated fixture, and the device-page ones want the player unplugged. The git history keeps the
+originals either way, and rewriting it belongs to the owner of the repository.
+
+**No device claim moves, and the artifact is not evidence about a player.** The `-Release` smoke launch
+browsed the attached Pavo read-only, exactly as the preview run and every usability run before it did,
+and `devicetool.exe` inside the package answered `VERDICT=agree` with the player at `os_problem=0`.
+Nothing in this sitting wrote to, deleted from, or read back from a player, and nothing here extends
+the closed list on this page. What remains open is unchanged in kind and now also includes
+this folder opened on a machine that did not build it, an installer, code signing and a SmartScreen
+history. The privacy pass and the licence notice are statements about a folder and about a licence, not
+about a Zune.

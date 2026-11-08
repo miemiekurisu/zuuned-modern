@@ -28,6 +28,14 @@
 # device status page and packaging proves none of it: what is proved here is where bytes
 # come from on one machine, never what a Zune will do with them.
 #
+# -Release changes the deliverable, not the checks.  The two FFmpeg command-line
+# programs and the two DLLs only they need stay out of it, because those programs are a
+# separate download and the app already points at that download from Settings, Device
+# when a feature wants one; nothing byte-identical to something in C:\Windows\System32
+# is carried; the QML debugger stays out; the licence notices stop being optional; and a
+# last pass reads every staged path and every staged byte for the account name, the
+# machine name and the folders this build was made in, and fails the run on a hit.
+#
 # Two PowerShell rules this file obeys on purpose, because breaking them is invisible on
 # a console and fatal to a parser: never start a continuation line with an operator (the
 # parser ends the statement at the newline and then reports a missing parenthesis), and
@@ -41,7 +49,8 @@ param(
     [string]$FfmpegDir = '',
     [string]$VcpkgBin = 'D:\dev\vcpkg\installed\x64-windows\bin',
     [int]$SmokeDeadline = 240,
-    [switch]$NoSmoke
+    [switch]$NoSmoke,
+    [switch]$Release
 )
 $ErrorActionPreference = 'Stop'
 
@@ -185,6 +194,28 @@ if (-not $dumpbin) {
 Pass ('dumpbin ' + (Split-Path -Parent $dumpbin))
 if ($crtDir) { Pass ('app-local CRT from ' + (Split-Path -Parent $crtDir)) } else { Note 'no VC143 CRT redist found' }
 if ($mt) { Pass 'mt.exe for the manifest read-back' } else { Note 'no mt.exe, so the manifest check degrades' }
+
+# A beta artifact has to name the revision it came from, and a tree with uncommitted
+# work in it names a revision that is not the bytes inside the folder.  The build
+# records the same answer in build.json; saying it here, before anything is copied,
+# is what makes "commit first" a check rather than a habit, because dirty is a fact
+# a tester can act on and a preview cannot hide it the way a beta cannot.
+if ($Release) {
+    $revision = ''
+    $porcelain = @()
+    try {
+        $revision = [string](& git -C $root rev-parse --short HEAD 2>$null)
+        $porcelain = @(& git -C $root status --porcelain 2>$null)
+    } catch { }
+    if ($LASTEXITCODE -ne 0) { $revision = '' }
+    if ($revision) { Pass ('beta of revision ' + $revision) } else { Note 'no git revision' }
+    if ($porcelain.Count) {
+        Fail ('the tree this artifact is built from carries ' + $porcelain.Count.ToString() +
+            ' uncommitted change(s): ' + (($porcelain | Select-Object -First 4) -join '; '))
+    } else {
+        Pass 'clean tree, so the revision inside the package is the source of these bytes'
+    }
+}
 # ----------------------------------------------------------------------------- staging
 Step 'stage'
 Remove-Tree $stage
@@ -302,16 +333,23 @@ if ($crtDir) {
 }
 # ----------------------------------------------------------------- the things that are not Qt
 Step 'tools, i18n, driver, licence'
-foreach ($tool in @('ffmpeg.exe', 'ffprobe.exe')) {
-    $src = Join-Path $FfmpegDir $tool
-    if (Test-Path -LiteralPath $src) {
-        Copy-Into $src (Join-Path $stage ('tools\' + $tool))
-    } else {
-        Note ('no ' + $tool + ' under ' + $FfmpegDir)
+if ($Release) {
+    # They are a separate program with their own download, and the application already
+    # answers "which one is missing" with a link to it, so a release folder that shipped
+    # them would be bundling somebody else's product rather than depending on it.
+    Note 'release: ffmpeg.exe and ffprobe.exe are not staged. Settings, Device, FFmpeg command-line tools names the download instead.'
+} else {
+    foreach ($tool in @('ffmpeg.exe', 'ffprobe.exe')) {
+        $src = Join-Path $FfmpegDir $tool
+        if (Test-Path -LiteralPath $src) {
+            Copy-Into $src (Join-Path $stage ('tools\' + $tool))
+        } else {
+            Note ('no ' + $tool + ' under ' + $FfmpegDir)
+        }
     }
-}
-if (Test-Path -LiteralPath (Join-Path $stage 'tools\ffmpeg.exe')) {
-    Pass 'ffmpeg and ffprobe staged, so Settings, Device, FFmpeg command-line tools has an answer on a fresh machine'
+    if (Test-Path -LiteralPath (Join-Path $stage 'tools\ffmpeg.exe')) {
+        Pass 'ffmpeg and ffprobe staged, so Settings, Device, FFmpeg command-line tools has an answer on a fresh machine'
+    }
 }
 # src/main.cpp looks for catalogues in applicationDirPath()/i18n before the resource, so
 # this folder is the one a Chinese tester's package needs without a settings change.
@@ -342,9 +380,31 @@ foreach ($doc in @('DRIVER_INSTALL.md', 'check-driver.ps1')) {
 if (Test-Path -LiteralPath (Join-Path $stage 'driver\DRIVER_INSTALL.md')) {
     Pass 'driver\ carries the WinUSB binding document and the check that reads it back'
 }
-foreach ($legal in @('LICENSE', 'COPYING.md')) {
+foreach ($legal in @('LICENSE', 'COPYING.md', 'packaging\windows\THIRD-PARTY-NOTICES.txt')) {
     $src = Join-Path $root $legal
-    if (Test-Path -LiteralPath $src) { Copy-Into $src (Join-Path $stage $legal) }
+    $leaf = Split-Path -Leaf $legal
+    if (Test-Path -LiteralPath $src) {
+        Copy-Into $src (Join-Path $stage $leaf)
+    } elseif ($Release) {
+        Fail ('no ' + $leaf + ' to stage: a release folder may not ship without its licence notices')
+    } else {
+        Note ('no ' + $leaf + ' to stage')
+    }
+}
+if (Test-Path -LiteralPath (Join-Path $stage 'tools\ffmpeg.exe')) {
+    # The notices file speaks for a release folder.  A preview folder that does carry the
+    # command-line pair says so in its own copy rather than shipping a page that describes
+    # a different folder than the one on the tester's disk.
+    $notices = Join-Path $stage 'THIRD-PARTY-NOTICES.txt'
+    if (Test-Path -LiteralPath $notices) {
+        $add = "`r`nNote on this particular folder`r`n------------------------------`r`n" +
+            'This one is a preview folder, so it does additionally carry' + "`r`n" +
+            '  tools\ffmpeg.exe   tools\ffprobe.exe' + "`r`n" +
+            'from the same FFmpeg build as the libraries above and under the same' + "`r`n" +
+            'GPL-3.0-or-later terms.  A release folder does not carry them.' + "`r`n"
+        [IO.File]::AppendAllText($notices, $add, [Text.Encoding]::ASCII)
+        Pass 'the preview notices say they carry the command-line pair a release folder omits'
+    }
 }
 $buildJson = Join-Path $Build 'generated\zuuned-build.json'
 if (Test-Path -LiteralPath $buildJson) {
@@ -354,66 +414,161 @@ if (Test-Path -LiteralPath $buildJson) {
 } else {
     Note 'no zuuned-build.json, so the package cannot say which revision it was built from'
 }
+# ------------------------------------------------------------- what a release folder drops
+Step 'release trim'
+if (-not $Release) {
+    Note 'preview: the command-line pair and the two DLLs only it needs stay staged'
+} else {
+    # Measured rather than assumed.  dumpbin over every binary in the last package named
+    # avdevice-63.dll and avfilter-12.dll from ffmpeg.exe and ffprobe.exe and from nothing
+    # else in the folder, so once the programs are gone the libraries have no user left.
+    $drop = @(Get-ChildItem -LiteralPath $stage -Filter '*.dll' -File |
+              Where-Object { $_.Name -match '^(avdevice|avfilter)-[0-9]+\.dll$' })
+    foreach ($d in $drop) {
+        $size = [math]::Round($d.Length / 1MB, 1)
+        Remove-Item -LiteralPath $d.FullName -Force
+        if (Test-Path -LiteralPath $d.FullName) {
+            Fail ('could not remove ' + $d.Name)
+        } else {
+            Pass ('dropped ' + $d.Name + ' (' + $size + ' MB): only the command-line programs named it')
+        }
+    }
+    # windeployqt answers an import table by copying whatever it can find, and Qt6Core
+    # names icuuc.dll, which since Windows 10 version 1903 is an operating-system file that
+    # windeployqt happily takes out of System32.  A Windows system binary is not this
+    # project to redistribute, and the machine that receives the folder has its own.
+    $sysDir = Join-Path $env:SystemRoot 'System32'
+    $osCopies = New-Object System.Collections.Generic.List[string]
+    foreach ($f in @(Get-ChildItem -LiteralPath $stage -Recurse -File |
+                     Where-Object { $_.Extension -eq '.dll' -or $_.Extension -eq '.exe' })) {
+        $twin = Join-Path $sysDir $f.Name
+        if (-not (Test-Path -LiteralPath $twin)) { continue }
+        if ((Get-Item -LiteralPath $twin).Length -ne $f.Length) { continue }
+        $h1 = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
+        $h2 = (Get-FileHash -LiteralPath $twin -Algorithm SHA256).Hash
+        if ($h1 -ne $h2) { continue }
+        Remove-Item -LiteralPath $f.FullName -Force
+        if (Test-Path -LiteralPath $f.FullName) {
+            Fail ('could not remove the operating-system copy of ' + $f.Name)
+        } else {
+            $osCopies.Add($f.Name)
+        }
+    }
+    if ($osCopies.Count) {
+        Pass ('refused to carry ' + $osCopies.Count + ' file(s) identical to a Windows system file: ' +
+            ($osCopies -join ' '))
+    } else {
+        Pass 'nothing in the package is a copy of a Windows system binary'
+    }
+    # The QML debugger listens for a client.  Nothing a stranger downloads needs it and its
+    # presence is a capability rather than a feature, so it stays out of a release.
+    $dbg = Join-Path $stage 'qmltooling'
+    if (Test-Path -LiteralPath $dbg) {
+        Remove-Tree $dbg
+        if (Test-Path -LiteralPath $dbg) { Fail 'the QML debugger folder is still in the package' }
+        else { Pass 'the QML debugger is out of the release folder' }
+    } else {
+        Pass 'no QML debugger folder had been staged'
+    }
+}
 # ----------------------------------------------------------------------- the words to read
 Step 'README-Windows.txt'
-$readme = @(
-    'Zuuned Modern VERSION - Windows preview build',
-    '=============================================',
-    '',
-    'What this is',
-    '   A portable folder for a music library and a Microsoft Zune.  Nothing installs,',
-    '   nothing is registered, no service is left behind: delete the folder and it is gone.',
-    '   It is a preview and not a release - there is no installer and no code signing, so',
-    '   Windows will warn before it runs, and Settings, General, Open config folder is the',
-    '   only place it keeps anything you would want to keep.',
-    '',
-    '1. Bind the player to WinUSB, once per player',
-    '   Windows cannot see a Zune at all until something has bound a driver to it, so the',
-    '   player will not appear in this app, or in libusb, until that is done.  Read',
-    '     driver\DRIVER_INSTALL.md',
-    '   and check what Windows answers with',
-    '     driver\check-driver.ps1        or       devicetool.exe',
-    '   devicetool prints agree, blocked, absent or contradictory.  blocked means the',
-    '   player is in the machine with no usable driver and names the device id to pick.',
-    '   This package does not install a driver and never tries to.',
-    '',
-    '2. Run it',
-    '   Double-click zuuned.exe, or start it from a terminal to keep its output:',
-    '     zuuned.exe',
-    '   zuuned.exe --version prints the build, including the source revision it came from.',
-    '   The interface starts in English; Settings, General, Language switches to Chinese.',
-    '   Add your music folders when it asks, or from Settings, Music, Watch folders.',
-    '',
-    '3. Optional: the FFmpeg command line',
-    '   Conversion, WMA Lossless and every probe use the FFmpeg library inside this',
-    '   package and need nothing extra.  Two things ask for the ffmpeg and ffprobe',
-    '   programs instead: a video thumbnail, and a file the built-in library cannot open.',
-    '   The tools folder here holds both from the same build as the DLLs, so Settings,',
-    '   Device, FFmpeg command-line tools can point at it and nothing has to be downloaded.',
-    '   Leaving it alone is fine: the app then says which one is missing rather than',
-    '   failing quietly.',
-    '',
-    '4. If you want to write to a player: authentication',
-    '   Reading a player needs no extra file.  Writing to one needs MTPZ credentials, and',
-    '   this package deliberately does not carry them - they belong to the user and are',
-    '   not part of the build.  Without them zuuned connects, browses and reads the',
-    '   library, and reports that MTPZ authentication failed before any transfer starts.',
-    '   If you hold credentials you may use, put a file named .mtpz-data in your user',
-    '   folder, the same file the Linux client reads from your home directory, and restart.',
-    '',
-    '5. What has actually been tested on Windows',
-    '   By hand, against one Pavo (Zune HD): the WinUSB binding, unplugging and replugging,',
-    '   reading the music library, authenticating, sending music and reading a track back',
-    '   byte for byte, downloading a track from the player, deleting a track, and one WMA',
-    '   Lossless encode that played on the player and came back with the same samples.',
-    '   Not tested on Windows: podcasts and audiobooks, sending or reading photos and',
-    '   video, deleting photos, video or playlists, every Zune model except that one Zune',
-    '   HD, hearing playback through this app on a PC - it has only ever been run muted',
-    '   inside a test harness - and this package on a machine other than the one that',
-    '   built it.  If you meet one of those, say so: docs\WINDOWS_PORT.md is the list.',
-    '')
+# One text for both kinds of folder, because the two differ in three sentences and nobody
+# reading a README knows which flag made theirs.  A release says plainly what it left out
+# and why; a preview says where the extra tools sit.  Nothing here is a placeholder the
+# writer has to remember to substitute: the version is in the string already.
+$flavour = 'preview'
+if ($Release) { $flavour = 'beta' }
+$readmeTitle = 'Zuuned Modern ' + $version + ' - Windows ' + $flavour + ' build'
+$readme = New-Object System.Collections.Generic.List[string]
+$readme.Add($readmeTitle)
+$readme.Add([string]::new('=', $readmeTitle.Length))
+$readme.Add('')
+$readme.Add('What this is')
+$readme.Add('   A portable folder for a music library and a Microsoft Zune.  Nothing installs,')
+$readme.Add('   nothing is registered, no service is left behind: delete the folder and it is')
+$readme.Add('   gone.  It is a ' + $flavour + ' build and not a signed product - there is no')
+$readme.Add('   installer and no code signing, so Windows will warn before it runs, and')
+$readme.Add('   Settings, General, Open config folder is the only place it keeps anything of')
+$readme.Add('   yours that you would want to keep.')
+if ($Release) {
+    $readme.Add('   This folder carries the application and the libraries it needs in order to')
+    $readme.Add('   run, and deliberately nothing else: no FFmpeg command-line programs, no')
+    $readme.Add('   copy of a Windows system file, and none of the music, photographs, video,')
+    $readme.Add('   logs, databases or scratch files belonging to whoever built it.')
+    $readme.Add('   THIRD-PARTY-NOTICES.txt names every part of it and the licence it arrived')
+    $readme.Add('   under, including where to read the source for the parts the GPL requires.')
+}
+$readme.Add('')
+$readme.Add('1. Bind the player to WinUSB, once per player')
+$readme.Add('   Windows cannot see a Zune at all until something has bound a driver to it, so')
+$readme.Add('   the player will not appear in this app, or in libusb, until that is done.  Read')
+$readme.Add('     driver\DRIVER_INSTALL.md')
+$readme.Add('   and check what Windows answers with')
+$readme.Add('     driver\check-driver.ps1        or       devicetool.exe')
+$readme.Add('   devicetool prints agree, blocked, absent or contradictory.  blocked means the')
+$readme.Add('   player is in the machine with no usable driver and names the device id to pick.')
+$readme.Add('   This package does not install a driver and never tries to.')
+$readme.Add('')
+$readme.Add('2. Run it')
+$readme.Add('   Double-click zuuned.exe, or start it from a terminal to keep its output:')
+$readme.Add('     zuuned.exe')
+$readme.Add('   zuuned.exe --version prints the build, including the source revision it came')
+$readme.Add('   from.  The interface starts in English; Settings, General, Language switches')
+$readme.Add('   to Chinese.  Add your music folders when it asks, or from Settings, Music,')
+$readme.Add('   Watch folders.')
+$readme.Add('')
+$readme.Add('3. Optional: the FFmpeg command line')
+$readme.Add('   Conversion, WMA Lossless and every probe use the FFmpeg library inside this')
+$readme.Add('   package and need nothing extra.  Two things ask for the ffmpeg and ffprobe')
+$readme.Add('   programs instead: a video thumbnail, and a file the built-in library cannot')
+$readme.Add('   open.')
+if ($Release) {
+    $readme.Add('   This folder deliberately does not carry those two programs.  They belong to')
+    $readme.Add('   the FFmpeg project and are distributed by its own builds under the GNU GPL,')
+    $readme.Add('   and nothing inside this folder has to run either of them.  Settings, Device,')
+    $readme.Add('   FFmpeg command-line tools names the page to download them from and says which')
+    $readme.Add('   one is wanted when a feature asks for one.  Leaving it alone is fine:')
+    $readme.Add('   conversion and every probe keep working, a video thumbnail simply stays')
+    $readme.Add('   blank and the app says why rather than failing quietly.')
+} else {
+    $readme.Add('   The tools folder here holds both from the same build as the DLLs, so')
+    $readme.Add('   Settings, Device, FFmpeg command-line tools can point at it and nothing has')
+    $readme.Add('   to be downloaded.  Leaving it alone is fine: the app then says which one is')
+    $readme.Add('   missing rather than failing quietly.')
+}
+$readme.Add('')
+$readme.Add('4. If you want to write to a player: authentication')
+$readme.Add('   Reading a player needs no extra file.  Writing to one needs MTPZ credentials,')
+$readme.Add('   and this package deliberately does not carry them - they belong to the user and')
+$readme.Add('   are not part of the build.  Without them zuuned connects, browses and reads the')
+$readme.Add('   library, and reports that MTPZ authentication failed before any transfer')
+$readme.Add('   starts.  If you hold credentials you may use, put a file named .mtpz-data in')
+$readme.Add('   your user folder, the same file the Linux client reads from your home')
+$readme.Add('   directory, and restart.')
+$readme.Add('')
+$readme.Add('5. What has actually been tested on Windows')
+$readme.Add('   By hand, against one Pavo (Zune HD): the WinUSB binding, unplugging and')
+$readme.Add('   replugging, reading the music library, authenticating, sending music and')
+$readme.Add('   reading a track back byte for byte, downloading a track from the player,')
+$readme.Add('   deleting a track, and one WMA Lossless encode that played on the player and')
+$readme.Add('   came back with the same samples.')
+$readme.Add('   Not tested on Windows: podcasts and audiobooks, sending or reading photos and')
+$readme.Add('   video, deleting photos, video or playlists, every Zune model except that one')
+$readme.Add('   Zune HD, hearing playback through this app on a PC - it has only ever been run')
+$readme.Add('   muted inside a test harness - and this package on a machine other than the one')
+$readme.Add('   that built it.  If you meet one of those, say so: docs\WINDOWS_PORT.md is the')
+$readme.Add('   list.')
+if ($Release) {
+    $readme.Add('')
+    $readme.Add('6. Privacy')
+    $readme.Add('   Nothing in this folder is somebody else''s library, camera roll, playlist or')
+    $readme.Add('   log file, and no file in it carries the name of the account or the machine')
+    $readme.Add('   that produced it.  That is a check the packager runs, not a promise: run')
+    $readme.Add('   packaging\windows\deploy.ps1 -Release yourself from a build tree to make one.')
+}
 [IO.File]::WriteAllText((Join-Path $stage 'README-Windows.txt'),
-    (($readme -join "`r`n").Replace('VERSION', $version)), [Text.UTF8Encoding]::new($true))
+    ($readme -join [Environment]::NewLine), [Text.UTF8Encoding]::new($true))
 if ((Read-SharedText (Join-Path $stage 'README-Windows.txt')) -match 'WinUSB') {
     Pass 'README-Windows.txt states what has and has not been tested'
 } else {
@@ -735,6 +890,231 @@ if ($NoSmoke) {
         }
     }
 }
+
+# --------------------------------------------------------------------- the privacy pass
+Step 'privacy'
+# What sits in -Out was built on a working machine, and a working machine has an account
+# name, a host name, a folder layout, somebody's music, somebody's photographs and a log
+# file.  A release folder goes to strangers, so it is read the way a stranger would read
+# it - every staged path, every staged byte, both encodings a name can arrive in - rather
+# than trusted because the copy list looked short.
+#
+# Two kinds of token, deliberately treated differently.  An account or host name is a
+# person: no file in a package may carry one, in either mode.  A folder this build
+# happened to be made in is a fact about one machine.  For an image this project linked
+# that is a defect with a known fix (/PDBALTPATH: in CMakeLists.txt is that fix), so it
+# fails a release, and for a DLL somebody else built it is baked into bytes this project
+# cannot rewrite and names nobody, so it is counted and said out loud instead of failed on.
+
+function Find-Needles {
+    # A binary is decoded as Latin-1 so that every byte maps to exactly one character and
+    # a name cannot hide in a translation between encodings.  An ASCII needle then matches
+    # its own UTF-16LE form by following every character with a zero byte, which is worth
+    # doing because wide strings are how a Windows path sits in a .rdata section.  Each
+    # window carries the tail of the previous one: a string straddling an edge is the only
+    # way a chunked read produces a false clean, so it is the one thing not to optimise.
+    param([string]$Path, [string[]]$Ascii, [string[]]$Wide)
+    $probe = New-Object System.Collections.Generic.List[string]
+    $kind = New-Object System.Collections.Generic.List[string]
+    foreach ($n in @($Ascii)) { if ($n) { $probe.Add($n); $kind.Add($n) } }
+    foreach ($n in @($Wide)) {
+        if (-not $n) { continue }
+        $probe.Add($n); $kind.Add($n)
+        $w = ''
+        foreach ($ch in $n.ToCharArray()) { $w = $w + $ch + [char]0 }
+        $probe.Add($w); $kind.Add($n)
+    }
+    $hits = New-Object System.Collections.Generic.List[string]
+    if ($probe.Count -eq 0) { return $hits }
+    $fs = $null
+    try {
+        $fs = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read,
+                              [IO.FileShare]::ReadWrite)
+        $tail = ''
+        while ($fs.Length -gt $fs.Position) {
+            $len = [int][math]::Min(4194304, $fs.Length - $fs.Position)
+            $buf = New-Object byte[] $len
+            [void]$fs.Read($buf, 0, $len)
+            $s = $tail + $latin.GetString($buf)
+            for ($i = 0; $i -lt $probe.Count; $i++) {
+                if ($s.IndexOf($probe[$i], [StringComparison]::Ordinal) -ge 0) {
+                    if (-not $hits.Contains($kind[$i])) { $hits.Add($kind[$i]) }
+                }
+            }
+            $tail = $s.Substring([math]::Max(0, $s.Length - 128))
+        }
+    } catch {
+        return $hits
+    } finally {
+        if ($fs) { $fs.Dispose() }
+    }
+    return $hits
+}
+
+$latin = [Text.Encoding]::GetEncoding(28591)
+# Shorter than four characters and the token stops being a name: a three-letter account
+# would be found in half of Qt.  The path test below uses every token regardless of
+# length, because a path in a file name is never an accident.
+$who = New-Object System.Collections.Generic.List[string]
+foreach ($t in @($env:USERNAME, $env:COMPUTERNAME, (Split-Path -Leaf $env:USERPROFILE),
+                 'testmusic', 'smoke-profile')) {
+    if ($t -and $t.Length -ge 4 -and -not $who.Contains($t)) { $who.Add($t) }
+}
+$here = New-Object System.Collections.Generic.List[string]
+foreach ($t in @($root, $Build, $QtDir, $DepsDir, $VcpkgBin, $FfmpegDir, $Out, $smokeLog)) {
+    if (-not $t) { continue }
+    $v = $t.TrimEnd('\')
+    if ($v.Length -ge 4 -and -not $here.Contains($v)) { $here.Add($v) }
+}
+$ownNames = New-Object System.Collections.Generic.List[string]
+foreach ($e in @(Get-ChildItem -LiteralPath $Build -Filter '*.exe' -File)) {
+    $ownNames.Add($e.Name.ToLowerInvariant())
+}
+# A third-party image does not name the folder this script was handed; it names wherever
+# its own build ran, several levels above the file that ended up here - vcpkg's sqlite
+# records D:\dev\vcpkg\buildtrees\sqlite3\x64-windows-rel\sqlite3.pdb, not the bin folder
+# it was copied out of.  So the ancestors of every dev folder are the probes that actually
+# answer, and they are reported apart for the reason two paragraphs above gives.
+$ancestors = New-Object System.Collections.Generic.List[string]
+foreach ($t in @($here)) {
+    $p = $t
+    for ($up = 0; $up -lt 2; $up++) {
+        $p = Split-Path -Parent $p
+        if (-not $p -or $p.Length -lt 5) { break }
+        if (-not $ancestors.Contains($p)) { $ancestors.Add($p) }
+    }
+}
+$stagedFiles = @(Get-ChildItem -LiteralPath $stage -Recurse -File -Force)
+$textExts = @('.txt', '.md', '.json', '.conf', '.xml', '.ps1', '.qml', '.ts', '.ini', '.csv',
+              '.html', '.py', '.sh', '.c', '.h', '.qrc', '.pro')
+$binExts = @('.exe', '.dll', '.qm')
+# No log, no database, no settings file, no debug symbols and above all no media: the
+# point of this list is that a tester's download cannot contain another person's library,
+# camera roll, playlist or session.  PNG stays out of it - Qt's own icons and QML imports
+# are PNG, eight hundred of them in a healthy package, and this gate bans kinds, not
+# extensions it has not counted.
+$junkExts = @('.log', '.etl', '.trc', '.db', '.db-wal', '.db-shm', '.sqlite', '.sqlite3',
+              '.ini', '.env', '.pdb', '.bak', '.tmp', '.part', '.mtpz-data',
+              '.mp3', '.m4a', '.aac', '.wma', '.wav', '.flac', '.ogg', '.opus', '.mka',
+              '.mp4', '.m4v', '.mov', '.wmv', '.avi', '.mkv', '.asf', '.m3u', '.m3u8',
+              '.pls', '.jpg', '.jpeg', '.heic', '.gif', '.bmp', '.tif', '.tiff', '.webp')
+
+$junk = New-Object System.Collections.Generic.List[string]
+foreach ($f in $stagedFiles) {
+    if ($junkExts -contains $f.Extension.ToLowerInvariant()) {
+        $junk.Add($f.FullName.Substring($stage.Length + 1))
+    }
+}
+if ($junk.Count) {
+    Fail ($junk.Count.ToString() + ' staged file(s) are a log, database, settings file, ' +
+        'debug symbol or a piece of somebody''s media: ' + (($junk | Select-Object -First 8) -join ' '))
+} else {
+    Pass ($stagedFiles.Count.ToString() + ' staged files, none of them a log, database, ' +
+        'ini, pdb, playlist, audio, image or video file')
+}
+$auth = @(Get-ChildItem -LiteralPath $stage -Recurse -Force -File |
+          Where-Object { $_.Name -eq '.mtpz-data' })
+if ($auth.Count) {
+    Fail 'the package carries MTPZ credentials, which are never part of a build'
+} else {
+    Pass 'no MTPZ credentials in the package'
+}
+
+$nameLeaks = New-Object System.Collections.Generic.List[string]
+foreach ($f in $stagedFiles) {
+    $rel = $f.FullName.Substring($stage.Length + 1)
+    foreach ($t in (@($who) + @($here))) {
+        if ($rel.IndexOf($t, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            $nameLeaks.Add($t + ' in ' + $rel)
+        }
+    }
+}
+if ($nameLeaks.Count) {
+    Fail (($nameLeaks.Count.ToString()) + ' staged file name(s) name this machine: ' +
+        (($nameLeaks | Select-Object -First 6) -join '; '))
+} else {
+    Pass ('no staged path names this account, host, build tree or test folder, across ' +
+        $stagedFiles.Count.ToString() + ' files')
+}
+
+$personHits = New-Object System.Collections.Generic.List[string]
+$ownPathHits = New-Object System.Collections.Generic.List[string]
+$foreignPathHits = New-Object System.Collections.Generic.List[string]
+$scanned = 0
+foreach ($f in $stagedFiles) {
+    $ext = $f.Extension.ToLowerInvariant()
+    $isText = ($textExts -contains $ext)
+    $isBin = ($binExts -contains $ext)
+    if (-not ($isText -or $isBin)) { continue }
+    $scanned++
+    $rel = $f.FullName.Substring($stage.Length + 1)
+    $ascii = @()
+    $wide = @()
+    if ($isText) {
+        $ascii = @($here)
+        $wide = @($who)
+    } elseif ($ownNames.Contains($f.Name.ToLowerInvariant())) {
+        $ascii = @($here)
+        $wide = @($who)
+    } else {
+        $ascii = @($ancestors)
+        $wide = @($who)
+    }
+    $hits = @(Find-Needles -Path $f.FullName -Ascii $ascii -Wide $wide)
+    if ($hits.Count -eq 0) { continue }
+    foreach ($h in $hits) {
+        if ($who.Contains($h)) {
+            if (-not $personHits.Contains($h)) { $personHits.Add($h) }
+        } elseif ($isText -or $ownNames.Contains($f.Name.ToLowerInvariant())) {
+            $ownPathHits.Add($h + ' in ' + $rel)
+        } else {
+            $foreignPathHits.Add($h + ' in ' + $rel)
+        }
+    }
+}
+if ($personHits.Count) {
+    Fail ('a staged file carries this account or machine: ' + ($personHits -join ' '))
+} else {
+    Pass ('no account name, host name or test-library name in any byte of the ' +
+        $scanned.ToString() + ' scanned files, in ASCII or UTF-16')
+}
+if ($ownPathHits.Count) {
+    if ($Release) {
+        Fail ('a linked executable names the folder that built it: ' +
+            (($ownPathHits | Select-Object -First 4) -join '; '))
+    } else {
+        Note ('a linked executable names the folder that built it, allowed in a preview: ' +
+            (($ownPathHits | Select-Object -First 4) -join '; '))
+    }
+} else {
+    Pass 'nothing this project linked names the folder that built it'
+}
+if ($foreignPathHits.Count) {
+    Note ($foreignPathHits.Count.ToString() + ' hit(s) for a build folder inside third-party ' +
+        'binaries this project does not compile and cannot rewrite (a vcpkg or FFmpeg build ' +
+        'records where it was made); none of them names a person: ' +
+        (($foreignPathHits | Select-Object -First 4) -join '; '))
+} else {
+    Pass 'no third-party binary in the package names a folder on this machine either'
+}
+
+if ($Release) {
+    # A release leaves nothing of itself behind on the machine that made it either.  The
+    # smoke profile is a real SQLite library database plus a session log and the smoke log
+    # is console output; all three sit outside the staged folder so none of them can reach
+    # the archive, and all three are exactly the kind of file this pass exists to keep off
+    # a disk that other people see.
+    $left = 0
+    if (Test-Path -LiteralPath $profile) { $left++ }
+    if (Test-Path -LiteralPath $smokeLog) { $left++ }
+    Remove-Tree $profile
+    Remove-Item -LiteralPath $smokeLog -Force -ErrorAction SilentlyContinue
+    if ($left -gt 0) {
+        Pass ('the smoke profile and smoke log were written outside the package and are deleted')
+    } else {
+        Pass 'nothing was left behind by a launch'
+    }
+}
 # ----------------------------------------------------------------------- the archive
 Step 'archive'
 $stagedFiles = @(Get-ChildItem -LiteralPath $stage -Recurse -File -Force)
@@ -786,6 +1166,23 @@ if (-not $tar) {
             } else {
                 Pass ($zipped.Count.ToString() + ' entries, every one relative and under ' + $name + '/')
             }
+            # The archive is what leaves this machine, so the name test runs against its
+            # entries as well, not only against the folder they were packed from: a path
+            # that survives a tar -C and a slash conversion is still a path.
+            $named = @($zipped | Where-Object {
+                    $hit = $false
+                    foreach ($t in (@($who) + @($here))) {
+                        if ($_.FullName.IndexOf($t, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                            $hit = $true
+                        }
+                    }
+                    $hit
+                })
+            if ($named.Count) {
+                Fail ($named.Count.ToString() + ' entries in the archive name this account, host or ' +
+                    'build tree: ' + ((($named | ForEach-Object { $_.FullName }) |
+                      Select-Object -First 4) -join '; '))
+            }
         } finally { $archive.Dispose() }
     }
 }
@@ -798,24 +1195,40 @@ if (Test-Path -LiteralPath $zip) {
 }
 # ---------------------------------------------------------------------------- summary
 Step 'summary'
-$scope = @(
-    'What this run does prove: the staged folder launches on its own with a PATH that',
-    'names nothing but itself and Windows, paints a page, loads its modules from inside',
-    'the package, and closes politely.',
-    'What it does not prove, in short - README-Windows.txt and docs\WINDOWS_PORT.md',
-    'carry the long form:',
-    '  - device evidence is one Pavo (Zune HD), by hand, on one machine: the WinUSB',
-    '    binding, hotplug, the music library read, authentication, one send with byte',
-    '    readback, one download, one deletion, one WMA Lossless round trip that played',
-    '    on the player;',
-    '  - nobody has heard audio out of this application on a PC; every automated run',
-    '    asks for a null audio output;',
-    '  - podcasts, audiobooks, photos and video on a player, every model but that one',
-    '    Zune HD, and this package on a machine that did not build it, are all unproven',
-    '    on Windows;',
-    '  - no installer, no code signing, no SmartScreen history, and no MTPZ credentials',
-    '    inside it.  This is a preview build, not a signed release.'
-)
+$scope = New-Object System.Collections.Generic.List[string]
+if ($NoSmoke) {
+    $scope.Add('What this run does prove: the folder was assembled and audited from the')
+    $scope.Add('build tree, and nothing was launched, so no run of this shape proves where')
+    $scope.Add('a DLL resolves on a machine that did not build it.')
+} else {
+    $scope.Add('What this run does prove: the staged folder launches on its own with a PATH')
+    $scope.Add('that names nothing but itself and Windows, paints a page, loads its modules')
+    $scope.Add('from inside the package, and closes politely.')
+}
+$scope.Add('What it does not prove, in short - README-Windows.txt and docs\WINDOWS_PORT.md')
+$scope.Add('carry the long form:')
+$scope.Add('  - device evidence is one Pavo (Zune HD), by hand, on one machine: the WinUSB')
+$scope.Add('    binding, hotplug, the music library read, authentication, one send with byte')
+$scope.Add('    readback, one download, one deletion, one WMA Lossless round trip that played')
+$scope.Add('    on the player;')
+$scope.Add('  - nobody has heard audio out of this application on a PC; every automated run')
+$scope.Add('    asks for a null audio output;')
+$scope.Add('  - podcasts, audiobooks, photos and video on a player, every model but that one')
+$scope.Add('    Zune HD, and this package on a machine that did not build it, are all')
+$scope.Add('    unproven on Windows;')
+$scope.Add('  - no installer, no code signing, no SmartScreen history, and no MTPZ')
+$scope.Add('    credentials inside it.')
+if ($Release) {
+    $scope.Add('  - what the release pass adds is about the folder and nothing else: no FFmpeg')
+    $scope.Add('    command-line program, no copy of a Windows system binary, no QML debugger,')
+    $scope.Add('    and no account name, host name, build path, log, database, music, photo or')
+    $scope.Add('    video of whoever built it is inside it.  It says nothing new about a Zune.')
+    $scope.Add('  - this is a beta build of a GNU GPL program that is not signed, not')
+    $scope.Add('    installed, and not a finished product.')
+} else {
+    $scope.Add('  - this is a preview build, not a signed release, and unlike -Release it does')
+    $scope.Add('    carry the FFmpeg command-line programs and the two DLLs only they need.')
+}
 Write-Host ''
 Write-Host ('  package     ' + $stage)
 Write-Host ('  staged      ' + $fileCount.ToString() + ' files, ' + $stageBytes + ' MB')
@@ -833,5 +1246,11 @@ if ($failures -gt 0) {
     Write-Host ('  RESULT: not a deliverable - ' + $failures + ' failed check(s)')
     exit 1
 }
-Write-Host '  RESULT: preview Windows artifact produced'
+if ($Release) {
+    Write-Host '  RESULT: beta Windows artifact produced'
+} else {
+    Write-Host '  RESULT: preview Windows artifact produced'
+}
 exit 0
+
+

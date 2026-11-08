@@ -2172,3 +2172,55 @@ a Pavo was attached throughout, the smoke launch browsed it read-only as every u
 does, the packaged `devicetool.exe` answered `VERDICT=agree`, MTPZ credentials are deliberately
 outside the package (`%USERPROFILE%\.mtpz-data`), and there is still no installer, no signing and
 no capture of this folder on a machine that did not build it or with a player attached.
+
+**2026-11-08 the beta artifact, the licence it may carry, and the two leaks a folder had about its
+builder:** "can we publish a beta" was two questions before it was a command. Whether the folder has a
+right to carry FFmpeg, and whether it carries anything about whoever built it. `deploy.ps1 -Release` is
+the answer to the first by subtraction: `tools\ffmpeg.exe`, `tools\ffprobe.exe`, `avdevice-63.dll`,
+`avfilter-12.dll` (the only importer of either, per `dumpbin`), `icuuc.dll` and the 13 files of
+`qmltooling\` - 18 files and 42 MB, 1,539 files and 418.1 MB staged instead of 1,557 and 460.4, a
+158.5 MB archive instead of 176.8, 40 checks instead of 30, 0 failures. The FFmpeg **libraries** stay,
+because the application loads them: `transcode/libav_transcode.c` uses `libx264` and
+`libzune/src/util.c` probes through libav in-process, so an LGPL-only FFmpeg is a codec-pipeline rewrite
+judged against codecs a Zune cannot play, and a delay-load or plugin boundary saves nothing the app does
+not already need - so no, this project does not fork FFmpeg, it is a lightweight client. The chosen
+route is the one a GPL-3.0-or-later application can honestly take: stay on the GPL build, name it in
+`packaging/windows/THIRD-PARTY-NOTICES.txt` (`--enable-gpl`, therefore `libx264`; PCRE2 the static
+exception; shared libraries relinkable; where the corresponding source is for the app and for the
+bundled FFmpeg), make the three notices required rather than optional, and let the product tell the user
+to download the command line when a feature wants it (`Settings -> Device`) instead of handing out
+somebody else's program. A release also refuses a dirty tree, because `zuuned.exe --version` prints a
+revision and the bytes have to be that revision. The second question is a pass over the folder: every
+staged relative path and every byte of every staged text file, executable and `.qm` catalogue, read once
+as Latin-1 and once for UTF-16 code points, against the account name, host name, profile folder, build
+tree and test library, and the `.zip` entries read back after writing. It found two real leaks in a
+folder already shipped as a preview - `icuuc.dll`, byte-identical to `C:\Windows\System32\icuuc.dll`,
+which `windeployqt` copies because `Qt6Core` imports it - and `D:\workspace\github\zuuned-moden` inside
+`zuuned.exe` and `devicetool.exe`, which is not a string the source contains but the CODEVIEW record of
+where each program database was. That is fixed at the root with `/PDBALTPATH:%_OBJNAME%` under `MSVC` in
+`CMakeLists.txt`, so the table names the database and not the folder, which is also the right fix for a
+crash report from a tester's machine. Three `src/library/librarytool.cpp` test strings used a real
+account name as an artist name and are `Test Artist`; three quotations in `docs/WINDOWS_PORT.md` are
+redacted. Five DLLs this project does not compile (`gcrypt`, `gpg-error`, `libmp3lame`, `libusb-1.0`,
+`sqlite3`) still record where their own build happened; they are recorded as the pass's stated limit,
+because no string there names a person and nobody here can rewrite them. `tests/privacy/run.ps1` plus
+`tests/privacy/reviewed-media.txt` is the same rule aimed at what gets committed - 9 checks over
+`git ls-files`: no tracked log, database, settings file, archive, binary or Finder/Explorer metadata, no
+identity string in a tracked path or text byte outside the published repository name, every tracked
+picture under a reviewed prefix with a reason beside it, and the count of drive-letter lines printed
+rather than hidden. Green: `813 tracked files, 9 checks, 0 failures`, and that counter was wrong when first written: its pattern asked for a drive letter at the end of a line while these documents end their lines with a carriage return, so it reported 38 where the honest count is 158. A gate whose numbers are quietly too small is worse than no gate. It caught a tracked
+`libzune/.DS_Store` immediately, now untracked, with `.DS_Store` and `Thumbs.db` added to `.gitignore`,
+and it was tested the only way that means anything - a staged file naming a real account failed it with
+exit 1. **Known open rather than quietly allowed:** 32 screenshots under `docs/readme-screenshots/` came
+from the real library on this machine and the pixels show a device name and real music paths; no text
+gate reaches pixels, a replacement wants an isolated profile over a generated fixture with the player
+unplugged, and rewriting history belongs to the owner of the repository. Three tool facts from the same
+sitting: `-like` treats `[` and `]` as a character class, so match a code line with `.Contains()` or
+`Select-String -SimpleMatch`; a `[IO.Path]::Xxx(...)` call used as an argument inside a PowerShell
+command has to be wrapped in `$( )` or the command argument is the literal text; and most tracked
+documents here are CRLF in the working tree, so append rather than rewrite a file whole. Full rebuild
+before any of it was measured: `cmake --build build --clean-first`, 341/341, `EXITCODE=0`. **No device
+claim moved:** a Pavo (Zune HD) was attached for the release smoke run and was browsed read-only, as
+every launch here has been; nothing was written, deleted or read back, nobody has heard audio out of
+this application, and there is still no installer, no signing, and no capture of this folder on a machine
+that did not build it.

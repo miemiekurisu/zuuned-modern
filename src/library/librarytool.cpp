@@ -1937,7 +1937,7 @@ static int runCoverSelfTest() {
         catalogue.bodies.insert(QString::fromLatin1(country), body(QJsonArray{
             disc(QStringLiteral("Someone Else"), QStringLiteral("Greatest"), 600,
                  QStringLiteral("1999-01-01"))}));
-    result = client.resolveStoreAlbumArtwork(QStringLiteral("Kurisu Chan"), QStringLiteral("Greatest"));
+    result = client.resolveStoreAlbumArtwork(QStringLiteral("Test Artist"), QStringLiteral("Greatest"));
     eq("unmatched: a store full of near misses is a match to make, not a guess",
        result.status, QStringLiteral("needsMatch"));
     check(result.imageUrl.isEmpty() && result.identity.isEmpty(),
@@ -1948,7 +1948,7 @@ static int runCoverSelfTest() {
     reset();
 
     /* ---- nothing anywhere, which is terminal rather than retryable ---- */
-    result = client.resolveStoreAlbumArtwork(QStringLiteral("Kurisu Chan"), QStringLiteral("Unobtainium"));
+    result = client.resolveStoreAlbumArtwork(QStringLiteral("Test Artist"), QStringLiteral("Unobtainium"));
     eq("absent: an empty answer from every catalogue is no artwork", result.status,
        QStringLiteral("noArtwork"));
     check(!result.reason.isEmpty(), "absent: the card can say why it stayed blank");
@@ -1956,7 +1956,7 @@ static int runCoverSelfTest() {
 
     /* ---- the store itself is unreachable ---- */
     catalogue.failing = true;
-    result = client.resolveStoreAlbumArtwork(QStringLiteral("Kurisu Chan"), QStringLiteral("Offline"));
+    result = client.resolveStoreAlbumArtwork(QStringLiteral("Test Artist"), QStringLiteral("Offline"));
     eq("outage: a store that never answers is not an album with no cover", result.status,
        QStringLiteral("providerUnavailable"));
     check(!result.reason.isEmpty(), "outage: the reason names the provider, not the album");

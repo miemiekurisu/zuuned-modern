@@ -210,29 +210,69 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File packaging\windows\deploy.ps1 -Out 
 `-Out` defaults to `_tmp`, gitignored; give it a drive with 2 GB free, because a
 staged folder and its zip exist at the same time. It stages `zuuned.exe`,
 `devicetool.exe` and the DLLs beside them, runs `windeployqt`, makes the VC++
-runtime app-local, and adds the FFmpeg command-line tools, the Chinese catalogue,
-`DRIVER_INSTALL.md` and `check-driver.ps1`, the licence and a generated
-`README-Windows.txt` that states what has and has not been tested. Then it checks
-instead of assuming: `mt.exe` reads the manifest back out of the compiled
-executable, `dumpbin /imports` runs over every binary in the folder, each QML
-module the sources `import` has to exist inside it, and the last word is a launch
-of the staged `zuuned.exe` with a `PATH` naming nothing but the package, which is
-where a DLL that only resolved because `D:\dev\Qt` is on this machine's `PATH` gets
-caught. A green run on 2026-11-08 reported `31 checks, 0 failures` over 1,556 files
-with `58` modules mapped from inside the package and `135` from Windows, and wrote
-`Zuuned-0.2.0-win64.zip` with its SHA-256.
+runtime app-local, and adds the Chinese catalogue, `DRIVER_INSTALL.md` and
+`check-driver.ps1`, the licence and a generated `README-Windows.txt` that states
+what has and has not been tested. Then it checks instead of assuming: `mt.exe`
+reads the manifest back out of the compiled executable, `dumpbin /imports` runs
+over every binary in the folder, each QML module the sources `import` has to exist
+inside it, and the last word is a launch of the staged `zuuned.exe` with a `PATH`
+naming nothing but the package, which is where a DLL that only resolved because
+`D:\dev\Qt` is on this machine's `PATH` gets caught. A green run on 2026-11-08
+reported `30 checks, 0 failures` over 1,557 files and wrote
+`Zuuned-0.2.0-win64.zip` at 176.8 MB with its SHA-256.
 
-Two findings changed the script. `windeployqt --dir` lays the plugin categories at
-the package root - `platforms\qwindows.dll` beside `zuuned.exe` and no `plugins`
-folder anywhere - so `qt.conf` has to say `Plugins = .`; the file is written from
-the layout the staging actually produced rather than from a recipe, because a
-`qt.conf` naming a folder that does not exist still launches, Qt also searches the
-application directory, and a package that works for that reason alone is a trap for
-the next reader. And the module list of a live process includes DLLs this machine
-injects into every process - a portable shell utility's hook read as a
-development-tree leak - so a module from somewhere else is a failure only when
-something in the package imports it by name; otherwise it is recorded as an
-injection, which is a fact about this desktop and not about a tester's.
+That folder is a **preview**. `-Release` is the beta, and it changes three things.
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File packaging\windows\deploy.ps1 -Out E:\Temp\zuuned-package -Release
+```
+
+It leaves `tools\ffmpeg.exe` and `tools\ffprobe.exe` out, with `avdevice-63.dll`
+and `avfilter-12.dll`, the two DLLs `dumpbin` says nothing else in the folder
+imports, and with `icuuc.dll`, which is byte-identical to a file Windows already
+has, and `qmltooling\`, the QML debugger - 18 files and 42 MB. FFmpeg stays
+inside as the library the application actually loads, because conversion,
+WMA Lossless and every metadata probe run through it; the command line is another
+project's GPL program, and where the app wants one it says so and names the
+download page (`Settings -> Device`). `LICENSE`, `COPYING.md` and
+`packaging/windows/THIRD-PARTY-NOTICES.txt` become required rather than optional -
+the notices name every component, which are shared libraries, which is static, and
+where the corresponding source is. And a release refuses a dirty tree, because a
+package that prints a revision has to be that revision.
+
+A release then reads what it just staged for the sake of whoever built it: every
+relative path, and every byte of every staged text file, executable and `.qm`
+catalogue, once as Latin-1 and once looking for UTF-16 code points, against the
+account name, host name, profile folder, build tree and test-library folder - and
+the entries of the `.zip` after writing it, because a folder that passes does not
+guarantee the archive written from it does. Two real leaks came out of the first
+such pass: a byte-for-byte copy of `C:\Windows\System32\icuuc.dll`, and the build
+folder recorded inside `zuuned.exe` and `devicetool.exe` by the linker as the path
+of their program databases, now suppressed with `/PDBALTPATH:%_OBJNAME%` in
+`CMakeLists.txt`. Five third-party DLLs this project does not compile still record
+where *their* build happened, in their own debug and `assert` strings; a release
+records that and says so, which is the stated limit of the pass. A release run also
+deletes its own smoke profile and log, and says so as a check rather than a
+promise. A green `-Release` run on 2026-11-08 reported `40 checks, 0 failures` over
+1,539 files, 418.1 MB staged and a 158.5 MB archive.
+`docs/releases/BETA_WINDOWS_2026-11-08.md` is the record of that artifact.
+
+What gets committed obeys the same rule, from the other side:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File tests\privacy\run.ps1
+```
+
+Nine checks over `git ls-files` and the bytes of what it lists. No log, database,
+settings file, archive, binary or Finder/Explorer metadata may be tracked; no
+tracked path or text byte may carry the account, host, profile folder or commit
+identity of whoever made the checkout, except the name the repository is published
+under, which is on its own clone URL; every tracked picture has to sit under a
+prefix named with a reason in `tests/privacy/reviewed-media.txt`; and the count of
+tracked lines quoting a drive-letter path is printed rather than hidden, because in
+this repository those lines are build and device evidence and a new one should move
+a visible number. Green on 2026-11-08: `813 tracked files, 9 checks, 0 failures`.
+It found `libzune/.DS_Store` the day it was written, and that file is untracked now.
 
 The script compiles nothing, installs no driver, opens no device handle, signs
 nothing and builds no installer. `docs/WINDOWS_PORT.md` stays the device status

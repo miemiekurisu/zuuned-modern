@@ -4,6 +4,9 @@
 > from [badgeromen/zuuned-linux](https://github.com/badgeromen/zuuned-linux/releases).
 > This fork, Zuuned Modern, is a Windows client port and publishes no Linux build -
 > see [the documentation guide](../README.md).
+>
+> The fork's own artifact note sits beside these upstream pages:
+> [Windows beta artifact, 2026-11-08](BETA_WINDOWS_2026-11-08.md).
 
 **Bring your Zune back into your daily rotation.**
 

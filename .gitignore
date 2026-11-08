@@ -31,3 +31,9 @@ packaging/appimage-tools/
 *.qm
 i18n/*.tmp
 i18n/build/
+
+# Finder and Explorer metadata records which files a folder held, which is exactly
+# the kind of local information this repository keeps out.  One was tracked under
+# libzune/ until now.
+.DS_Store
+Thumbs.db

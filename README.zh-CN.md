@@ -175,13 +175,36 @@ Zune 一个字都不说——这是故意的，也正是硬件证据放在
 pwsh -NoProfile -ExecutionPolicy Bypass -File packaging\windows\deploy.ps1 -Out E:\Temp\zuuned-package
 ```
 
-它用 `windeployqt` 把 Qt 运行时和它的 QML 模块搬进来，再放上 FFmpeg 工具、`libmpv`、SQLite、libusb、
+它用 `windeployqt` 把 Qt 运行时和它的 QML 模块搬进来，再放上 FFmpeg 库、`libmpv`、SQLite、libusb、
 LAME 与 VC++ 运行时、中文语言目录、驱动文档，以及一份把测过和没测过都写明白的 `README-Windows.txt`；
 它从已编译的可执行文件里把 manifest 读回来核对，清点包里每一个二进制的导入表，确认源码 import 的每一个
-QML 模块都到位，最后为 `.zip` 打出一个 SHA-256。2026-11-08 的一次全绿运行在 1,556 个文件、176.8 MB
-的归档上报出 `31 checks, 0 failures`，其中 58 个模块从包内映射、135 个来自 Windows、没有一个来自开发
-目录。它不编译任何东西、不装驱动、不开设备句柄、不签名、也不生成安装包：这个制品是预览版，它携带的设备
-证据就是构建树那一份，不是新的一份。
+QML 模块都到位，最后为 `.zip` 打出一个 SHA-256。不加参数时这个目录是**预览版**，它明说的其中一件事，
+就是自己带着 `ffmpeg` 和 `ffprobe` 这两个命令行程序。
+
+加上 `-Release` 就是 beta，有三处不同。那两个程序被留下不带，连同只有它们用到的两个 DLL，一共少掉
+18 个文件、42 MB——FFmpeg 是别人的 GNU GPL 程序，而我们是一个轻量客户端，没有理由替别人分发包里
+没有任何东西需要运行的工具。应用真正会加载的 FFmpeg 库照带；真有功能需要命令行时，应用会明说，并且
+把该去哪儿下载写清楚（`设置 -> 设备`）。`LICENSE`、`COPYING.md` 与
+[`packaging/windows/THIRD-PARTY-NOTICES.txt`](packaging/windows/THIRD-PARTY-NOTICES.txt) 不再可选，
+这份声明逐一列出每个组件、说明哪些是可替换链接的共享库、哪一个是静态链接，以及对应源码去哪里读。
+而且这一次运行会自查是谁构建了它：包里的每一条相对路径、每一个文本文件、可执行文件与 `.qm` 语言目录
+的每一个字节，都会按 Latin-1 读一遍、再按 UTF-16 码点找一遍，去比对账户名、主机名、profile 目录、
+构建树与测试曲库目录；`.zip` 写完之后还要把里面的条目再读回来核一遍。2026-11-08 的一次全绿 `-Release`
+运行在 1,539 个文件、158.5 MB 的归档上报出 `40 checks, 0 failures`，其中 57 个模块从包内映射、136 个
+来自 Windows、还有一个是这台桌面往每个进程里注入的 shell 工具。release 还拒绝在脏树上运行，因为一个
+写明了 revision 的制品必须就是那个 revision。
+
+提交进仓库的东西受同一条规则的约束，只不过从另一头管。
+[`tests/privacy/run.ps1`](tests/privacy/run.ps1) 读 `git ls-files` 和它们背后的字节，拒绝任何被跟踪的
+日志、数据库、配置文件、归档、媒体文件或 Finder/资源管理器元数据；除了仓库发布时用的那个名字之外，
+拒绝任何被跟踪的路径或文本字节里出现提交者的账户名、主机名或 profile 目录；并且要求每一张被跟踪的
+图片都落在 [`tests/privacy/reviewed-media.txt`](tests/privacy/reviewed-media.txt) 里写明理由的前缀之下。
+2026-11-08 全绿：`813 tracked files, 9 checks, 0 failures`，当天它抓到的唯一真实问题是仓库里跟踪了一个
+`libzune/.DS_Store`。完整经过，包括文本门禁看不见的那一部分，写在
+[`docs/releases/BETA_WINDOWS_2026-11-08.md`](docs/releases/BETA_WINDOWS_2026-11-08.md)。
+
+这些都不编译任何东西、不装驱动、不开设备句柄、不签名、也不生成安装包：制品是预览版或 beta，它携带的
+设备证据就是构建树那一份，从来不是新的一次实测。
 
 ## 在 macOS（Apple silicon）上实际做到了哪一步
 

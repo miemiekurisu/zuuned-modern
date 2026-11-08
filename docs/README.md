@@ -22,6 +22,7 @@ This application snapshot includes libzune as ordinary source files.
 | Compile the public application source | [Building](../BUILDING.md) |
 | Build or assess the Windows port | [Windows port status](WINDOWS_PORT.md) |
 | Build or assess the macOS (Apple Silicon) port | [macOS port status](MACOS_PORT.md) |
+| Package or assess a Windows beta artifact | [Windows beta artifact](releases/BETA_WINDOWS_2026-11-08.md) |
 | Compare this app against the original Zune software | [Zune client feature comparison](ZUNE_CLIENT_FEATURES.md) |
 | Check which screens are actually wired to a backend | [UI wiring audit](UI_WIRING_AUDIT.md) |
 | Know which Settings options do something, and which should exist | [Settings inventory](SETTINGS_INVENTORY.md) |
@@ -33,6 +34,13 @@ This application snapshot includes libzune as ordinary source files.
 | Understand licensing scope | [COPYING](../COPYING.md) |
 
 ## Source versus downloadable versions
+
+This fork publishes its own Windows artifact from a build tree, not from a tag. Its note,
+[releases/BETA_WINDOWS_2026-11-08.md](releases/BETA_WINDOWS_2026-11-08.md), says what a
+`-Release` folder stages and deliberately refuses, why FFmpeg stays as the library the
+application loads while its command line is a download the app points at, and what the
+packaging pass and `tests/privacy/run.ps1` measured. The commands are in
+[BUILDING](../BUILDING.md).
 
 The [0.2.0 candidate notes](releases/RELEASE_0.2.0.md) cover podcasts, audiobooks,
 ARM64 packaging, the compact playback UI and Zune 80/120 spoken-media fixes.
