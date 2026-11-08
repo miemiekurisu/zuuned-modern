@@ -237,8 +237,12 @@ project's GPL program, and where the app wants one it says so and names the
 download page (`Settings -> Device`). `LICENSE`, `COPYING.md` and
 `packaging/windows/THIRD-PARTY-NOTICES.txt` become required rather than optional -
 the notices name every component, which are shared libraries, which is static, and
-where the corresponding source is. And a release refuses a dirty tree, because a
-package that prints a revision has to be that revision.
+where the corresponding source is. And a release refuses a dirty tree - a rule about
+the packager, not a promise about the binary. It also reads the revision stamped in
+`zuuned-build.json` back and compares it with `git rev-parse HEAD`, because that stamp
+is written when the build compiles its version object and a clean tree at packaging
+time does not move it. A release whose stamp names another revision, or names this one
+as built from a dirty tree, fails.
 
 A release then reads what it just staged for the sake of whoever built it: every
 relative path, and every byte of every staged text file, executable and `.qm`

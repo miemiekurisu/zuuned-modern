@@ -63,9 +63,23 @@ The 18 files and 42 MB that a release refuses to carry:
 
 A release also stops treating the notices as optional: `LICENSE`, `COPYING.md` and
 `THIRD-PARTY-NOTICES.txt` are staged, and a missing one is a failure. And it requires
-a clean tree, because an artifact that names a revision has to be that revision:
+a clean tree, because a beta must not be made from work nobody has committed:
 `git status --porcelain` non-empty fails the run rather than producing a beta wearing
-a preview's hat.
+a preview's hat. It then compares that clean revision against the one stamped inside
+`zuuned-build.json`. That second check exists because the first is not enough: the stamp
+is written when the build compiles its version object, and the first release run here
+passed a clean tree over a build record naming an older revision and marking itself
+dirty.
+
+What the first release run found is in the script now. It died in its own release trim:
+`Remove-Item` on `avfilter-12.dll`, a file the run had copied seconds earlier, answered
+"being used by another process". A minifilter holding a handle to a fresh DLL is
+ordinary, and the script already knew a staged tree needs care when deleting
+(`Remove-Tree`) while the trim used a bare `Remove-Item`. `Remove-StagedFile` retries
+for five seconds, keeps the long-path prefix, and answers instead of throwing, so the
+caller reports a Pass or a Fail rather than dying between the two. It is also why this
+folder comes from `cmake --build build --clean-first` run from the commit it names,
+not from whichever build was already on disk.
 
 The largest things left in the folder are `libmpv-2.dll` (115.5 MB),
 `avcodec-63.dll` (114.3 MB), `zuuned.exe` (31.2 MB), `avformat-63.dll` (24.8 MB),

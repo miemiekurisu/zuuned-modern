@@ -191,8 +191,9 @@ QML 模块都到位，最后为 `.zip` 打出一个 SHA-256。不加参数时这
 的每一个字节，都会按 Latin-1 读一遍、再按 UTF-16 码点找一遍，去比对账户名、主机名、profile 目录、
 构建树与测试曲库目录；`.zip` 写完之后还要把里面的条目再读回来核一遍。2026-11-08 的一次全绿 `-Release`
 运行在 1,539 个文件、158.5 MB 的归档上报出 `40 checks, 0 failures`，其中 57 个模块从包内映射、136 个
-来自 Windows、还有一个是这台桌面往每个进程里注入的 shell 工具。release 还拒绝在脏树上运行，因为一个
-写明了 revision 的制品必须就是那个 revision。
+来自 Windows、还有一个是这台桌面往每个进程里注入的 shell 工具。release 还拒绝在脏树上运行，并且会把
+`zuuned-build.json` 里刻着的 revision 与 `git rev-parse HEAD` 比对：那个时间戳是编译时写进去的，光有
+干净的工作树并不能证明字节就是那个 commit，所以两个答案不一致的 release 直接判失败。
 
 提交进仓库的东西受同一条规则的约束，只不过从另一头管。
 [`tests/privacy/run.ps1`](tests/privacy/run.ps1) 读 `git ls-files` 和它们背后的字节，拒绝任何被跟踪的

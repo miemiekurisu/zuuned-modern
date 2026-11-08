@@ -226,7 +226,9 @@ name, host name, profile folder, build tree and test-library folder, and the ent
 are read back after writing it. A green `-Release` run on 2026-11-08 reported `40 checks, 0 failures`
 over 1,539 files and a 158.5 MB archive, with 57 modules mapped from inside the package, 136 from
 Windows and one that is this desktop injecting a shell utility into every process. A release also
-refuses a dirty tree, because an artifact that names a revision has to be that revision.
+refuses a dirty tree, and reads the revision stamped in `zuuned-build.json` back against
+`git rev-parse HEAD`: the stamp is written at build time, so a clean tree on its own does
+not prove the bytes are that commit, and a release whose two answers disagree fails.
 
 What gets committed obeys the same rule from the other end.
 [`tests/privacy/run.ps1`](tests/privacy/run.ps1) reads `git ls-files` and the bytes behind it, and

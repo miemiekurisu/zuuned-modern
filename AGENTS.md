@@ -2189,8 +2189,11 @@ route is the one a GPL-3.0-or-later application can honestly take: stay on the G
 exception; shared libraries relinkable; where the corresponding source is for the app and for the
 bundled FFmpeg), make the three notices required rather than optional, and let the product tell the user
 to download the command line when a feature wants it (`Settings -> Device`) instead of handing out
-somebody else's program. A release also refuses a dirty tree, because `zuuned.exe --version` prints a
-revision and the bytes have to be that revision. The second question is a pass over the folder: every
+somebody else's program. A release also refuses a dirty tree, which is a rule about the packager and not a promise about the
+binary: the first release run passed that check over a build record naming an older
+revision and marking itself dirty, so the packager reads `zuuned-build.json` and
+`git rev-parse HEAD` back and compares them, and a release whose two answers disagree
+fails. The second question is a pass over the folder: every
 staged relative path and every byte of every staged text file, executable and `.qm` catalogue, read once
 as Latin-1 and once for UTF-16 code points, against the account name, host name, profile folder, build
 tree and test library, and the `.zip` entries read back after writing. It found two real leaks in a

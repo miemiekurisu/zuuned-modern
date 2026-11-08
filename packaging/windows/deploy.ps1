@@ -116,6 +116,21 @@ function Remove-Tree {
     }
 }
 
+function Remove-StagedFile {
+    # A file copied a second ago can still be held open by the minifilter scanning it, and a
+    # delete that fails on that handle says nothing about the file.  Retry for a few
+    # seconds, keep the long-path prefix Remove-Tree needs, and answer instead of throwing,
+    # so the caller still reports a Pass or a Fail a reader can trust.
+    param([string]$Path)
+    for ($try = 0; $try -lt 20; $try++) {
+        if (-not (Test-Path -LiteralPath $Path)) { return $true }
+        try { Remove-Item -LiteralPath ('\\?\' + $Path) -Force -ErrorAction Stop } catch { }
+        if (-not (Test-Path -LiteralPath $Path)) { return $true }
+        Start-Sleep -Milliseconds 250
+    }
+    return (-not (Test-Path -LiteralPath $Path))
+}
+
 function Copy-Into {
     # Every copy goes through here so a file that did not arrive is a failure at the
     # moment it was meant to land, and not a missing-DLL message on a tester's machine
@@ -411,6 +426,41 @@ if (Test-Path -LiteralPath $buildJson) {
     Copy-Into $buildJson (Join-Path $stage 'zuuned-build.json')
     $bj = (Read-SharedText (Join-Path $stage 'zuuned-build.json')) -replace '\s+', ' '
     Pass ('zuuned-build.json names the revision this came from: ' + $bj.Trim())
+    # The stamp is written when the build compiles its version object, so a clean tree at
+    # packaging time does not prove the binary agrees with it.  The first release run here
+    # passed the clean-tree check on one revision over a build record naming an older one
+    # and marking itself dirty.  Read both back and compare them: a tester quotes the stamp
+    # in a crash report and never sees this console.
+    $stampRev = ''
+    $stampDirty = 'unknown'
+    try {
+        $rec = $bj | ConvertFrom-Json
+        $stampRev = [string]$rec.application
+        if ($null -eq $rec.applicationDirty) { $stampDirty = 'unknown' }
+        elseif ($rec.applicationDirty) { $stampDirty = 'true' }
+        else { $stampDirty = 'false' }
+    } catch { }
+    $headRev = ''
+    try { $headRev = [string](& git -C $root rev-parse HEAD 2>$null) } catch { }
+    if ($LASTEXITCODE -ne 0) { $headRev = '' }
+    $truth = ''
+    if (-not $stampRev) {
+        $truth = 'the build record names no application revision, so nothing compares it to the tree'
+    } elseif (-not $headRev) {
+        $truth = 'no git revision to compare the build record against'
+    } elseif (-not $headRev.StartsWith($stampRev, [StringComparison]::OrdinalIgnoreCase)) {
+        $truth = ('the build record says ' + $stampRev + ' and the tree is ' +
+            $headRev.Substring(0, 7) + ': rebuild from that commit before publishing')
+    } elseif ($stampDirty -eq 'true') {
+        $truth = ('the build record marks ' + $stampRev + ' as built from a dirty tree')
+    }
+    if (-not $truth) {
+        Pass ('the build record and the tree name the same revision ' + $stampRev)
+    } elseif ($Release) {
+        Fail $truth
+    } else {
+        Note $truth
+    }
 } else {
     Note 'no zuuned-build.json, so the package cannot say which revision it was built from'
 }
@@ -426,8 +476,7 @@ if (-not $Release) {
               Where-Object { $_.Name -match '^(avdevice|avfilter)-[0-9]+\.dll$' })
     foreach ($d in $drop) {
         $size = [math]::Round($d.Length / 1MB, 1)
-        Remove-Item -LiteralPath $d.FullName -Force
-        if (Test-Path -LiteralPath $d.FullName) {
+        if (-not (Remove-StagedFile $d.FullName)) {
             Fail ('could not remove ' + $d.Name)
         } else {
             Pass ('dropped ' + $d.Name + ' (' + $size + ' MB): only the command-line programs named it')
@@ -447,8 +496,7 @@ if (-not $Release) {
         $h1 = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
         $h2 = (Get-FileHash -LiteralPath $twin -Algorithm SHA256).Hash
         if ($h1 -ne $h2) { continue }
-        Remove-Item -LiteralPath $f.FullName -Force
-        if (Test-Path -LiteralPath $f.FullName) {
+        if (-not (Remove-StagedFile $f.FullName)) {
             Fail ('could not remove the operating-system copy of ' + $f.Name)
         } else {
             $osCopies.Add($f.Name)

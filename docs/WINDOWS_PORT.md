@@ -2524,7 +2524,10 @@ The 18 files and 42 MB a release refuses: the two FFmpeg programs (0.7 MB), `avd
 and `avfilter-12.dll` (35.8 MB), which `dumpbin` shows nothing else in the folder imports, `icuuc.dll`,
 byte-identical to the file already in `C:\Windows\System32` and verified as such by SHA-256, and the
 13 files of `qmltooling\`, the QML debugger. What a release adds is rules, not files. It requires a
-clean tree, because an artifact that prints a revision has to be that revision. It reads every staged
+clean tree, and compares the revision stamped in `zuuned-build.json` against `git rev-parse HEAD` -
+the stamp is written when the build compiles its version object, so a clean tree at packaging time
+does not by itself prove the bytes are that commit, and a release whose two answers disagree fails.
+It reads every staged
 relative path and every byte of every staged text file, executable and `.qm` catalogue - once as
 Latin-1, once looking for UTF-16 code points - against the account name, host name, profile folder,
 build tree and test-library folder of whoever ran the script, and it reads the entries of the `.zip`
