@@ -2139,3 +2139,36 @@ which is the desktop deciding it and not this tree, so that caveat stays. **No d
 claim moved:** eighteen read-only browses of the attached Pavo, `devicetool`
 `VERDICT=agree` at `os_problem=0` afterwards, the `Zuuned QA` fixtures untouched, and
 nothing written, deleted or read back in this sitting.
+
+**2026-11-08 first Windows artifact:** `packaging/windows/deploy.ps1` is the Windows counterpart
+of `packaging/macos/deploy.sh` and the answer to "can this ship as a folder" - it stages the
+build tree, runs `windeployqt`, makes the VC++ runtime app-local, adds the FFmpeg tools, the
+Chinese catalogue, the driver document and a generated `README-Windows.txt`, then checks rather
+than assumes: `mt.exe` reads the manifest back out of the compiled exe, the import table of every
+binary in the folder is inventoried, each QML module the sources import has to exist inside it,
+and the last word is a launch of the staged `zuuned.exe` with a `PATH` naming nothing but the
+package. Green here on 2026-11-08: `checks=31, failures=0`, 1,556 files, 460.4 MB staged,
+`Zuuned-0.2.0-win64.zip` at 176.8 MB plus SHA-256, `modules loaded from the package 58, from
+Windows 135, from neither 1`, `Qt6Core.dll` from inside the package, and `[qa] tick1 page=music`
+in the staged exe's own log. Three failures were the script's, all invisible until executed.
+`windeployqt --dir` lays plugin categories at the package root - `platforms\qwindows.dll` beside
+the exe, no `plugins` folder - so `Plugins = plugins` in `qt.conf` described a layout that was
+never made and the package only worked because Qt also searches the application directory; the
+file is now generated from where `qwindows.dll` actually landed (`Plugins = .`). A portable shell
+utility's hook injected into every process on this machine read as "loaded out of a development
+tree", so the folder test names only the Qt, `ZUUNED_WIN_DEPS` and vcpkg trees and a foreign
+module fails only when something in the package imports it by name - otherwise it is a note about
+this desktop. And `Measure-Object -InputObject $array -Property Length -Sum` returns 0 for an
+array: "1556 files, 0 MB staged" over 460 MB. **A file was lost, so two rules stand.** `D:` hit
+0 bytes free with `D:\pagefile.sys` at 74 GB, and `[IO.File]::WriteAllText` truncates its target
+before discovering it cannot write, which destroyed an uncommitted 30 KB first draft of the
+script: check free space before writing (the script refuses an `-Out` volume under 2 GB, which is
+what exposed this), never `WriteAllText` a file whose contents live nowhere else, and put
+artifacts on `E:` - they default to gitignored `_tmp`, and nothing of a run belongs in the repo.
+`apply_patch` on this machine is a `.bat` shim that rejects a PowerShell here-string patch with
+"last line must be *** End Patch", so long edits go through `[IO.File]` read, exact-substring
+replace with a uniqueness check, write to `.tmp`, `Move-Item -Force`. **No device claim moved:**
+a Pavo was attached throughout, the smoke launch browsed it read-only as every usability run
+does, the packaged `devicetool.exe` answered `VERDICT=agree`, MTPZ credentials are deliberately
+outside the package (`%USERPROFILE%\.mtpz-data`), and there is still no installer, no signing and
+no capture of this folder on a machine that did not build it or with a player attached.

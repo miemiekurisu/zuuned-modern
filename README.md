@@ -121,9 +121,10 @@ Hand-tested against one Pavo-generation Zune HD on the development machine:
 **Not yet proven on Windows**, and not inherited from Linux either: any deletion beyond
 that one music track, the podcast, audiobook, photo and video transfer categories, every Zune
 model but that one Pavo, audible PC-side playback (the automated gate opens WASAPI muted, so
-no automated run has heard anything), and packaging - there is no Windows installer yet, so today the
-port is a build-from-source project. **WMA Lossless** is encoded on Windows, by the encoder the
-operating system already ships rather than a bundled codec, and a track written that way has now
+no automated run has heard anything), and the packaged folder with a player attached or on a machine
+that did not build it - there is a preview artifact now, but still no installer and no code signing.
+**WMA Lossless** is encoded on Windows, by the encoder the operating system already ships rather than
+a bundled codec, and a track written that way has now
 been heard on the HD; the format is documented for the Zune HD alone, so no other model has been
 offered one and the setting says out loud that the likely result elsewhere is a silent track.
 
@@ -190,6 +191,27 @@ that name a specific device with no Zune attached to compare. Those counters mov
 tree, so read them as a floor rather than an expectation. Neither gate says anything at
 all about a Zune - that is deliberate, and is why the hardware evidence lives on
 [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) instead.
+
+### A folder that runs without this toolchain
+
+A build tree runs where the toolchain lives. [`packaging/windows/deploy.ps1`](packaging/windows/deploy.ps1)
+turns it into a folder that runs without it, and proves the claim the only way that settles it - by
+launching the staged `zuuned.exe` with a `PATH` naming nothing but the folder itself, then reading
+which DLLs the loader actually mapped:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File packaging\windows\deploy.ps1 -Out E:\Temp\zuuned-package
+```
+
+It stages the Qt runtime and its QML modules through `windeployqt`, the FFmpeg tools, `libmpv`,
+SQLite, libusb, LAME and the VC++ runtime, the Chinese catalogue, the driver document and a
+`README-Windows.txt` that says out loud what has and has not been tested; it reads the manifest back
+out of the compiled executable, inventories the import table of every binary in the folder, checks
+that each QML module the sources import arrived, and prints a SHA-256 for the `.zip`. A green run on
+2026-11-08 reported `31 checks, 0 failures` over 1,556 files and a 176.8 MB archive, with 58 modules
+mapped from inside the package, 135 from Windows and none from a development tree. It compiles
+nothing, installs no driver, opens no device handle, signs nothing and builds no installer: the
+artifact is a preview, and it is the build tree's own device evidence, not a new one.
 
 ## What has actually been done on macOS (Apple Silicon)
 
@@ -314,7 +336,7 @@ libzune/tools/  zunetool and mtpframingtool, the protocol-side probes
 transcode/      FFmpeg and LAME transcoding, plus the in-box WMA Lossless encoder
 i18n/           the interface wording; zh_CN.tsv is the editable source
 packaging/      Linux USB rule, PKGBUILD, AppImage builder and macOS bundle packager
-packaging/windows/  WinUSB driver guide and check-driver.ps1
+packaging/windows/  WinUSB driver guide, check-driver.ps1 and deploy.ps1, the folder packager
 packaging/macos/    macOS bundle packager and claimprobe.c, the USB claim probe
 tests/win-compat/    Windows compatibility gate (no device)
 tests/win-usability/ Windows launch and UI gate (no device)

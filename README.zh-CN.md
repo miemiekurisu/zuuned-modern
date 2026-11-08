@@ -101,9 +101,10 @@ Windows 移植已经与播放器双向传过音乐，也会把音乐从播放器
 
 **在 Windows 上尚未证实**，也不会从 Linux 继承过来：除了那一条音乐曲目之外的任何删除、播客、有声书、
 照片和视频这些传输类别、那台 Pavo 之外的每一个 Zune 型号、听得见的 PC 端播放（自动化门禁是静音打开
-WASAPI 的，所以没有任何一次测试真正听过声音），以及打包——目前还没有 Windows 安装包，所以今天这个
-移植是一个从源码构建的项目。**WMA 无损**在 Windows 上是可以编码的，用的是操作系统自带的那个编码器
-而不是随程序附带一个；PCM 往返逐位相同，而且这样一首曲目已经在 HD 上播放过了。这个格式只有 Zune HD
+WASAPI 的，所以没有任何一次测试真正听过声音），以及把打包出来的那个目录接上播放器、或者在一台没有
+构建过它的机器上打开——现在有一个预览制品了，但仍然没有安装包，也没有代码签名。**WMA 无损**在
+Windows 上是可以编码的，用的是操作系统自带的那个编码器而不是随程序附带一个；PCM 往返逐位相同，而且这
+样一首曲目已经在 HD 上播放过了。这个格式只有 Zune HD
 有文档支持，所以设置项里也明说了：在别的机型上更可能的结果是那一首不出声。
 
 ## 让 Windows 认出 Zune
@@ -164,6 +165,24 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File tests\win-usability\run.ps1
 Zune 一个字都不说——这是故意的，也正是硬件证据放在
 [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) 而不是这里的原因。
 
+### 一个不需要这套工具链也能跑的目录
+
+构建树只在工具链所在的那台机器上跑。[`packaging/windows/deploy.ps1`](packaging/windows/deploy.ps1)
+把它变成一个离开工具链也能跑的目录，并且用唯一能真正说明问题的方式来证明这件事——用一条只点名这个
+目录自己的 `PATH` 去启动包里的 `zuuned.exe`，然后读加载器真正映射了哪些 DLL：
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File packaging\windows\deploy.ps1 -Out E:\Temp\zuuned-package
+```
+
+它用 `windeployqt` 把 Qt 运行时和它的 QML 模块搬进来，再放上 FFmpeg 工具、`libmpv`、SQLite、libusb、
+LAME 与 VC++ 运行时、中文语言目录、驱动文档，以及一份把测过和没测过都写明白的 `README-Windows.txt`；
+它从已编译的可执行文件里把 manifest 读回来核对，清点包里每一个二进制的导入表，确认源码 import 的每一个
+QML 模块都到位，最后为 `.zip` 打出一个 SHA-256。2026-11-08 的一次全绿运行在 1,556 个文件、176.8 MB
+的归档上报出 `31 checks, 0 failures`，其中 58 个模块从包内映射、135 个来自 Windows、没有一个来自开发
+目录。它不编译任何东西、不装驱动、不开设备句柄、不签名、也不生成安装包：这个制品是预览版，它携带的设备
+证据就是构建树那一份，不是新的一份。
+
 ## 在 macOS（Apple silicon）上实际做到了哪一步
 
 在一台 Apple silicon 的 Mac 上，对同一台 Pavo 世代的 Zune HD 做过手工实测，一共三次会话，
@@ -187,7 +206,9 @@ Zune 一个字都不说——这是故意的，也正是硬件证据放在
   正好等于刚从它上面取回的那个文件的大小。
 - **插入方向的热插拔**——三次会话，三条 `Zune arrived`，来自 libusb 回调而不是轮询兜底那条。
 - **打包**——[`packaging/macos/deploy.sh`](packaging/macos/deploy.sh) 产出自包含 bundle、
-  一个 `.dmg` 和一个 zip，两个归档都按使用者打开它们的方式验证过。Windows 至今还没有安装包。
+  一个 `.dmg` 和一个 zip，两个归档都按使用者打开它们的方式验证过。Windows 至今还没有安装包，但
+  2026-11-08 起 [`packaging/windows/deploy.ps1`](packaging/windows/deploy.ps1) 产出同类的自包含目录
+  与 zip，见上文。
 
 **在 macOS 上尚未证实**，也不会从 Windows 或 Linux 继承过来：除了那一条音乐曲目之外的任何删除、
 播客、有声书、照片与视频这些传输类别、那台 Pavo 之外的每一个 Zune 型号、听得见的 Mac 端播放
@@ -268,7 +289,7 @@ libzune/tools/  zunetool 与 mtpframingtool，协议侧的探针
 transcode/      FFmpeg 与 LAME 转码，外加系统自带的 WMA 无损编码器
 i18n/           界面措辞；zh_CN.tsv 是可编辑的源
 packaging/      Linux USB 规则、PKGBUILD、AppImage 构建器与 macOS 打包脚本
-packaging/windows/  WinUSB 驱动指南与 check-driver.ps1
+packaging/windows/  WinUSB 驱动指南、check-driver.ps1 与目录打包脚本 deploy.ps1
 packaging/macos/    macOS 打包脚本与 claimprobe.c，USB 接口探针
 tests/win-compat/    Windows 兼容性门禁（不碰设备）
 tests/win-usability/ Windows 启动与界面门禁（不碰设备）

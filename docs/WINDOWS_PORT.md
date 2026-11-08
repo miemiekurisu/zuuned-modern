@@ -321,8 +321,9 @@ player - see the last section.
 - `CMakeLists.txt`: `if(WIN32)` guards for dependency discovery in place of
   pkg-config, the `compat/win` POSIX surface force-included for the C layer,
   MPRIS and `Qt6::DBus` kept Linux-only, and the POSIX install rules skipped -
-  shipping on Windows is a self-contained directory assembled with `windeployqt`
-  beside the exe, and `cmake --install` deliberately does nothing.
+  shipping on Windows is a self-contained directory assembled by
+  `packaging/windows/deploy.ps1` beside the exe, and `cmake --install`
+  deliberately does nothing.
 - `src/DevicePresence.h`, `src/DevicePresence.cpp` and the two backends: Windows
   asks libusb first and then the PnP manager through `cfgmgr32`;
   `src/DevicePresenceUnix.cpp` answers from libusb alone with its existing
@@ -1853,8 +1854,12 @@ and there is no gate case for the self-test button itself, so today the only rec
    above unblocked - but the tool still has no phase in the usability gate.  Nor does
    any phase play a podcast or an audiobook, so the bounded spoken close is gated in
    shape only: the resume point inside its deadline has never been written by a run.
-5. Packaging.  No installer, no `cmake --install` layout, no verified
-   `windeployqt` directory and no release artifact.
+5. Packaging, in its last mile.  `packaging/windows/deploy.ps1` stages a
+   self-contained directory and proves it by launching it with a PATH naming
+   nothing but the directory, so there is a preview artifact - the first pass
+   below, 2026-11-08.  Still missing: an installer, a `cmake --install` layout,
+   code signing, a SmartScreen history, and any capture of the packaged folder on
+   a machine that did not build it or with a player attached to it.
 6. The Linux line is unchanged by construction rather than re-verified: this
    machine is the Windows checkout, Windows changes are platform-neutral or
    inside `Q_OS_WIN`, and the bash gates were not re-run from here.
@@ -2423,3 +2428,63 @@ usability run has since that behaviour was recorded; `build\devicetool.exe` answ
 untouched. Nothing in this sitting wrote to, deleted from or read back from a player, and
 the macOS commits' device changes sit inside `Q_OS_MACOS`, so the gates on this page are
 neither extended nor retracted by any of it.
+
+## 2026-11-08 - the first Windows artifact, and the two counters that lied
+
+The question was whether the port can produce something a tester can carry. It can, and
+`packaging/windows/deploy.ps1` is now the instrument: the Windows counterpart of
+`packaging/macos/deploy.sh`, a script rather than an install rule for the same reason -
+`cmake --install` deliberately does nothing here. It compiles nothing. It stages the current
+build tree, runs `windeployqt`, makes the VC++ runtime app-local, adds the FFmpeg tools, the
+Chinese catalogue, the driver document and a generated `README-Windows.txt`, and then spends
+most of its time checking rather than copying. `mt.exe` reads the manifest back out of the
+compiled `zuuned.exe` rather than out of `packaging/windows/zuuned.manifest`; the import table
+of every binary in the folder is inventoried with `dumpbin`; each QML module the sources
+`import` has to exist inside it; and the last word is a launch of the staged `zuuned.exe` with
+a `PATH` that names nothing but the package and `System32`. A green run on this machine
+reported `checks=31, failures=0` over 1,556 files and a 460.4 MB staged tree, wrote
+`Zuuned-0.2.0-win64.zip` at 176.8 MB with its SHA-256, and read back
+`modules loaded from the package 58, from Windows 135, from neither 1` with `Qt6Core.dll` from
+inside the package and `[qa] tick1 page=music` in the staged exe's own session log. The import
+inventory answered 125 binaries, 539 resolved inside the package, 296 from Windows, 525 api
+sets, and none resolving to nothing.
+
+Three of the failures the first run produced were the script's own, and each is worth keeping
+because all three were invisible until something was actually executed.
+
+- `windeployqt --dir` puts the plugin categories at the package root: `platforms`,
+  `imageformats`, `tls` and `qml` beside `zuuned.exe`, and no `plugins` folder anywhere. A
+  `qt.conf` saying `Plugins = plugins` therefore described a layout that was never produced,
+  and the package still launched because Qt also searches the application directory. That is
+  why the file is now written from the discovered layout - find `qwindows.dll`, take its
+  parent's parent as the plugin root, write `Plugins = .` - and not from a recipe copied out
+  of a deployment guide.
+- The live module list of any process on this machine includes DLLs this machine injects into
+  every process. A portable shell utility's hook came out as "loaded out of a development
+  tree" and failed a package that has no such dependency, so the folder-name test is now three
+  names - the Qt tree, the `ZUUNED_WIN_DEPS` tree and the vcpkg `bin` - and a module from
+  anywhere else is a failure only when something inside the package imports it by name. An
+  injection is a note, because it is a fact about this desktop and tells a tester nothing.
+- `Measure-Object -InputObject $array -Property Length -Sum` reports 0 for an array, so the
+  summary line read "1556 files, 0 MB staged" over a 460 MB folder. A plain sum is the count.
+
+**One thing was lost, and it is recorded so it is not repeated.** `D:` ran out of free space
+with `D:\pagefile.sys` at 74 GB, and `[IO.File]::WriteAllText` truncates or deletes its target
+before it discovers that it cannot write, so an uncommitted 30 KB first draft of this script was
+destroyed by the call that failed to save it. Two habits follow, and the script obeys both:
+check the free space on the output drive before writing anything - it refuses an `-Out` volume
+under 2 GB, which is what made the empty disk visible at all - and do not overwrite a file whose
+contents exist nowhere else. Artifacts land under `-Out`, which defaults to gitignored `_tmp`;
+this run used `E:\Temp\zuuned-package`, and none of it belongs in the repository.
+
+**No device claim moves, and the artifact is not evidence about a player.** A Zune HD was plugged
+in throughout, so the smoke launch browsed it read-only exactly as every usability run has, and
+the `devicetool.exe` copied into the package answered `VERDICT=agree`; neither is a new
+capability. The packaged executable is the build tree's own - `zuuned-build.json` names `cab1834`
+with `applicationDirty: true`, which is the honest answer from a script that compiles nothing:
+build first, then package, and the manifest says what went in. MTPZ credentials are deliberately
+not inside the package; a folder assembled here reads the ones this machine keeps at
+`%USERPROFILE%\.mtpz-data`, and a tester without them gets the read-only behaviour README.md
+describes. What is still open, and is now the whole of the packaging gap: an installer, code
+signing, SmartScreen history, this folder on a machine that did not build it, and the packaged
+folder with a player attached to it.

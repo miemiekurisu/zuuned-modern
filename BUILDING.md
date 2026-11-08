@@ -126,9 +126,11 @@ build\zuuned.exe
 ```
 
 `CMAKE_TOOLCHAIN_FILE` also wires up vcpkg's `applocal.ps1`, which copies the
-vcpkg DLLs next to every executable. Run `windeployqt` in `build` for the Qt
-runtime and copy the FFmpeg `bin` DLLs plus `libmpv-2.dll` beside the
-executable.
+vcpkg DLLs next to every executable. Nothing else needs copying to run from the
+build tree: `CMAKE_PREFIX_PATH` answers Qt, and the FFmpeg, mpv and LAME DLLs
+already sit beside the executable. For a folder that runs on a machine with none
+of that installed, `windeployqt` by hand is the wrong instrument - see
+"Package it for another Windows machine" below.
 
 Every Windows executable built here embeds `packaging/windows/zuuned.manifest`, through
 `zuuned_long_paths()` (`CMakeLists.txt:166`). That file is what opts the process out of
@@ -191,6 +193,51 @@ service and the POSIX-only install rules are skipped on Windows, and
 `compat/win/` is built once as `zuuned_wincompat` and force-included into every
 shared translation unit through `posix_shim.h`, so libzune and the transcode
 layer keep the POSIX surface they expect without `#ifdef` sprawl.
+
+### Package it for another Windows machine
+
+The build tree runs where the toolchain lives: it contains no Qt DLL at all,
+because `CMAKE_PREFIX_PATH` leaves Qt's `bin` on `PATH` for a developer shell.
+`packaging/windows/deploy.ps1` is the counterpart of
+`packaging/macos/deploy.sh`, and like that one it is a script rather than a CMake
+install rule, because `cmake --install` deliberately does nothing here.
+
+```powershell
+cmake --build build --clean-first   # the script packages this tree
+pwsh -NoProfile -ExecutionPolicy Bypass -File packaging\windows\deploy.ps1 -Out E:\Temp\zuuned-package
+```
+
+`-Out` defaults to `_tmp`, gitignored; give it a drive with 2 GB free, because a
+staged folder and its zip exist at the same time. It stages `zuuned.exe`,
+`devicetool.exe` and the DLLs beside them, runs `windeployqt`, makes the VC++
+runtime app-local, and adds the FFmpeg command-line tools, the Chinese catalogue,
+`DRIVER_INSTALL.md` and `check-driver.ps1`, the licence and a generated
+`README-Windows.txt` that states what has and has not been tested. Then it checks
+instead of assuming: `mt.exe` reads the manifest back out of the compiled
+executable, `dumpbin /imports` runs over every binary in the folder, each QML
+module the sources `import` has to exist inside it, and the last word is a launch
+of the staged `zuuned.exe` with a `PATH` naming nothing but the package, which is
+where a DLL that only resolved because `D:\dev\Qt` is on this machine's `PATH` gets
+caught. A green run on 2026-11-08 reported `31 checks, 0 failures` over 1,556 files
+with `58` modules mapped from inside the package and `135` from Windows, and wrote
+`Zuuned-0.2.0-win64.zip` with its SHA-256.
+
+Two findings changed the script. `windeployqt --dir` lays the plugin categories at
+the package root - `platforms\qwindows.dll` beside `zuuned.exe` and no `plugins`
+folder anywhere - so `qt.conf` has to say `Plugins = .`; the file is written from
+the layout the staging actually produced rather than from a recipe, because a
+`qt.conf` naming a folder that does not exist still launches, Qt also searches the
+application directory, and a package that works for that reason alone is a trap for
+the next reader. And the module list of a live process includes DLLs this machine
+injects into every process - a portable shell utility's hook read as a
+development-tree leak - so a module from somewhere else is a failure only when
+something in the package imports it by name; otherwise it is recorded as an
+injection, which is a fact about this desktop and not about a tester's.
+
+The script compiles nothing, installs no driver, opens no device handle, signs
+nothing and builds no installer. `docs/WINDOWS_PORT.md` stays the device status
+page: a package proves where bytes came from on one machine, never what a Zune
+will do with them.
 
 ### Windows gate
 
