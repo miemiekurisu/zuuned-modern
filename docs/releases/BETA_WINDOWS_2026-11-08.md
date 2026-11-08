@@ -319,8 +319,59 @@ anchored on the `VID_xxxx&PID_xxxx\` prefix so that album GUID monikers, MusicBr
 and the `11111111-...` fixtures stay out of its way. It runs over every tracked file in
 `tests/privacy/run.ps1` and over the members this project authored in an archive.
 
-So the archive recorded above is withdrawn and a rebuild takes its place, with its digest
-in the commit that follows the run that staged it. `gh release list` answers empty and
-`git tag -l` answers empty: the withdrawn file was never published and no download of it
-exists. **No audit run of either script opened a device handle, and none of this moves a
-capability on `docs/WINDOWS_PORT.md`.**
+So the archive recorded above is withdrawn.
+
+## The archive that takes its place
+
+The rebuild went against a relinked tree, because a build-record check is worth nothing
+over a stale record: `cmake --build build --clean-first` answered 341 steps, last progress line
+`[340/341]` and `EXITCODE=0`, and `zuuned-build.json` then named
+`21d93c89dbaadca6e9b9f3f29d6bce6580261519` with `applicationDirty: false` - the same 40
+characters as `git rev-parse HEAD`, on a tree `git status --porcelain` called clean.
+
+```text
+revision       21d93c89dbaadca6e9b9f3f29d6bce6580261519, clean tree
+staged         1,539 files, 418.1 MB
+archive        158.5 MB = 166,220,702 bytes, 1,539 file entries and 72 directory entries,
+               every one relative and under Zuuned-0.2.0-win64/
+sha256         8AA1F6C8D98260F60534F1F8715E4632F2E2A249AEDE3F8493B9CABE6D2D0FA4
+deploy checks  45, failures 0         RESULT: beta Windows artifact produced
+archive audit  16 checks, failures 0  RESULT: archive clean - fit to publish
+```
+
+Two checks joined the `deploy.ps1` run since the 43 above, and both are the widening the
+two sections before this one describe. The staged-folder privacy pass is two checks rather
+than one - no identity string in any of the 1,539 staged files, and every staged file
+opened and read to its end instead of 668 read and the rest trusted - and one more records
+that the finished `.zip` passed the same byte audit member by member. That last check is no
+longer only what a person remembers to type: the run that staged this folder handed
+`verify-zip.ps1` the same eight build-root probes and eleven ancestor probes it hands its
+own folder pass, where the first wiring named two and had passed an archive that a stricter
+invocation of the same script failed.
+
+The same file audited a third time from where it now sits on disk - moved, not rewritten -
+answered `16 checks, failures 0` against the digest above, which is the evidence that
+shipping it did not change it.
+
+What the staged folder proved about itself is the same list as the run above, and one of
+its numbers belongs to the machine rather than the artifact: 196 loaded modules resolved as
+57 from inside the package, 138 from Windows and 1 from neither, that one again this
+desktop's shell utility injected into every process. The two gates run against that same
+relinked build report `201 checks, 0 failures, 0 skips` from `tests\win-compat` and
+`launches=18 checks=135 failures=0 skips=0 killed=0` from `tests\win-usability`. The repository
+gate, re-run once the two privacy scripts named above were tracked and this record had been
+written, reads `819 tracked files, 19 checks, 0 failures`, 90 reviewed pictures and 171
+drive-letter lines in 33 files - 7 lines and 2 files more than the counter near the top of
+this page, which is what printing the number is for.
+
+`gh release list` and `git tag -l` answered empty up to the moment this section was
+written, and nothing has been published since: the withdrawn file was never published, so
+there is no download of it to un-publish. One path detail for whoever runs this next -
+`-Out` names the parent, so `-Out E:\Temp\zuuned-beta\windows` stages into
+`E:\Temp\zuuned-beta\windows\windows\Zuuned-0.2.0-win64`.
+
+**Neither script opens a device handle; the application they launch does.** A Zune HD was
+bound on this machine for all of it, and every launch in this sitting - the smoke launch
+and the eighteen gate launches - auto-connected and browsed it read-only, which is what
+every gate launch on this page has always done. Nothing here wrote to, deleted from or read
+back from a player, and no capability on `docs/WINDOWS_PORT.md` moved.

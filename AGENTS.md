@@ -2316,3 +2316,51 @@ It is ordinal and case-insensitive in both halves now, and its reader cases are 
 rebuilt from the masked tree, with its own size and digest, in the paragraph beside this
 one. **No run of any of these scripts opened a device handle, and none of it adds, removes
 or softens a capability on `docs/WINDOWS_PORT.md`.**
+
+**2026-11-08 the artifact rebuilt from the masked tree, and the counters that belong to a
+desktop:** the promise in the paragraph above is kept here. The tree was relinked first -
+`cmd /c _tmp\rebuild-now.cmd` runs `vcvars64` for Visual Studio 2022 Community and
+`cmake --build build --clean-first` - 341 steps, its last progress line `[340/341]` and
+`EXITCODE=0` - and `build/generated/zuuned-build.json` then named
+`21d93c89dbaadca6e9b9f3f29d6bce6580261519` with `applicationDirty: false`, which is the same
+40 characters as `git rev-parse HEAD` on a clean tree; that agreement is the check, so an old
+build record over a new checkout fails the run rather than riding along in it.
+`deploy.ps1 -Release` answered `45 checks, 0 failures` and `RESULT: beta Windows artifact
+produced`: 1,539 files and 418.1 MB staged, **158.5 MB = 166,220,702 bytes**, sha256
+`8AA1F6C8D98260F60534F1F8715E4632F2E2A249AEDE3F8493B9CABE6D2D0FA4`, recorded in
+`docs/releases/BETA_WINDOWS_2026-11-08.md` in the commit after the run because an archive
+cannot carry its own digest. 45 is two above the 43 that paragraph quotes and both extra
+checks are the widening, not new scope: the staged-folder pass is "no identity string in any
+of the 1,539 staged files" plus "every staged file opened and read to its end" instead of
+one check over 668 scannable files, and one check says the written `.zip` passed the same
+byte audit member by member. That audit, run by hand against the same eight build-root and
+eleven ancestor probes the release itself passes, answers `16 checks, failures 0` with five
+third-party `D:\dev` build paths as a note - gcrypt, gpg-error, libmp3lame, libusb-1.0 and
+sqlite3, named from a separate scan of all 1,539 staged files because the note itself prints
+only its first four - and answered it again unchanged after the file was moved to where it
+will be shipped from, which is the only way a move is provably not a rewrite.
+`tests/privacy/run.ps1` on this tree: `819 tracked files, 19 checks, 0 failures`, 3 identity
+strings, 90 reviewed pictures, 171 drive-letter lines in 33 files, 723 files read as text,
+**none of the 819 skipped as binary** - and that counter moved off 817 for a reason worth
+naming: the two privacy scripts this sitting wrote became tracked files.
+Three things belong to the machine and must not be read as regressions. The staged smoke
+launch loaded 196 modules where the previous run counted 195 - 57 from inside the package,
+138 from Windows, 1 from neither, still this desktop's `ListaryHook64.dll`. A Zune HD was
+bound on WinUSB for the whole sitting, so `devicetool` answered `agree` from inside the
+package with the player at `os_problem=0`, and every launch here - the smoke launch and the
+18 of `tests\win-usability` - auto-connected and browsed it read-only, which is what the
+gate's own `SCOPE: no device handle` line has always meant about the harness and never about
+the application. And `tests\win-usability` now reports
+`launches=18 checks=135 failures=0 skips=0 killed=0` where an earlier paragraph recorded
+`checks=99 failures=6`: the ribbon cases were retuned and the shader-cache noise is gone, so
+do not compare that counter across paragraphs without reading both. `tests\win-compat`
+against the same relinked build: `201 checks, 0 failures, 0 skips`.
+One path detail worth typing into the next run: `-Out` names the *parent*, so
+`-Out E:\Temp\zuuned-beta\windows` stages into
+`E:\Temp\zuuned-beta\windows\windows\Zuuned-0.2.0-win64`.
+**Nothing here moves a capability on `docs/WINDOWS_PORT.md`:** the closed list stays driver
+binding, enumeration, hotplug, the music-library read, MTPZ authentication, one send with
+byte readback, one download, one deletion and one WMA Lossless round trip that played on one
+Pavo Zune HD, and nothing in this sitting wrote to, deleted from or read back from a player.
+The folder is not yet published: `gh release list` and `git tag -l` both answer empty, and
+the release waits for the owner to run the packaged app first.

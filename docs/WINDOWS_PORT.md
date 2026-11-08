@@ -2594,3 +2594,68 @@ run states in its own output that the launch browses it read-only, as every gate
 nothing was written to, deleted from or read back from a player, and no gate on this page closed or
 opened. The one consequence of the new agreement check worth remembering: re-running `-Release` from
 a newer checkout now fails until the tree is recompiled, which is exactly what it is for.
+
+**2026-11-08 the artifact carries the digest of the tree it was built from, and the privacy
+pass reads everything or says so:** the tree was relinked first - `cmake --build build
+--clean-first`, 341 steps, last progress line `[340/341]`, `EXITCODE=0` - and
+`deploy.ps1 -Release` then agreed with itself for the second time: `zuuned-build.json` `21d93c89dbaadca6e9b9f3f29d6bce6580261519` with
+`applicationDirty: false`, `git rev-parse HEAD` the same 40 characters, working tree clean.
+1,539 files and 418.1 MB staged outside the repository, a 158.5 MB archive (166,220,702
+bytes), `45 checks, 0 failures`, sha256
+`8AA1F6C8D98260F60534F1F8715E4632F2E2A249AEDE3F8493B9CABE6D2D0FA4`, recorded in
+`docs/releases/BETA_WINDOWS_2026-11-08.md` in the commit after the run. That is two checks
+above the 43 quoted higher on this page, and both additions are the widening below rather
+than anything new about a package: the staged-folder privacy pass is now "no identity string
+in any of the 1,539 staged files" plus "every staged file opened and read to its end", and
+one check says the finished `.zip` passed that same byte audit member by member.
+
+**The archive is now audited as a file, with the probes the folder pass got.**
+`packaging/windows/verify-zip.ps1` opens the `.zip` and reads all 1,539 members to their
+declared size without unpacking anything: `16 checks, failures 0`, 1539 file entries and 72
+directory entries, every name relative, plain ASCII, under the package folder, no log,
+database, ini, pdb, playlist, audio, photo or video member, no MTPZ credential, every PNG
+icon-sized, 418.1 MB judged in ASCII and UTF-16LE, and the five third-party DLLs that
+record their own build folder reported as a note rather than a finding. The first wiring of
+that call passed two build-root probes where the folder pass had been handed ten, and had
+passed an archive a stricter hand invocation of the same script failed; the automated call
+now carries the same eight build-root and eleven ancestor probes, which is why a hand run
+and a release run of one script can no longer disagree. Audited a third time after the file
+was moved to where it will be shipped from, it answered the same 16 checks against the same
+digest.
+
+**The reader that produced those verdicts was itself the bug, twice, and `tests/privacy/run.ps1`
+is where it is tested now.** 19 checks, not the nine quoted above: 819 tracked files read to
+their end with **none skipped as binary** (the run above says 96 skipped, and that sentence
+is superseded), 3 identity strings, 90 reviewed pictures, and `171 line(s) in 33 tracked
+file(s)` quoting a drive-letter path - not 158, and not the 164 measured an hour before this
+paragraph was typed, because the release record this sitting wrote quotes more of them -
+of which 723 tracked files are read as text for that counter. The three defects it pins are
+each a way a scan answers `clean` about bytes it never read: a `DeflateStream` that is not
+seekable and returns short reads, so a 115 MB `avcodec-63.dll` was declared finished at
+2.4 MB; a `[ref]` bound to `$null` whose throw was caught and folded into an empty hit list;
+and case-sensitive matching, which let a build path through because the shell had held it in
+another case. One reader, `packaging/windows/PrivacyProbe.ps1`, now serves the repository
+gate, the staged-folder pass and the archive audit, so their three verdicts mean the same
+word. The serial tail of a USB device instance path is a *pattern* rather than a needle -
+nobody would type a serial into a list - and the one tracked document that quoted one,
+`packaging/windows/DRIVER_INSTALL.md`, reads `USB\VID_045E&PID_063E\<serial>` now, with the
+generated package name and registry line likewise placeholders. `settings-library.png` has
+its watch-folder home path masked in both languages, which narrows but does not close the
+open item quoted above: 32 screenshots remain from the real library, pixels are unreadable
+to any text gate, and the device-page ones still show a friendly name the owner typed.
+
+**No capability on this page moved, and the packaging run is not device evidence.** A Pavo
+(Zune HD) sat bound to WinUSB on this machine through all of it, and every launch in the
+sitting - the release smoke launch and the eighteen launches of `tests\win-usability` -
+auto-connected and browsed it read-only, exactly as every gate launch here has always done;
+`devicetool` answered `agree` from inside the staged folder with the player at
+`os_problem=0`. One page painted from an isolated profile with an empty library
+(`onboarding=true tracks=0 wfRows=0`), exit 0, 196 loaded modules resolved as 57 inside the
+package, 138 from Windows and 1 from neither - this desktop's shell utility, injected into
+every process. Against that same relinked build the gates read `201 checks, 0 failures, 0
+skips` (`tests\win-compat`) and `launches=18 checks=135 failures=0 skips=0 killed=0`
+(`tests\win-usability`). Nothing in this sitting wrote to, deleted from or read back from a
+player. The closed list stays driver binding, enumeration, hotplug, the music-library read,
+MTPZ authentication, one send with byte readback, one download, one deletion and one WMA
+Lossless round trip that played on the player; what stays open stays open, and this folder
+opened on a machine that did not build it is now the most interesting item on it.

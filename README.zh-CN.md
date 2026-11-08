@@ -187,11 +187,14 @@ QML 模块都到位，最后为 `.zip` 打出一个 SHA-256。不加参数时这
 把该去哪儿下载写清楚（`设置 -> 设备`）。`LICENSE`、`COPYING.md` 与
 [`packaging/windows/THIRD-PARTY-NOTICES.txt`](packaging/windows/THIRD-PARTY-NOTICES.txt) 不再可选，
 这份声明逐一列出每个组件、说明哪些是可替换链接的共享库、哪一个是静态链接，以及对应源码去哪里读。
-而且这一次运行会自查是谁构建了它：包里的每一条相对路径、每一个文本文件、可执行文件与 `.qm` 语言目录
-的每一个字节，都会按 Latin-1 读一遍、再按 UTF-16 码点找一遍，去比对账户名、主机名、profile 目录、
-构建树与测试曲库目录；`.zip` 写完之后还要把里面的条目再读回来核一遍。2026-11-08 的一次全绿 `-Release`
-运行在 1,539 个文件、158.5 MB 的归档上报出 `43 checks, 0 failures`，其中 57 个模块从包内映射、137 个
-来自 Windows、还有一个是这台桌面往每个进程里注入的 shell 工具。release 还拒绝在脏树上运行，并且会把
+而且这一次运行会自查是谁构建了它：包里的每一条相对路径，以及每一个被暂存文件的每一个字节——可执行文件
+与 `.qm` 语言目录都算，不再按扩展名跳过任何东西——都会按 Latin-1 读一遍、再按 UTF-16 码点找一遍，去比对
+账户名、主机名、profile 目录、构建树与测试曲库目录。真正交付的那个 `.zip` 之后还会被同一个读取器逐条目
+审一遍，用的探针与审暂存目录时完全相同，因为「目录通过」与「从它写出的归档」是两个文件
+（[`packaging/windows/verify-zip.ps1`](packaging/windows/verify-zip.ps1)）。2026-11-08 的一次全绿
+`-Release` 运行在 1,539 个文件、158.5 MB 的归档上报出 `45 checks, 0 failures`，归档审计另有
+`16 checks, 0 failures`，其中 57 个模块从包内映射、138 个来自 Windows、还有一个是这台桌面往每个进程里
+注入的 shell 工具。release 还拒绝在脏树上运行，并且会把
 `zuuned-build.json` 里刻着的 revision 与 `git rev-parse HEAD` 比对：那个时间戳是编译时写进去的，光有
 干净的工作树并不能证明字节就是那个 commit，所以两个答案不一致的 release 直接判失败。
 
@@ -200,7 +203,8 @@ QML 模块都到位，最后为 `.zip` 打出一个 SHA-256。不加参数时这
 日志、数据库、配置文件、归档、媒体文件或 Finder/资源管理器元数据；除了仓库发布时用的那个名字之外，
 拒绝任何被跟踪的路径或文本字节里出现提交者的账户名、主机名或 profile 目录；并且要求每一张被跟踪的
 图片都落在 [`tests/privacy/reviewed-media.txt`](tests/privacy/reviewed-media.txt) 里写明理由的前缀之下。
-2026-11-08 全绿：`817 tracked files, 9 checks, 0 failures`，当天它抓到的唯一真实问题是仓库里跟踪了一个
+2026-11-08 全绿：`819 tracked files, 19 checks, 0 failures`，其中每一个被跟踪的文件都读到末尾，而不是
+当成二进制跳过；当天它抓到的唯一真实问题是仓库里跟踪了一个
 `libzune/.DS_Store`。完整经过，包括文本门禁看不见的那一部分，写在
 [`docs/releases/BETA_WINDOWS_2026-11-08.md`](docs/releases/BETA_WINDOWS_2026-11-08.md)。
 

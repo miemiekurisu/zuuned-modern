@@ -263,8 +263,10 @@ of their program databases, now suppressed with `/PDBALTPATH:%_OBJNAME%` in
 where *their* build happened, in their own debug and `assert` strings; a release
 records that and says so, which is the stated limit of the pass. A release run also
 deletes its own smoke profile and log, and says so as a check rather than a
-promise. A green `-Release` run on 2026-11-08 reported `43 checks, 0 failures` over
-1,539 files, 418.1 MB staged and a 158.5 MB archive.
+A green `-Release` run on 2026-11-08 reported `45 checks, 0 failures`
+over 1,539 files, 418.1 MB staged and a 158.5 MB archive, and `packaging/windows/verify-zip.ps1`
+audited the written archive member by member with the same reader and the same probes: 16 checks,
+0 failures.
 `docs/releases/BETA_WINDOWS_2026-11-08.md` is the record of that artifact.
 
 What gets committed obeys the same rule, from the other side:
@@ -273,7 +275,8 @@ What gets committed obeys the same rule, from the other side:
 pwsh -NoProfile -ExecutionPolicy Bypass -File tests\privacy\run.ps1
 ```
 
-Nine checks over `git ls-files` and the bytes of what it lists. No log, database,
+Nineteen checks over `git ls-files` and the bytes of what it lists, every listed file
+read to its end rather than skipped as binary. No log, database,
 settings file, archive, binary or Finder/Explorer metadata may be tracked; no
 tracked path or text byte may carry the account, host, profile folder or commit
 identity of whoever made the checkout, except the name the repository is published
@@ -281,7 +284,7 @@ under, which is on its own clone URL; every tracked picture has to sit under a
 prefix named with a reason in `tests/privacy/reviewed-media.txt`; and the count of
 tracked lines quoting a drive-letter path is printed rather than hidden, because in
 this repository those lines are build and device evidence and a new one should move
-a visible number. Green on 2026-11-08, after the artifact was staged: `817 tracked files, 9 checks, 0 failures`.
+a visible number. Green on 2026-11-08, after the artifact was staged: `819 tracked files, 19 checks, 0 failures`.
 It found `libzune/.DS_Store` the day it was written, and that file is untracked now.
 
 The script compiles nothing, installs no driver, opens no device handle, signs
