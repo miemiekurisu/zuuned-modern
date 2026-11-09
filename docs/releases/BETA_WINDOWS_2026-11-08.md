@@ -375,3 +375,31 @@ bound on this machine for all of it, and every launch in this sitting - the smok
 and the eighteen gate launches - auto-connected and browsed it read-only, which is what
 every gate launch on this page has always done. Nothing here wrote to, deleted from or read
 back from a player, and no capability on `docs/WINDOWS_PORT.md` moved.
+
+## Published, 2026-11-09
+
+The sentence two sections above that reads "nothing has been published" is superseded
+here: `git tag -l` and `gh release list` are no longer empty. An annotated tag
+`v0.2.0-beta1` points at `68ce562`, the commit that records the digest rather than the
+build it describes, and the prerelease
+<https://github.com/miemiekurisu/zuuned-modern/releases/tag/v0.2.0-beta1> carries two
+assets - `Zuuned-0.2.0-win64.zip` (166,220,702 bytes) and `SHA256SUMS.txt` (90 bytes).
+
+The upload is verified by something other than this repository's own arithmetic: GitHub
+recomputed the archive on arrival and reports
+`sha256:8aa1f6c8d98260f60534f1f8715e4632f2e2a249aede3f8493b9cabe6d2d0fa4`, the same 64
+hex characters the section above measured locally, so what a tester downloads is the
+archive the privacy pass audited, byte for byte. `SHA256SUMS.txt` beside it hashes to
+`37cf661ed5e15337a0cb45ceb0ed2933081972e5f255760b107fbd5c57c84cff`, which is also the
+digest GitHub reports for it.
+
+The release body is bilingual, names Zadig as the first step a tester takes, names what
+the folder deliberately does not carry (`ffmpeg.exe` and `ffprobe.exe`, `icuuc.dll`, the
+QML debugger, MTPZ credentials), and repeats the closed and open device lists from this
+page rather than a shorter claim. Publishing moved no capability: the artifact is still
+the folder built from `21d93c8` on a clean tree, its `zuuned.exe --version` still answers
+`app 21d93c89dbaa`, and the open list - every model but this Pavo, podcasts, audiobooks,
+photos and video on a player, audible PC playback, and this folder on a machine that did
+not build it - is what the release itself tells a tester to report against. The two
+WITHDRAWN artifacts on the staging drive were never uploaded, so there is still no
+download of either to un-publish.
