@@ -197,7 +197,8 @@ layer keep the POSIX surface they expect without `#ifdef` sprawl.
 ### Package it for another Windows machine
 
 The build tree runs where the toolchain lives: it contains no Qt DLL at all,
-because `CMAKE_PREFIX_PATH` leaves Qt's `bin` on `PATH` for a developer shell.
+because `CMAKE_PREFIX_PATH` leaves Qt's `bin` on `PATH` for a developer shell.  Since `build\zuuned.exe` is a GUI-subsystem image, and its runtime init asks for `SEM_FAILCRITICALERRORS`, a launch from a shell that does not have that `PATH` fails with nothing on screen at all - no console, no loader dialog, no log, because a missing `Qt6Core.dll` is a critical error the app asked Windows not to announce. Put Qt's `bin` on `PATH`, or run the folder `packaging/windows/deploy.ps1` wrote, which carries its own Qt.
+
 `packaging/windows/deploy.ps1` is the counterpart of
 `packaging/macos/deploy.sh`, and like that one it is a script rather than a CMake
 install rule, because `cmake --install` deliberately does nothing here.
