@@ -403,3 +403,43 @@ photos and video on a player, audible PC playback, and this folder on a machine 
 not build it - is what the release itself tells a tester to report against. The two
 WITHDRAWN artifacts on the staging drive were never uploaded, so there is still no
 download of either to un-publish.
+
+## The published executable carries no icon, 2026-11-10
+
+The owner ran the downloaded beta and came back with one defect.  It is real and it is
+measurable: the main application icon is not on the executable.  The tree at `21d93c8` held
+no `.rc` and no `.ico` - `git ls-files` names `packaging/windows/zuuned.manifest` as the
+only Windows resource file in the repository - so the shipped image carries resource type
+24 alone, RT_MANIFEST, with no `RT_GROUP_ICON` for the shell to read.  Explorer, a desktop
+shortcut, a Jump List and every thumbnail painted before a window exists therefore give it
+the generic application icon.  `setWindowIcon` has been called since before this fork and
+is a different fact: a `QIcon` answers what a live window and its taskbar button look like,
+and the shell never asks Qt about a file on disk.
+
+Nothing in this document noticed.  45 deploy checks, a 16-check archive audit and a
+19-check privacy pass all called that folder healthy, and none of them asked the file the
+question a user asks before running anything.
+
+The fix is on `main`, after the tag.  `packaging/windows/make_icon.py` builds
+`packaging/windows/zuuned.ico` from the hicolor PNGs this repository already shipped - 16
+through 256, with the 512 left out because an ICO size byte caps at 256 and spells that as
+0 - and reproduces the same bytes on a second run; `packaging/windows/zuuned.rc` names it;
+and twelve lines of `CMakeLists.txt` give it to the app target alone, the CLI probes staying
+iconless by design, which doubles as the negative control: `devicetool.exe` still answers
+`types=24 groups=0`.  The rebuilt image reports types 3, 14 and 24, one icon group, seven
+RT_ICON blobs and declared sizes 16, 24, 32, 48, 64, 128 and 256 at 32 bpp, manifest
+untouched, 32,812,032 bytes - and the 32x32 that
+`System.Drawing.Icon.ExtractAssociatedIcon` pulls back out of it is byte-identical to
+`packaging/icons/hicolor/32x32/apps/zuuned.png`, mean absolute difference 0.0.  A preview
+`deploy.ps1` run answers `42 checks, 0 failures` with the three new icon checks green, and
+`tests/privacy/run.ps1` on the tree that carries the fix answers 822 tracked files,
+19 checks, 0 failures and 91 reviewed pictures: `.ico` counts as media to that gate, so the
+icon is registered by exact file name in `tests/privacy/reviewed-media.txt` rather than by
+its directory.
+
+**The published tag and its two assets stay exactly where they are.**  A re-packaged folder
+is a different archive with a different digest, so it needs its own record here and, if it
+is published at all, its own tag - a decision for the owner rather than for a documentation
+edit.  The icon changes what the executable looks like and nothing else: no capability on
+`docs/WINDOWS_PORT.md` moved, and no player was written to, deleted from or read back from
+in this sitting.

@@ -1,0 +1,34 @@
+// The icon Explorer reads off zuuned.exe itself.
+//
+// Qt sets the window icon at run time from :/zuuned/app/zuuned.png, which covers
+// a live window and its taskbar button.  It does not cover the file: an image with
+// no RT_GROUP_ICON gets the generic application icon in Explorer, on the desktop
+// shortcut, in a Jump List, and in every thumbnail the shell draws before the
+// window has painted once.  A PE resource, not a QIcon, is the only answer to the
+// question of why our own executable looks like notepad.
+//
+// Hash comments are not comments here.  rc.exe runs the C preprocessor over a
+// resource script first, so "# The icon" arrives as a directive and the build
+// dies with C1021 naming the word The; that is measured, from a build of this
+// very file.  Everything below the define is therefore double-slash.
+//
+// No include is needed and none is wanted: IDI_ZUUNED is defined here so rc.exe
+// behaves the same whatever INCLUDE happens to hold.  The ID does not collide
+// with the manifest the link embeds (CMakeLists.txt, zuuned_long_paths) because
+// cvtres only refuses a duplicate when type, name and language all match, and
+// this is type ICON while the manifest is type MANIFEST; the RT_GROUP_ICON
+// derived from this line is type 14 again.  Both differ from the version resource
+// CMake generates for the same target, so nothing ends up with two of anything.
+//
+// zuuned.ico is generated from the hicolor PNGs and make_icon.py beside this file
+// is the recipe.  rc.exe resolves the name against the directory holding the .rc
+// rather than the build directory; measured with a positive and a negative rc
+// run, because a silent fallback to a default icon would look exactly like
+// shipping nothing.
+//
+// Only the app takes this.  The CLI probes run from a terminal and are never
+// double-clicked, so an icon for them is decoration nobody sees.
+
+#define IDI_ZUUNED 1
+
+IDI_ZUUNED ICON "zuuned.ico"

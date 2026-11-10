@@ -2364,3 +2364,62 @@ byte readback, one download, one deletion and one WMA Lossless round trip that p
 Pavo Zune HD, and nothing in this sitting wrote to, deleted from or read back from a player.
 The folder is not yet published: `gh release list` and `git tag -l` both answer empty, and
 the release waits for the owner to run the packaged app first.
+
+**2026-11-10 the PE icon, because a window icon is not a file icon:** the owner ran the
+published beta and found one thing wrong with it, which is that our own executable looked
+like a generic application.  `git ls-files` answers the reason in one line - the tree had
+never held a `.rc` or an `.ico` - and `build\zuuned.exe` agreed from its own bytes:
+resource types `24` and nothing else, that is RT_MANIFEST alone, so Explorer, a desktop
+shortcut, a Jump List and every thumbnail the shell paints before a window exists all had
+nothing to draw.  `src/ApplicationIdentity.cpp` has called
+`setWindowIcon(QIcon(":/zuuned/app/zuuned.png"))` the whole time, and that is the fact
+people confuse with this one: a run-time `QIcon` covers a live window and its taskbar
+button, and the shell never asks Qt about a file on disk.
+
+`packaging/windows/make_icon.py` builds `packaging/windows/zuuned.ico` from the seven
+hicolor PNGs the repository already carries in `packaging/icons/` - 16 through 256, with
+the 512 left out because an ICO width byte caps at 256 and spells that as 0 - 32-bit BGRA
+DIB plus a zeroed AND mask below 256 and a PNG payload at 256, and it is deterministic:
+run it twice, get the same bytes.  `packaging/windows/zuuned.rc` names that file and
+twelve lines of `CMakeLists.txt` give it to the `zuuned` target alone under `if(WIN32)`,
+because a CLI probe is never double-clicked; the negative control says the wiring is
+narrow, in that `build\devicetool.exe` still answers `types=24 groups=0`.  The app went to
+`types = 3, 14, 24` with one `RT_GROUP_ICON`, seven `RT_ICON` blobs and declared sizes 16,
+24, 32, 48, 64, 128 and 256 at 32 bpp, manifest still in place, at 32,812,032 bytes.  The
+proof is not a resource count: Windows PowerShell 5.1 pulls a 32x32 out of the image with
+`System.Drawing.Icon.ExtractAssociatedIcon` whose 1024 pixels are byte-identical, mean
+absolute difference 0.0, to `packaging/icons/hicolor/32x32/apps/zuuned.png`.
+
+Four findings belong to whoever touches a resource next.  A `.rc` runs through the C
+preprocessor, so a hash-comment is a directive: the first build of this file reached
+`[341/342]` and died there with `fatal error C1021: invalid preprocessor command The`,
+quoting the first word of my sentence, and comments in a resource script are `//`.
+`rc.exe` resolves `ICON "zuuned.ico"` against the directory holding the `.rc` rather than
+the build directory - measured with a positive control that compiled from `cwd=build` into
+a 121,332-byte `.res` and a negative one that answered `error RC2135 file not found` -
+which is why there is no `configure_file` and no absolute path here.  An
+ICONDIR/GRPICONDIR entry count is at offset +4: +2 is the resource type and reads 1 for
+every icon ever made, and both a Python probe and the first PowerShell version of the
+checker reported a seven-size icon as one 16 px entry until that was fixed.  And this box
+has no Microsoft resource dumper at all - `dumpbin` has no `/resources`, which arrives as
+LNK4044 followed by a 45-second hang, and `mt.exe` rejects `-action` and `/action:parse`
+alike with C1010007 - so `Read-PeIcon` in `packaging/windows/deploy.ps1` walks the section
+table and the resource tree out of bytes in plain PowerShell, verified against signed
+`pwsh.exe`, `python.exe` and `cmd.exe`, and treats `e_lfanew` as data rather than promise
+because handing it an `.ico` made `BitConverter` throw, and a throwing check inside a
+release script aborts the packaging run it is supposed to be reporting on.
+
+`Step 'icon'` in that script is the part that outlives this sitting: the beta shipped
+without an icon and every other check in the file called it healthy, so the staged image
+is now asked directly - exactly one `RT_GROUP_ICON`, at least as many `RT_ICON` blobs as
+the group declares, and 16, 32, 48 and 256 all present.  A preview run answers
+`42 checks, 0 failures`.  `tests/privacy/run.ps1` counts `zuuned.ico` as media because
+`.ico` is in its extension list, and a tracked picture owes a reason in
+`tests/privacy/reviewed-media.txt`, so the icon is registered by exact file name rather
+than by `packaging/windows/` - a screenshot dropped into that folder later is still
+refused until somebody reads it.  Left alone on purpose: the PE subsystem of
+`build\zuuned.exe` is 3, console, and stays that way, and
+`packaging/macos/Info.plist.in` has no icon key with no `.icns` anywhere, so macOS still
+holds the gap this closes for Windows.  **Nothing here moves a capability on
+`docs/WINDOWS_PORT.md`.**  A Zune HD sat bound on WinUSB through the sitting and was
+browsed read-only by the smoke launch, which is harness context and not device evidence.

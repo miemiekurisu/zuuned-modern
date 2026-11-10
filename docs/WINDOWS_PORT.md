@@ -2659,3 +2659,25 @@ player. The closed list stays driver binding, enumeration, hotplug, the music-li
 MTPZ authentication, one send with byte readback, one download, one deletion and one WMA
 Lossless round trip that played on the player; what stays open stays open, and this folder
 opened on a machine that did not build it is now the most interesting item on it.
+
+**2026-11-10 the staged image is asked for its icon, and the beta that shipped has none.**
+The owner ran the published folder and reported the one defect on it: `zuuned.exe` shows a
+generic application icon in Explorer.  That is a property of the file rather than of the
+running app.  The tree held no `.rc` and no `.ico`, so the image built from `21d93c8`
+carries resource type 24 - RT_MANIFEST - and nothing else, while
+`src/ApplicationIdentity.cpp` has called `setWindowIcon` the whole time, which answers what
+a live window and its taskbar button look like and is not what the shell asks about a file
+on disk.  `packaging/windows/make_icon.py` now builds the icon from the hicolor PNGs the
+repository already shipped, `packaging/windows/zuuned.rc` names it, and twelve lines of
+`CMakeLists.txt` give it to the app target alone; the rebuilt image reports types 3, 14 and
+24 with declared sizes 16, 24, 32, 48, 64, 128 and 256.  `Step 'icon'` in `deploy.ps1`
+reads that resource tree back out of the staged bytes - exactly one `RT_GROUP_ICON`, a blob
+for every declared size, and 16, 32, 48 and 256 present - because every other check in that
+script called the published folder healthy, which is the honest measure of what 45 checks
+and two audits did not ask.  A preview run answers `42 checks, 0 failures`; the `-Release`
+counters belong to `docs/releases/BETA_WINDOWS_2026-11-08.md`, written by the run that
+produces them.  **No capability on this page moved:** the closed list stays driver binding,
+enumeration, hotplug, the music-library read, MTPZ authentication, one send with byte
+readback, one download, one deletion and one WMA Lossless round trip that played on one
+Pavo Zune HD, and the player bound on this machine during the sitting was browsed
+read-only by a smoke launch, which is packaging context and not device evidence.

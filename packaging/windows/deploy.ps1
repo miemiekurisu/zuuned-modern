@@ -103,6 +103,109 @@ function Read-SharedText {
     }
 }
 
+function Convert-PeRvaToOffset {
+    # Sections are the only mapping between the addresses a PE talks about and the
+    # offsets in the file, so this is the whole of it.
+    param([uint32]$Rva, [uint32[]]$Va, [uint32[]]$Raw, [uint32[]]$Span)
+    for ($i = 0; $i -lt $Va.Length; $i++) {
+        $hi = $Va[$i] + [Math]::Max($Span[$i], 1)
+        if ($Rva -ge $Va[$i] -and $Rva -lt $hi) { return [int]($Raw[$i] + ($Rva - $Va[$i])) }
+    }
+    return -1
+}
+
+function Get-PeResourceDir {
+    # One node of the resource directory tree.  Named entries come first and then
+    # numbered ones, both as 8-byte records, and the high bit of the second word says
+    # whether the target is another node or the data itself.
+    param($Bytes, [int]$Base)
+    $list = New-Object System.Collections.Generic.List[object]
+    $count = [BitConverter]::ToUInt16($Bytes, $Base + 12) +
+             [BitConverter]::ToUInt16($Bytes, $Base + 14)
+    for ($i = 0; $i -lt $count; $i++) {
+        $at = $Base + 16 + $i * 8
+        if ($at + 8 -gt $Bytes.Length) { break }
+        $ref = [BitConverter]::ToUInt32($Bytes, $at + 4)
+        $list.Add([pscustomobject]@{
+            Key    = [BitConverter]::ToUInt32($Bytes, $at)
+            Child  = [bool]($ref -band 0x80000000L)
+            Target = [int]($ref -band 0x7FFFFFFFL)}) | Out-Null
+    }
+    return $list
+}
+
+function Read-PeIcon {
+    # Read the icon back out of an image, from bytes, with no tool installed and no
+    # assembly loaded.  An application that sets a QIcon at run time and an image the
+    # shell can give an icon to are two different facts, and only the second is a
+    # property of the file that ships, so it is the only one worth a check.  Answer is
+    # $null for an image with no resource directory; otherwise the resource types the
+    # image carries, how many RT_GROUP_ICON and RT_ICON entries it holds, and the
+    # sizes the group declares.  A directory count is read at +4, not at +2: +2 is the
+    # resource type and reads as 1 for every icon ever made, which is how a first cut
+    # of this function reported a 7-size icon as a single 16px one.  Verified against
+    # pwsh.exe, python.exe and cmd.exe, all signed, all read correctly.
+    param([string]$Path)
+
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -lt 0x100) { return $null }
+    # The e_lfanew field is data, not a promise: an .ico is not a PE, and the number it
+    # yields from offset 0x3C points past the end of itself.  Answer $null rather than
+    # letting BitConverter throw inside a packaging run.
+    $pe = [BitConverter]::ToInt32($bytes, 0x3C)
+    if ($pe -lt 0 -or $pe + 24 -gt $bytes.Length) { return $null }
+    if ([BitConverter]::ToUInt16($bytes, $pe) -ne 0x4550) { return $null }
+
+    $optional = $pe + 24
+    $sectionStart = $optional + [BitConverter]::ToUInt16($bytes, $pe + 20)
+    $va = @(); $raw = @(); $span = @()
+    for ($i = 0; $i -lt [BitConverter]::ToUInt16($bytes, $pe + 6); $i++) {
+        $s = $sectionStart + $i * 40
+        $va   += [BitConverter]::ToUInt32($bytes, $s + 12)
+        $raw  += [BitConverter]::ToUInt32($bytes, $s + 20)
+        $span += [Math]::Max([BitConverter]::ToUInt32($bytes, $s + 8),
+                             [BitConverter]::ToUInt32($bytes, $s + 16))
+    }
+    # Data directory entry 2 is the resource directory; entry 2 times 8 bytes, plus
+    # the 96 or 112 bytes of header before the directory, and nothing else.
+    $magic = [BitConverter]::ToUInt16($bytes, $optional)
+    $dataDir = $optional + $(if ($magic -eq 0x20B) { 112 } else { 96 })
+    $resRva = [BitConverter]::ToUInt32($bytes, $dataDir + 16)
+    if (-not $resRva) { return $null }
+    $base = Convert-PeRvaToOffset $resRva $va $raw $span
+    if ($base -lt 0) { return $null }
+
+    $types = @(); $blobs = 0; $groups = 0; $sizes = @()
+    foreach ($type in Get-PeResourceDir $bytes $base) {
+        if (-not $type.Child) { continue }
+        $typeId = [int]($type.Key -band 0xFFFFL)
+        $types += $typeId
+        if ($typeId -ne 3 -and $typeId -ne 14) { continue }
+        $nameBase = $base + $type.Target
+        foreach ($name in Get-PeResourceDir $bytes $nameBase) {
+            if (-not $name.Child) { continue }
+            # Every level below the first addresses the resource directory from its
+            # start, not from the node that named it.
+            $langBase = $base + $name.Target
+            foreach ($lang in Get-PeResourceDir $bytes $langBase) {
+                $dataRva = [BitConverter]::ToUInt32($bytes, $base + $lang.Target)
+                $off = Convert-PeRvaToOffset $dataRva $va $raw $span
+                if ($off -lt 0 -or $off + 6 -gt $bytes.Length) { continue }
+                if ($typeId -eq 3) { $blobs++; continue }
+                $groups++
+                $count = [BitConverter]::ToUInt16($bytes, $off + 4)
+                for ($i = 0; $i -lt $count; $i++) {
+                    $at = $off + 6 + $i * 14
+                    $side = [int]$bytes[$at]
+                    $sizes += $(if ($side) { $side } else { 256 })
+                }
+            }
+        }
+    }
+    return [pscustomobject]@{ Types = $types; Groups = $groups;
+                              Blobs = $blobs; Sizes = ($sizes | Sort-Object -Unique) }
+}
+
 function Remove-Tree {
     # A staged Qt qml tree is deep enough that a second run of a packager can lose a
     # Remove-Item to it, which then reads as "cannot write the output folder".  Python's
@@ -653,6 +756,44 @@ if ($manifestText -match 'longPathAware[^<]*>\s*true') {
     Fail 'no longPathAware in the manifest'
 }
 
+# ----------------------------------------------------------------------- the icon, read back
+Step 'icon'
+# Explorer, a desktop shortcut, a Jump List and a taskbar thumbnail all ask the file,
+# and none of them ask Qt.  A run-time setWindowIcon covers a live window and nothing
+# else, which is why this is checked in the staged image rather than observed once on
+# the screen of whoever packaged it: the beta that shipped without one looked
+# completely healthy to every other check in this script.
+$iconImage = Join-Path $stage 'zuuned.exe'
+$icon = Read-PeIcon $iconImage
+if (-not $icon) {
+    Fail 'zuuned.exe has no readable resource directory, so the shell has nothing to draw'
+} else {
+    Note ('resource types in the image: ' + (($icon.Types | Sort-Object -Unique) -join ', '))
+    if ($icon.Groups -eq 1) {
+        Pass 'zuuned.exe carries one RT_GROUP_ICON, the resource Explorer reads'
+    } else {
+        Fail ('zuuned.exe carries ' + $icon.Groups.ToString() +
+              ' icon groups, expected one, so which icon wins is a shell decision')
+    }
+    if ($icon.Groups -eq 1 -and $icon.Blobs -ge $icon.Sizes.Count) {
+        Pass ($icon.Sizes.Count.ToString() + ' sizes declared and ' + $icon.Blobs.ToString() +
+              ' RT_ICON blobs present, so every entry in the group resolves')
+    } else {
+        Fail ('the icon group declares ' + $icon.Sizes.Count.ToString() + ' sizes but the ' +
+              'image holds ' + $icon.Blobs.ToString() + ' RT_ICON blobs')
+    }
+    # 16 for a file list, 32 for a taskbar, 48 for a desktop icon at 100 percent,
+    # and 256 for a high-DPI or oversized view.  A size outside this set is a free
+    # bonus and gets reported rather than required.
+    $wanted = @(16, 32, 48, 256)
+    $absent = @($wanted | Where-Object { $icon.Sizes -notcontains $_ })
+    if ($absent.Count -eq 0) {
+        Pass ('the declared sizes ' + ($icon.Sizes -join ', ') + ' cover 16, 32, 48 and 256')
+    } else {
+        Fail ('the icon declares ' + ($icon.Sizes -join ', ') +
+              ' and is missing ' + ($absent -join ', ') + ' px, so some view resamples it')
+    }
+}
 # ----------------------------------------------------------------- what each binary needs
 Step 'import inventory'
 $binaries = @(Get-ChildItem -LiteralPath $stage -Recurse -File |

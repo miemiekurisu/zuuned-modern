@@ -769,6 +769,18 @@ endif()
 target_include_directories(zuuned PRIVATE src/player ${MPV_INCLUDE_DIRS})
 zuuned_long_paths(zuuned)
 
+# The PE icon is the second Windows resource this target carries, and it belongs
+# to the app alone: a CLI probe is never double-clicked, so an icon for it is
+# decoration nobody sees.  RC is enabled here rather than with the other languages
+# because nothing else in the tree, on any platform, has a resource script.  The
+# resource ID in the script cannot collide with the manifest embedded just above
+# -- packaging/windows/zuuned.rc says why -- and rc.exe finds zuuned.ico beside
+# the script, not beside the object file.
+if(WIN32)
+    enable_language(RC)
+    target_sources(zuuned PRIVATE packaging/windows/zuuned.rc)
+endif()
+
 if(WIN32)
     target_link_libraries(zuuned PRIVATE ${MPV_LIBRARIES} Qt6::OpenGL)
 elseif(NOT APPLE)
