@@ -82,6 +82,7 @@ $sources = (
     "qml/VideoSeriesDetail.qml",
     "qml/VideoTitleRepairSheet.qml",
     "qml/ZuneSearchField.qml",
+    "src/main.cpp",
     "src/LibraryService.cpp",
     "src/DeviceService.cpp",
     "src/DeviceService.h",

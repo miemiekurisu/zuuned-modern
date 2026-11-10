@@ -2418,7 +2418,8 @@ the group declares, and 16, 32, 48 and 256 all present.  A preview run answers
 `tests/privacy/reviewed-media.txt`, so the icon is registered by exact file name rather
 than by `packaging/windows/` - a screenshot dropped into that folder later is still
 refused until somebody reads it.  Left alone on purpose: the PE subsystem of
-`build\zuuned.exe` is 3, console, and stays that way, and
+`build\zuuned.exe` is 3, console, and stays that way - superseded by the last paragraph of
+this file, which makes it 2, GUI, with no command window - and
 `packaging/macos/Info.plist.in` has no icon key with no `.icns` anywhere, so macOS still
 holds the gap this closes for Windows.  **Nothing here moves a capability on
 `docs/WINDOWS_PORT.md`.**  A Zune HD sat bound on WinUSB through the sitting and was
@@ -2456,3 +2457,146 @@ the archive in the format beta1 shipped (lowercase hex, two spaces, name, CRLF, 
 **Nothing was published here and publishing stays the owner's call;** `v0.2.0-beta1` and
 its assets stand untouched.  **No capability on `docs/WINDOWS_PORT.md` moved**, and the
 Zune HD bound through the sitting was browsed read-only by a smoke launch.
+
+
+**2026-11-10 `zuuned.exe` stopped opening a command window, and the guard had to learn to
+re-arm.**  A console full of log lines on every double-click is a build artefact dressed up as
+a product, so the application image is GUI subsystem now: `WIN32_EXECUTABLE` on the `zuuned`
+target plus `/ENTRY:mainCRTStartup`, because `/SUBSYSTEM:WINDOWS` on its own asks for
+`WinMainCRTStartup` and this tree has only ever had a `main()`.  The other six executables
+stay console deliberately - every one of them is read from a shell - and `Step 'subsystem'` in
+`packaging/windows/deploy.ps1` now reads the two subsystem bytes of the staged images and
+fails the run when either answer moves, with the same step in `packaging/windows/verify-zip.ps1`
+reading them back out of the `.zip` member prefixes.   Writing that second reader is what found that only one of the two was
+  wrong, and it was the new one: `Get-PeSubsystemFromPrefix` asked *file offset 0*
+  for the `PE\0\0` signature, and at offset 0 the bytes are `MZ`, so it answered -1
+  for every real image and neither archive check could ever have passed.  `PE\0\0`
+  belongs at the header offset stored at 0x3C - 0x118 for `devicetool.exe`, 0x130 for
+  `zuuned.exe` on this toolchain - so the reader asks offset 0 for `MZ` and `$pe` for
+  `PE\0\0` now, which is the order `Read-PeSubsystem` in `deploy.ps1` already had
+  right.  A check that fails on the bad archive and passes on the good one is the
+  only evidence that a check exists: run it against the stale beta `.zip` before
+  believing a green subsystem step.  `README-Windows.txt` says the matching
+thing to a tester: double-click it, and add `--debug` to watch the log.
+
+Stderr is this tree's primary diagnostic channel, so taking the console away means promising
+it back.  `--debug` or `ZUUNED_DEBUG=1` runs `zuuned_win_debug_console()`, which attaches
+before it allocates - a child of a terminal that simply never wired the handles belongs in
+that terminal, not in a second window - and only when `AttachConsole(ATTACH_PARENT_PROCESS)`
+fails does it `AllocConsole()` and title the window `Zuuned - debug console`.  The rule that
+makes this safe to run inside both gates is that it never takes a stream somebody is already
+reading: if `GetStdHandle()` answers anything usable it returns without a word, so a
+redirected launch still captures every line and `zuuned.exe > zuuned.log 2>&1` still works.
+`--version` asks for the same console, because a GUI child of a terminal holds NULL std
+handles and would otherwise print a version number nowhere.  Two API notes from writing it:
+`_freopen` is not one of the names the UCRT exports - the deprecated-alias spelling is the
+missing one - so it is `freopen_s`, and each of the three `CONIN$`/`CONOUT$` streams needs its
+own `_setmode(_O_TEXT)` because `_fmode` is `_O_BINARY` by then; and in Qt 6.11
+`qEnvironmentVariable()` answers with a `QString`, not a `QByteArray`.
+
+Ordering is what bit.  `_setmode(_fileno(stdout), _O_BINARY)` is precisely the call the
+invalid-parameter guard exists to survive, and a double-clicked GUI process is exactly the
+case where the CRT had no console to hand that stream, so the guard and
+`SetErrorMode(SEM_FAILCRITICALERRORS)` now run before the stdio calls in
+`zuuned_win_runtime_init()` rather than after them.  Doing that spent the guard's
+`InitOnceExecuteOnce`; the win-compat probe clears the handler on purpose to prove
+`fd_handle()` puts it back, so with the flag consumed the next `fstat()` on a raw NT handle met
+the CRT's own handler and the gate died as `-1073740791` - `__fastfail`, `0xC0000409` - with
+nothing on the record but group headers.  Those headers were not a buffering illusion:
+`main()` sets stdout unbuffered before the first check, so the run really stopped inside
+`test_opendir()`.  `ensure_invalid_parameter_guard()` reads `_get_invalid_parameter_handler()`
+and re-asserts now, which is the only version that keeps a promise its caller is allowed to
+break; measured while writing that sentence, `_set_invalid_parameter_handler` is process-wide
+on this UCRT - a thread created before the set sees it afterwards - so the one-shot was
+time-broken, never thread-broken.
+
+A GUI image that decides not to start would otherwise leave no trace at all, so the
+single-instance refusal also calls `zuuned_win_notice()` - one `MessageBoxW`, and only when
+`zuuned_win_output_available()` says there is no stream to say it in - which is what puts
+`user32.lib` in the `zuuned_wincompat` interface and makes `tests/win-compat/run.ps1` another
+consumer of that shim which CMake cannot see: it compiles `compat/win/wincompat.c` beside its
+own probe instead of linking the library, so its `cl` line owes `user32.lib` as well and
+otherwise dies on `__imp_MessageBoxW` before one check runs.
+
+Measured on the relinked build, in scratch profiles, never the real one: an ordinary launch
+opens no console process and no console window and closes politely; a launch whose parent gave
+up its console and that passes `--debug` owns exactly one `ConsoleWindowClass` window titled
+`Zuuned - debug console`; a console-less second copy into a profile somebody else holds shows
+exactly one `#32770` dialog titled `Zuuned` and exits 0 once it is dismissed, while the same
+rival with redirected pipes prints the bowing-out line and shows nothing.  One harness trap
+belongs to whoever writes the next of these: `Start-Process` from a shell that still owns a
+console hands that console to a GUI child, so a "double-click" launched that way legitimately
+prints instead of dialoguing - the parent has to `FreeConsole()` first, and afterwards it
+cannot launch a console-subsystem helper at all, because `winshot` fails as 0x6 with no console
+to attach, so the script reads windows instead.
+
+Counters, as expectations from here on and not as edits to the numbers written by
+`docs/releases/BETA_WINDOWS_2026-11-08.md`, which belong to the runs that recorded them:
+`tests\win-compat` **204 checks / 0 failures / 0 skips**, three of them the new
+`output_channel` group; `tests\win-usability` **launches=18 checks=136 failures=0 skips=0
+killed=0**, the new check pinning that `ZUUNED_DEBUG=1 --version` keeps the stream its
+launcher handed it; `deploy.ps1` preview **44 checks / 0 failures**, its `-Release` line six checks longer
+by reading the script and never run for this change - `-Release` provenance refuses a
+dirty tree anyway;
+`verify-zip.ps1` **17 checks / 0 failures** against the archive that same run wrote, and
+**1 failure** against the stale beta archive, which is the negative control that makes
+the check worth having.  Both scripts count `Pass` calls in `checks` and never count a
+`Fail`, so a run that fails one check reports one fewer check than a clean run judged;
+compare `checks + failures`.  The archive published under the beta tag therefore carries a
+console-subsystem executable and is stale for this change; nothing was repackaged or published
+here, and that stays the owner's call.  **Nothing here moves a capability on
+`docs/WINDOWS_PORT.md`:** a Zune HD sat bound on WinUSB through the sitting and was reached
+only by harness launches browsing it read-only inside isolated profiles, and no device claim is
+carried by anything above.
+
+
+**2026-11-11 the refusal sentence went into the catalogue, and the two usability failures were
+a cold cache.**  The dialog the paragraph above adds is the only sentence a double-clicked user
+reads, so its wording belongs to `i18n/zh_CN.tsv` and not to `src/main.cpp`: the call is
+`UiText::tr()` around the English sentence, the tsv carries that sentence ` ~=> ` the Chinese one
+(`Zuuned 已经在运行；另一个实例正持有音乐库与播放器的连接。`), and `src/main.cpp` joins the
+`$sources` list in `i18n/update.ps1` because that list *is* the coverage claim - a C++ file
+outside it is a file nobody extracts from, so the audit stays green while the one string a user
+can see goes untranslated.  One lupdate behaviour is worth knowing before re-wrapping any
+string: it takes an adjacent string-literal concatenation as a *single* source text, so a
+sentence split over three lines arrives whole and the joined sentence is the key - re-wrap the
+C++ and the key moves under you.  Translated and measured, because that is the point: with
+`uiLanguage=zh_CN` in the profile ini a rival copy into a held profile opens exactly one `#32770`
+titled `Zuuned`, its static reads the Chinese sentence, its button reads `确定`, and it exits 0 -
+and the same answer with `build\i18n` renamed away, which is the compiled-in `:/i18n` speaking.
+It has to be carried into both catalogues because the dialog is raised before any QML engine
+exists, so nothing on the QML side could ever translate it.  `lupdate` counted 1543 source texts
+(1 new), the `.ts` diff is 4 lines, `build_qm.ps1 -Fill -NextToExe` answers `translated 1543
+missing 0`, and `python i18n/audit.py` answers `AUDIT=ok` with the catalogue at 1543 texts and 0
+without Chinese and the tsv at 1394 lines, 64 scoped, 0 missing, 0 stale.
+
+**The usability gate is cold-cache flaky on two checks and nobody should have to rediscover
+it.**  The run straight after the rebuild answered `launches=18 checks=136 failures=2`, and both
+failures named the same six files: `cache\_qt_QGfxShaderBuilder_6.11.0\*.qsb` in the *real*
+profile, which is exactly what `the real profile gained no file while the gate ran` and
+`Qt pipeline cache stayed out of the real profile` exist to catch.  Their creation stamps land
+between two launches of that run, the real profile's shader-builder directory went from 38
+entries to 44, and none of the eighteen isolated profiles owns such a directory - the builder
+asks `QStandardPaths::CacheLocation` for itself and offers only `QT_GFXSHADERBUILDER_REFRESH_CACHE`,
+a rebuild switch rather than a redirect, so `ZUUNED_PROFILE_DIR` cannot reach it.  Because the
+cache is shared, a shader hash is written once by whichever launch asks first and never again,
+which is why the same binary re-run answers `launches=18 checks=136 failures=0 skips=0
+killed=0` with the real profile identical before and after at 191 files and 3416255 bytes.
+Nothing product-side moved between the two runs and the fix belongs to Qt, so what this paragraph
+buys the next reader is a diagnosis rather than a repair; the sibling attribution check still
+cannot clear such a launch because it matches a process id in the file name and these files are
+named by hash.
+
+**Counters, all of them re-measured the next day on the shipping `build\zuuned.exe`.**
+`tests\win-compat` 204 checks / 0 failures / 0 skips; `tests\win-usability` `launches=18
+checks=136 failures=0 skips=0 killed=0`; `packaging/windows/deploy.ps1` preview 44 checks /
+0 failures over an archive whose sha256 is
+`DC1E5186ABE104C1CD826D162BF0691252001C4764A06C5CB759D7A7E04A47C3`, and that same run audits the
+archive it wrote with `packaging/windows/verify-zip.ps1` for 18 checks / 0 failures - which is
+the standalone 17 above plus `the digest matches the one recorded when it was written`, a check
+that exists only when `-ExpectSha256` is passed, so 17 and 18 are one verdict and not drift.  The
+negative control against the stale beta archive still answers 1 failure and it is still the
+subsystem line.  **No capability on `docs/WINDOWS_PORT.md` moved:** one Pavo Zune HD, hand-tested,
+and this sitting reached it only through harness launches browsing it read-only inside isolated
+profiles; nothing was sent, deleted or played, and nobody has heard audio out of this application
+on a PC.

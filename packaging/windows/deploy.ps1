@@ -134,6 +134,27 @@ function Get-PeResourceDir {
     return $list
 }
 
+function Read-PeSubsystem {
+    # One word in the optional header answers "does opening this open a command
+    # window": 2 is GUI and 3 is console.  It sits at the same offset in PE32 and
+    # PE32+ - 24 for the optional header (PE signature plus the 20-byte file
+    # header) and 68 into that - which is not true of the data directories, whose
+    # offset depends on the machine, so this one needs no section table.  Answer
+    # is -1 for anything that is not an image, which the caller reports instead
+    # of reading as a subsystem.
+    param([string]$Path)
+    try {
+        $bytes = [IO.File]::ReadAllBytes($Path)
+        if ($bytes.Length -lt 0x40) { return -1 }
+        $pe = [BitConverter]::ToInt32($bytes, 0x3C)
+        if ($pe -lt 0 -or ($pe + 94) -gt $bytes.Length) { return -1 }
+        if ([BitConverter]::ToUInt32($bytes, $pe) -ne 0x00004550) { return -1 }
+        return [int][BitConverter]::ToUInt16($bytes, $pe + 92)
+    } catch {
+        return -1
+    }
+}
+
 function Read-PeIcon {
     # Read the icon back out of an image, from bytes, with no tool installed and no
     # assembly loaded.  An application that sets a QIcon at run time and an image the
@@ -662,12 +683,20 @@ $readme.Add('   player is in the machine with no usable driver and names the dev
 $readme.Add('   This package does not install a driver and never tries to.')
 $readme.Add('')
 $readme.Add('2. Run it')
-$readme.Add('   Double-click zuuned.exe, or start it from a terminal to keep its output:')
-$readme.Add('     zuuned.exe')
-$readme.Add('   zuuned.exe --version prints the build, including the source revision it came')
-$readme.Add('   from.  The interface starts in English; Settings, General, Language switches')
-$readme.Add('   to Chinese.  Add your music folders when it asks, or from Settings, Music,')
-$readme.Add('   Watch folders.')
+$readme.Add('   Double-click zuuned.exe.  It opens its own window and no command window; if')
+$readme.Add('   Zuuned is already running, a second copy says so in a box and bows out,')
+$readme.Add('   because the first one holds the music library and the player.')
+$readme.Add('   To watch the app write its log, add the debug parameter:')
+$readme.Add('     zuuned.exe --debug')
+$readme.Add('   That opens a second window holding everything the app prints as it runs, and')
+$readme.Add('   it closes with the app.  ZUUNED_DEBUG=1 asks for the same thing without an')
+$readme.Add('   argument.  From a terminal nothing needs the window, so')
+$readme.Add('     zuuned.exe > zuuned.log 2>&1')
+$readme.Add('   keeps the log in a file instead, and')
+$readme.Add('     zuuned.exe --version')
+$readme.Add('   prints the build, including the source revision it came from.  The interface')
+$readme.Add('   starts in English; Settings, General, Language switches to Chinese.  Add your')
+$readme.Add('   music folders when it asks, or from Settings, Music, Watch folders.')
 $readme.Add('')
 $readme.Add('3. Optional: the FFmpeg command line')
 $readme.Add('   Conversion, WMA Lossless and every probe use the FFmpeg library inside this')
@@ -794,6 +823,35 @@ if (-not $icon) {
               ' and is missing ' + ($absent -join ', ') + ' px, so some view resamples it')
     }
 }
+# --------------------------------------------- a window, and not a command window
+Step 'subsystem'
+# The beta that shipped as a console image put a black command window behind every
+# double-click, and every other check in this script stayed silent about it because
+# each one asks a different question of the file.  So the word itself is read here,
+# for both binaries, and devicetool.exe is the negative control: without it a change
+# that moved every target in the tree to subsystem 2 would read as success in this
+# script while breaking the one command a tester runs from a shell to answer the
+# driver question.  Neither check launches anything - it is one word in the header.
+$appSubsystem = Read-PeSubsystem (Join-Path $stage 'zuuned.exe')
+if ($appSubsystem -eq 2) {
+    Pass 'zuuned.exe is a GUI-subsystem image, so opening it shows no command window'
+} else {
+    Fail ('zuuned.exe is subsystem ' + $appSubsystem.ToString() +
+          '; 2 opens no command window and 3 opens one')
+}
+$deviceToolPath = Join-Path $stage 'devicetool.exe'
+if (Test-Path -LiteralPath $deviceToolPath) {
+    $toolSubsystem = Read-PeSubsystem $deviceToolPath
+    if ($toolSubsystem -eq 3) {
+        Pass 'devicetool.exe is still a console image, so its answer still reaches a terminal'
+    } else {
+        Fail ('devicetool.exe is subsystem ' + $toolSubsystem.ToString() +
+              '; it has to stay 3 to print into the shell that ran it')
+    }
+} else {
+    Note 'no devicetool.exe staged, so the console half of this pair is unchecked'
+}
+
 # ----------------------------------------------------------------- what each binary needs
 Step 'import inventory'
 $binaries = @(Get-ChildItem -LiteralPath $stage -Recurse -File |

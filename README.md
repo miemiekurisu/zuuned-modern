@@ -173,6 +173,12 @@ install Ninja records zero header dependencies, so an incremental build after a 
 edit quietly relinks stale objects. `BUILDING.md` explains, with the upstream issue
 numbers.
 
+`build\zuuned.exe` is a GUI-subsystem image, so double-clicking it opens its window and
+no command window; a log nobody asked for is a build artefact, not a feature. Ask for the
+log when you want it: `build\zuuned.exe --debug`, or `ZUUNED_DEBUG=1`, rejoins the terminal
+the app came out of and opens a window of its own only when there is no terminal, and
+`build\zuuned.exe > zuuned.log 2>&1` leaves it in a file.
+
 Two software gates ship with the tree and neither one touches a player:
 
 ```powershell

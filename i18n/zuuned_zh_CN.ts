@@ -6092,6 +6092,10 @@ Star an episode in any show to find it here.</source>
         <source>Will remove on sync</source>
         <translation>将在同步时移除</translation>
     </message>
+    <message>
+        <source>Zuuned is already running; the other instance holds the library and the player.</source>
+        <translation>Zuuned 已经在运行；另一个实例正持有音乐库与播放器的连接。</translation>
+    </message>
 </context>
 <context>
     <name>VideoMovieDetail</name>

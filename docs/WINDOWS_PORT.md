@@ -2706,3 +2706,97 @@ published and untouched, because a different digest needs its own tag and that i
 owner's call.  **No capability on this page moved:** the Pavo bound on this machine was
 browsed read-only by the smoke launch, nothing was written to or read back from a player,
 and the open list is as the paragraph above left it.
+
+
+**2026-11-10 a double-click opens no command window, and the archive check that could never
+have passed.**  A console full of log lines behind the app on every launch is a build artefact
+dressed up as a product, so the shipped image is GUI subsystem now: `WIN32_EXECUTABLE` plus
+`/ENTRY:mainCRTStartup` on the `zuuned` target - `/SUBSYSTEM:WINDOWS` alone asks for
+`WinMainCRTStartup` and this tree has only ever had a `main()`.  The other six executables
+stay console on purpose, every one of them read from a shell, and that pair is pinned rather
+than assumed: `Step 'subsystem'` reads the subsystem word of the staged images in
+`packaging/windows/deploy.ps1` and reads it again out of the `.zip` member prefixes in
+`packaging/windows/verify-zip.ps1`, so neither a build nor an archive can drift back to a
+console app or lose the device probe's stdout quietly.
+
+**The second reader was the broken one, and this is the third time a PE offset has bitten on
+this page.**  `Get-PeSubsystemFromPrefix` asked *file offset 0* for the `PE\0\0` signature;
+at offset 0 the bytes are `MZ`, so it answered -1 for every real image and the two new archive
+checks could only ever have failed.  `PE\0\0` lives at the header offset stored at 0x3C -
+0x118 for `devicetool.exe`, 0x130 for `zuuned.exe` here - and the reader now checks `MZ` at 0
+and `PE\0\0` at `$pe`, the order `Read-PeSubsystem` in `deploy.ps1` already had right.
+Measured both ways, which is the only evidence a check exists: against the archive this
+sitting wrote, **17 checks / 0 failures**; against the stale beta archive on disk, **1
+failure** and it is exactly `zuuned.exe inside the archive is subsystem 3`, with the privacy,
+structure and credential steps still green.  Note before comparing counters: both scripts
+count `Pass` calls into `checks` and never count a `Fail`, so a run that fails one check
+reports one fewer check - read `checks + failures`.
+
+**Stderr is this tree's primary diagnostic channel, so taking the console away means
+promising it back.**  `--debug` or `ZUUNED_DEBUG=1` runs `zuuned_win_debug_console()`, which
+`AttachConsole(ATTACH_PARENT_PROCESS)` before it `AllocConsole()`s - a child of a terminal
+that merely never wired its handles belongs in that terminal, not in a second window - and
+titles an allocated window `Zuuned - debug console`.  It declines whenever a std handle is
+already usable, so a redirected launch keeps every line and `zuuned.exe > zuuned.log 2>&1`
+still works; `--version` asks for the same console, because a GUI child of a terminal holds
+NULL std handles and would print a version number nowhere.  A GUI image that declines to
+start would leave no trace, so the single-instance refusal shows one `MessageBoxW`, and only
+when there is no stream to say it in.  The cost of ordering this correctly was a compat gate
+that died as `0xC0000409`: moving the invalid-parameter guard ahead of the stdio calls spent
+its run-once flag, the probe clears the handler deliberately to prove `fd_handle()` re-arms
+it, and the next `fstat()` on a raw NT handle met the CRT's own handler.  The guard reads
+`_get_invalid_parameter_handler()` and re-asserts now, and `_set_invalid_parameter_handler`
+turned out to be process-wide on this UCRT, so the one-shot was time-broken, never
+thread-broken.  `AGENTS.md` carries the long form of both.
+
+**Gates, on the relinked build, in scratch profiles.**  `tests\win-compat` 204 checks, 0
+failures, 0 skips - three of them a new `output_channel` group - and
+`tests\win-usability` `launches=18 checks=136 failures=0 skips=0 killed=0`, the added check
+pinning that `ZUUNED_DEBUG=1 --version` keeps the stream its launcher handed it; the two
+packaging steps are the 17/0 and 44/0 above.  Launch behaviour was read off windows rather
+than asserted: an ordinary launch opens no console process and no console window, a
+`FreeConsole` parent plus `--debug` owns exactly one `ConsoleWindowClass` window, and a
+console-less second copy into a held profile shows exactly one `#32770` dialog and exits 0 on
+dismiss - while the same rival with redirected pipes prints the bowing-out line and shows
+nothing.
+
+**The beta that shipped opens a console, and that is now the only stale thing about it.**  The
+published `v0.2.0-beta1` tag and the archive beside it carry a console-subsystem executable;
+repackaging and re-publishing stay the owner's call and nothing was published here.  **No
+capability on this page moved.**  A Pavo Zune HD sat bound through the sitting and was
+reached only by harness and smoke launches browsing it read-only inside isolated profiles; no
+send, deletion or playback was triggered by this pass, nobody has heard audio out of this
+application on a PC, and podcasts, audiobooks, photos and video on a player, every model but
+that one Zune HD, and this package on a machine that did not build it all stay open.
+
+
+**2026-11-11 the refusal dialog speaks Chinese, and two gate failures turned out to be a cold
+shared cache.**  The sentence a second copy shows when the first one holds the profile now comes
+from `UiText::tr()` and lives in `i18n/zh_CN.tsv` with the rest of the wording, and `src/main.cpp`
+joined the source list in `i18n/update.ps1` so the audit actually reads it.  That is the only
+place it can live: the dialog is raised before any QML engine exists, so nothing on the QML side
+could translate it.  Measured with `uiLanguage=zh_CN` twice, once with `build\i18n` in place and
+once with it renamed away so the compiled-in `:/i18n` is answering - one `#32770` titled `Zuuned`,
+its static in Chinese, its button `确定`, exit 0 - and `python i18n/audit.py` answers `AUDIT=ok`
+with 1543 source texts and none lacking Chinese.
+
+**Two failures on one run, cleared by a re-run and by nothing else.**  The first usability run
+after the rebuild reported `failures=2`, both of them six `*.qsb` files that Qt's shader builder
+had just written into the *real* profile under
+`cache\_qt_QGfxShaderBuilder_6.11.0`.  That directory is the one profile location this app cannot
+own: the builder asks `QStandardPaths::CacheLocation` and ships only a rebuild switch, no
+redirect, so `ZUUNED_PROFILE_DIR` has no purchase on it and none of the eighteen isolated profiles
+has one.  A shader hash is written there once, by whichever launch asks for it first, so a run
+that meets a new hash is blamed for a cache miss and the next run of the same binary is clean:
+`launches=18 checks=136 failures=0 skips=0 killed=0`, real profile identical before and after at
+191 files.  Nothing product-side changed between those runs; the limitation is Qt's.
+
+**Counters on the shipping binary, re-measured 2026-11-11.**  `tests\win-compat` 204 checks /
+0 failures / 0 skips; `tests\win-usability` `launches=18 checks=136 failures=0 skips=0
+killed=0`; `packaging/windows/deploy.ps1` preview 44 checks / 0 failures, archive sha256
+`DC1E5186ABE104C1CD826D162BF0691252001C4764A06C5CB759D7A7E04A47C3`, and that run's own audit of
+the archive 18 checks / 0 failures.  The published `v0.2.0-beta1` archive still carries a
+console-subsystem executable, and repackaging stays the owner's call.  **No capability on this
+page moved:** one Pavo Zune HD, hand-tested, touched this time only by harness launches browsing
+it read-only inside isolated profiles; nothing was sent, deleted or played, and nobody has heard
+audio out of this application on a PC.

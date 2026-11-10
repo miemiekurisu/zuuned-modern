@@ -176,8 +176,12 @@ if(WIN32)
     add_library(zuuned_wincompat STATIC compat/win/wincompat.c)
     target_include_directories(zuuned_wincompat PUBLIC
         ${ZUUNED_COMPAT_DIR} ${PCRE2_INCLUDE_DIR})
+    # user32 because this is the one object that owns MessageBoxW(): the app calls
+    # it when a second copy bows out with nowhere to print, and since every
+    # Windows binary in the tree links this object the library has to come along
+    # on the interface rather than only where the call happens.
     target_link_libraries(zuuned_wincompat PUBLIC
-        ${PCRE2_POSIX_LIBRARY} ${PCRE2_8_LIBRARY})
+        ${PCRE2_POSIX_LIBRARY} ${PCRE2_8_LIBRARY} user32)
     target_compile_options(zuuned_wincompat PRIVATE
         "$<$<COMPILE_LANGUAGE:C>:/utf-8>" ${ZUUNED_SHIM_FLAGS})
 endif()
@@ -779,6 +783,29 @@ zuuned_long_paths(zuuned)
 if(WIN32)
     enable_language(RC)
     target_sources(zuuned PRIVATE packaging/windows/zuuned.rc)
+endif()
+
+# zuuned.exe is a GUI-subsystem image: opening the shipped app shows its window
+# and nothing else, and a command window behind it is a build artefact, not a
+# feature.  What that window carried is opt-in now, not gone - src/main.cpp asks
+# zuuned_win_debug_console() for it on --debug / ZUUNED_DEBUG, and that call
+# attaches to the terminal the process came from before it allocates a window of
+# its own, and declines outright when a stream already works.  Every launcher
+# that hands the app a redirected pipe therefore keeps reading exactly that pipe,
+# which is how both Windows gates are unaffected; nothing may instead run the app
+# through cmd.exe /c and expect to read its stderr.
+#
+# Only the app flips.  A CLI probe is read from a terminal by definition and
+# devicetool.exe answers a support question from a shell, so they stay console
+# images - and packaging/windows/deploy.ps1 asserts the app is subsystem 2 while
+# devicetool.exe is still 3, so a change that quietly moved the whole tree cannot
+# pass itself off as this feature.
+#
+# The entry point has to be named because /SUBSYSTEM:WINDOWS makes the CRT
+# start-up default to WinMainCRTStartup, and this source has always had main().
+if(WIN32)
+    set_target_properties(zuuned PROPERTIES WIN32_EXECUTABLE TRUE)
+    target_link_options(zuuned PRIVATE "/ENTRY:mainCRTStartup")
 endif()
 
 if(WIN32)

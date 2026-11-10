@@ -111,6 +111,51 @@ Pass ($who.Count.ToString() + ' person needle(s), ' + $roots.Count.ToString() +
       ' build-root needle(s) an own file may not name, ' +
       $foreignRoots.Count.ToString() + ' ancestor needle(s) judged only in foreign binaries')
 
+function Read-HeadBytes {
+    # The first bytes of a member, read forward and no further.  A zip member
+    # stream cannot be rewound, so a header check asks for exactly the prefix it
+    # needs instead of unpacking the archive: 1 KB out of a member that is tens of
+    # megabytes.  Answer is $null for a member that is shorter or will not open.
+    param($Entry, [int]$Count)
+    $buffer = New-Object byte[] $Count
+    $s = $null
+    try {
+        $s = $Entry.Open()
+        $got = 0
+        while ($got -lt $Count) {
+            $read = $s.Read($buffer, $got, $Count - $got)
+            if ($read -le 0) { break }
+            $got += $read
+        }
+        if ($got -lt $Count) { return $null }
+        return ,$buffer
+    } catch {
+        return $null
+    } finally {
+        if ($s) { $s.Dispose() }
+    }
+}
+
+function Get-PeSubsystemFromPrefix {
+    # Same field packaging/windows/deploy.ps1 reads off the staged file, so the two
+    # gates cannot disagree about what the image is: 2 GUI, 3 console, -1 for
+    # anything that is not an image or a prefix too short to hold the header.  With
+    # the prefix starting at file offset 0, the PE header offset is a file offset.
+    param($Bytes)
+    if (-not $Bytes -or $Bytes.Length -lt 0x40) { return -1 }
+    # Two signatures, at two different offsets, and conflating them makes this
+    # answer -1 for every real image: `MZ` belongs at file offset 0 and `PE\0\0`
+    # belongs at the header offset stored at 0x3C, which on this toolchain is
+    # 0x118 for devicetool.exe and 0x130 for zuuned.exe.  Asking offset 0 for the
+    # PE signature therefore refused both, and the pair of checks below passed
+    # nothing while reporting nothing.
+    if ([BitConverter]::ToUInt16($Bytes, 0) -ne 0x5A4D) { return -1 }
+    $pe = [BitConverter]::ToInt32($Bytes, 0x3C)
+    if ($pe -lt 0 -or ($pe + 94) -gt $Bytes.Length) { return -1 }
+    if ([BitConverter]::ToUInt32($Bytes, $pe) -ne 0x00004550) { return -1 }
+    return [int][BitConverter]::ToUInt16($Bytes, $pe + 92)
+}
+
 # ------------------------------------------------------------------------ the members
 Step 'entries'
 try { Add-Type -AssemblyName System.IO.Compression.FileSystem } catch { }
@@ -328,6 +373,43 @@ try {
     } else {
         Pass ('all ' + $scanned.ToString() + ' members were read to their end, none was skipped')
     }
+
+    # ---------------------------------------------------------------- what opens a window
+    Step 'subsystem'
+    # deploy.ps1 judges the staged folder and this script judges the archive a tester
+    # actually downloads, so the same word is read again here from inside the .zip.
+    # Two members, both by name: zuuned.exe has to be GUI or a double-click opens a
+    # command window behind the app, and devicetool.exe has to stay console or the
+    # one command that answers "is the driver bound" stops printing into the shell
+    # that ran it.  One KB of each, read forward, nothing unpacked.
+    $guiEntry = @($files | Where-Object { $_.Name -eq 'zuuned.exe' })
+    if ($guiEntry.Count -ne 1) {
+        Fail ('zuuned.exe appears ' + $guiEntry.Count.ToString() +
+              ' time(s) in the archive, so there is nothing to judge')
+    } else {
+        $gui = Get-PeSubsystemFromPrefix (Read-HeadBytes -Entry $guiEntry[0] -Count 0x400)
+        if ($gui -eq 2) {
+            Pass ('zuuned.exe inside the archive is a GUI-subsystem image, so a double-click ' +
+                  'opens no command window')
+        } else {
+            Fail ('zuuned.exe inside the archive is subsystem ' + $gui.ToString() +
+                  '; 2 opens no command window and 3 opens one')
+        }
+    }
+    $toolEntry = @($files | Where-Object { $_.Name -eq 'devicetool.exe' })
+    if ($toolEntry.Count -ne 1) {
+        Note ('devicetool.exe appears ' + $toolEntry.Count.ToString() +
+              ' time(s), so the console half of this pair is unchecked')
+    } else {
+        $tool = Get-PeSubsystemFromPrefix (Read-HeadBytes -Entry $toolEntry[0] -Count 0x400)
+        if ($tool -eq 3) {
+            Pass ('devicetool.exe inside the archive is still a console image, so it still ' +
+                  'answers into the terminal that ran it')
+        } else {
+            Fail ('devicetool.exe inside the archive is subsystem ' + $tool.ToString() +
+                  '; it has to stay 3 to print into a shell')
+        }
+    }
 } finally { $archive.Dispose() }
 
 # -------------------------------------------------------------------------- summary
@@ -342,7 +424,8 @@ Write-Host ('  checks      ' + $checks + ', failures ' + $failures)
 Write-Host ''
 Write-Host '  | What this proves: the archive as it stands on disk unpacks into one folder,'
 Write-Host '  | holds no log, database, settings file, debug symbol, playlist, photo, audio'
-Write-Host '  | or video, carries no MTPZ credentials, and carries no account, host, home'
+Write-Host '  | or video, gives the app a GUI subsystem and the device probe a console one,'
+Write-Host '  | carries no MTPZ credentials, and carries no account, host, home'
 Write-Host '  | folder or test-library name in any byte of any member - every file in the'
 Write-Host '  | archive was opened, read to its end and searched, none by extension whitelist.'
 Write-Host '  | What it does not prove: that the application runs, or anything at all about a'

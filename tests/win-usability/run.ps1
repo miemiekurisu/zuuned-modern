@@ -1688,6 +1688,24 @@ if (Select-Phase 'single') {
     Check 'the refused instance never built a scene to show' `
         (($rival.Code -eq 0) -and (($rival.Out + $rival.Err) -notmatch '\[qa\] ')) `
         ('code=' + $rival.Code)
+    # zuuned.exe is a GUI-subsystem image: whatever stream a launcher redirected
+    # us into is the only copy of our output there is, and ZUUNED_DEBUG or --debug
+    # is not allowed to take it away in favour of a window nobody is reading.  The
+    # line this looks for is printed exactly when the app opened a console of its
+    # own, so a build that forgot to decline a stream that already works fails here
+    # instead of quietly blinding every check that reads stderr.  --version is the
+    # carrier because it asks for the same console and still exits before the lock,
+    # the session log and the profile, which is what tests/diagnostics/CORE.md
+    # requires of it; ZUUNED_DEBUG is the request rather than the flag because
+    # --version only counts as a bare version request when it is the whole command
+    # line.
+    $debugPipe = Invoke-Proc -File $exe -Timeout 60 -Arguments @('--version') -Env @{
+        ZUUNED_DEBUG = '1'
+    }
+    Check 'a debug request keeps the stream its launcher handed it' `
+        (($debugPipe.Code -eq 0) -and ($debugPipe.Out -match 'Zuuned ') -and
+         (($debugPipe.Out + $debugPipe.Err) -notmatch '\[win\] debug console')) `
+        ('code=' + $debugPipe.Code + ' out=' + $debugPipe.Out.Trim() + ' err=' + $debugPipe.Err.Trim())
     Check 'the rival refused without touching the holder window' `
         ($holderWindow.Handle -ne [IntPtr]::Zero) ('source=' + $holderWindow.Source)
     $closed = Stop-Zuuned -Handle $holder

@@ -29,6 +29,7 @@
 #include "ApplicationIdentity.h"
 #include "ProfilePaths.h"
 #include "AppSettings.h"
+#include "UiText.h"
 #include "GrungeMaskProvider.h"
 #include "LibraryService.h"
 #include "spoken/SpokenMediaService.h"
@@ -134,6 +135,23 @@ void installUiLanguage()
                  qtAnswered.isEmpty() ? "none" : qUtf8Printable(qtAnswered.trimmed()));
 }
 
+#ifdef Q_OS_WIN
+// Opening Zuuned shows a window and no command window (see the WIN32_EXECUTABLE
+// block in CMakeLists.txt), which costs the stderr channel every diagnosis in
+// this tree is written to.  It comes back on request: --debug, or a ZUUNED_DEBUG
+// that is not "0".  The explicit refusal matters because one inherited value in
+// a shared environment must not turn every launch of a shipped app into a
+// console, which is the thing the subsystem change exists to prevent.
+bool debugConsoleRequested(int argc, char *argv[]) {
+    const QString flag = qEnvironmentVariable("ZUUNED_DEBUG");
+    if (!flag.isEmpty() && flag != QLatin1String("0")) return true;
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i] && std::strcmp(argv[i], "--debug") == 0) return true;
+    }
+    return false;
+}
+#endif
+
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -143,7 +161,22 @@ int main(int argc, char *argv[]) {
     zuuned_win_runtime_init();
 #endif
     // Safe release identification: no GUI, scanner, USB or settings startup.
-    if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
+    const bool versionOnly = argc == 2 && std::strcmp(argv[1], "--version") == 0;
+#ifdef Q_OS_WIN
+    // A GUI-subsystem image has no console, and a terminal that started one
+    // usually leaves it no standard handles either, so --version needs the same
+    // console --debug does or it prints nothing at all.  The call answers 0
+    // whenever a stream already works, which is how both Windows gates keep the
+    // pipe they redirected us into and why no run of either sees a new window.
+    const bool wantDebugConsole = debugConsoleRequested(argc, argv);
+    const bool hasDebugConsole =
+        (wantDebugConsole || versionOnly) ? zuuned_win_debug_console() == 1 : false;
+    if (hasDebugConsole && wantDebugConsole) {
+        std::fprintf(stderr,
+                     "[win] debug console attached; this window is Zuuned's own output\n");
+    }
+#endif
+    if (versionOnly) {
         std::printf("Zuuned %s\n", ZuunedBuild::version);
         return 0;
     }
@@ -328,6 +361,20 @@ int main(int argc, char *argv[]) {
     if (!instanceLock.tryLock(0)) {
         fprintf(stderr, "[zuuned] another instance is already running — "
                         "this one is bowing out\n");
+        // A double-click that produces no window is indistinguishable from a
+        // crash that produced nothing, and with no console there is nobody to
+        // read the line above.  A launcher that did capture the stream gets no
+        // modal box: the usability gate asserts that line on a pipe.
+#ifdef Q_OS_WIN
+        if (!zuuned_win_output_available()) {
+            // UiText::tr() because this is the only sentence a double-clicked user
+            // reads, and wording belongs to i18n/zh_CN.tsv rather than to this file.
+            const QString reason =
+                UiText::tr("Zuuned is already running; the other instance holds the "
+                           "library and the player.");
+            zuuned_win_notice("Zuuned", reason.toUtf8().constData());
+        }
+#endif
         return 0;
     }
 

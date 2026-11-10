@@ -1665,20 +1665,20 @@ static void __cdecl zuuned_invalid_parameter(const wchar_t *expression,
  * about a number it did not hand out, which exists in exactly the binaries that
  * can be affected and runs after the CRT is certainly up.  Nothing else is
  * installed here: the stdio mode below still wants an explicit init call. */
-static INIT_ONCE zuuned_guard_once = INIT_ONCE_STATIC_INIT;
-
-static BOOL CALLBACK zuuned_install_guard_once(PINIT_ONCE once, PVOID parameter, PVOID *context)
-{
-    (void)once;
-    (void)parameter;
-    (void)context;
-    _set_invalid_parameter_handler(zuuned_invalid_parameter);
-    return TRUE;
-}
-
+/* Re-asserted rather than installed once, which is a change of design found by
+ * the win-compat gate.  This was an InitOnceExecuteOnce, and a spent one-shot
+ * keeps answering "installed" to a process whose handler has since been
+ * replaced - the probe clears it on purpose precisely to prove fd_handle() puts
+ * it back, and with the flag consumed by zuuned_win_runtime_init() the answer
+ * came back as __fastfail 0xC0000409 inside test_opendir() instead of the -1
+ * that branch is built to receive.  Reading the current handler costs one UCRT
+ * lookup per fd_handle(), and the handler is process-wide here - measured, a
+ * thread created before the set sees it afterwards - so nobody needs a private
+ * copy and whoever loads this shim still gets a table that is safe to ask. */
 static void ensure_invalid_parameter_guard(void)
 {
-    InitOnceExecuteOnce(&zuuned_guard_once, zuuned_install_guard_once, NULL, NULL);
+    if (_get_invalid_parameter_handler() == zuuned_invalid_parameter) return;
+    _set_invalid_parameter_handler(zuuned_invalid_parameter);
 }
 
 /* The console owns its own code page, and it is not UTF-8 by default, so the
@@ -1710,16 +1710,23 @@ void zuuned_win_console_utf8(void)
 
 void zuuned_win_runtime_init(void)
 {
+    /* The guards come first because the stdio calls below are precisely what
+     * they answer.  A GUI-subsystem process started by double-click has no
+     * console, so the CRT gets nothing from GetStdHandle() and _fileno() of a
+     * stream that never received an OS handle is out of range for _setmode(),
+     * which reports that through the invalid-parameter machinery: a modal box,
+     * and under a release CRT a __fastfail() before any handler could exist.
+     * SetErrorMode() belongs here for the same reason - it is the other thing
+     * that has to be true before anything is allowed to fail, including a
+     * missing DLL or a failed drive, which the app reports by itself. */
+    ensure_invalid_parameter_guard();
+    SetErrorMode(SEM_FAILCRITICALERRORS);
+
     _fmode = _O_BINARY;
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stderr), _O_BINARY);
     setvbuf(stderr, NULL, _IONBF, 0);
     zuuned_win_console_utf8();
-
-    /* No system error dialog for a missing DLL or a failed drive either; the
-     * app reports those through its own diagnostics, on stderr. */
-    SetErrorMode(SEM_FAILCRITICALERRORS);
-    _set_invalid_parameter_handler(zuuned_invalid_parameter);
 #ifdef _DEBUG
     /* Debug-CRT reports default to a modal window as well as the debugger, and
      * a box that nobody can dismiss is indistinguishable from a hang.  Keep them
@@ -1730,4 +1737,95 @@ void zuuned_win_runtime_init(void)
     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_DEBUG);
 #endif
     build_win_tmpdir();
+}
+
+/* ---- debug console -------------------------------------------------------
+ *
+ * zuuned.exe is a GUI-subsystem image so that opening it shows a window and
+ * nothing else; a command window is a build artefact as far as a user is
+ * concerned.  That leaves stderr, which this tree treats as the primary
+ * diagnostic channel, with no reader at all, so --debug asks for one back.
+ *
+ * Two rules keep that honest.  It never takes a stream that already works: a
+ * launcher that handed us a pipe - both Windows gates, and any Start-Process
+ * with redirection - keeps that pipe, because a console that steals stdout
+ * silently blinds every harness that reads it.  And it attaches before it
+ * allocates: when Zuuned came out of a terminal that simply did not wire the
+ * handles, the lines belong in that terminal, not in a second window.
+ */
+int zuuned_win_output_available(void)
+{
+    const HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+    const HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
+    if (out && out != INVALID_HANDLE_VALUE) return 1;
+    if (err && err != INVALID_HANDLE_VALUE) return 1;
+    return 0;
+}
+
+int zuuned_win_debug_console(void)
+{
+    if (zuuned_win_output_available()) return 0;
+
+    int allocated = 0;
+    if (GetConsoleWindow() == NULL && !AttachConsole(ATTACH_PARENT_PROCESS)) {
+        if (!AllocConsole()) { set_last_error(); return 0; }
+        allocated = 1;
+    }
+
+    /* A console wants CRLF, so these three opt out of the binary mode the
+     * runtime init chose for files; the mode is spelled on the open as well
+     * because _fmode is _O_BINARY by now, and CONIN$/CONOUT$ are devices rather
+     * than paths.  freopen_s is used instead of the plain POSIX name because it
+     * answers with a status, so a stream that would not open is counted rather
+     * than assumed, and because the deprecated-alias spelling it is tempting to
+     * reach for - _freopen - is one the UCRT does not even export: the first
+     * build of this function linked as far as an unresolved _freopen and said
+     * so, with three implicit-declaration warnings beside it. */
+    int opened = 0;
+    FILE *stream = NULL;
+    if (freopen_s(&stream, "CONIN$", "rt", stdin) == 0 && stream) {
+        _setmode(_fileno(stdin), _O_TEXT);
+        ++opened;
+    }
+    stream = NULL;
+    if (freopen_s(&stream, "CONOUT$", "wt", stdout) == 0 && stream) {
+        _setmode(_fileno(stdout), _O_TEXT);
+        setvbuf(stdout, NULL, _IOLBF, 0);
+        ++opened;
+    }
+    stream = NULL;
+    if (freopen_s(&stream, "CONOUT$", "wt", stderr) == 0 && stream) {
+        _setmode(_fileno(stderr), _O_TEXT);
+        setvbuf(stderr, NULL, _IONBF, 0);
+        ++opened;
+    }
+    if (!opened) {
+        set_last_error();
+        /* Deliberately no FreeConsole(): the console this process allocated is
+         * the one holding the log the user asked for, and it goes with the
+         * process rather than being closed under them on the way out. */
+        return 0;
+    }
+
+    /* The call in runtime init ran while there was no console to ask. */
+    zuuned_win_console_utf8();
+    if (allocated) SetConsoleTitleW(L"Zuuned - debug console");
+    return 1;
+}
+
+/* A dialog is the last channel a GUI-subsystem process has.  A double-clicked
+ * instance that decides not to start - a second copy bowing out in front of the
+ * first - otherwise leaves the user with no window and no message, which reads
+ * as a crash that produced nothing.  The strings arrive UTF-8 because that is
+ * what the portable sources hold, and decode_path() is already this file's
+ * strict-UTF-8-then-ANSI decoder; text that will not decode still has to produce
+ * a dialog, hence the fixed fallbacks. */
+void zuuned_win_notice(const char *title, const char *text)
+{
+    wchar_t *wide_text = text ? decode_path(text) : NULL;
+    wchar_t *wide_title = title ? decode_path(title) : NULL;
+    MessageBoxW(NULL, wide_text ? wide_text : L"Zuuned",
+                wide_title ? wide_title : L"Zuuned", MB_OK | MB_ICONINFORMATION);
+    free(wide_text);
+    free(wide_title);
 }

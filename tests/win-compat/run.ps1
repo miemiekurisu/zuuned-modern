@@ -23,7 +23,13 @@ if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
 Push-Location $out
 $code = -1
 try {
-    & cl /nologo /W3 /Od /Zi /MDd /FIposix_shim.h /I"$root\compat\win" /I"$Pcre2" "$root\compat\win\wincompat.c" "$PSScriptRoot\wincompat_probe.c" /Fewincompat_probe.exe
+    # user32.lib belongs on this line for the same reason it sits in the
+    # zuuned_wincompat interface in CMakeLists.txt: compat/win/wincompat.c owns
+    # MessageBoxW() now, and this gate does not link that library at all - it
+    # compiles the same source beside its own probe, which makes it a consumer of
+    # the shim that CMake cannot see.  Without it the link dies as
+    # "unresolved external symbol __imp_MessageBoxW" before one check runs.
+    & cl /nologo /W3 /Od /Zi /MDd /FIposix_shim.h /I"$root\compat\win" /I"$Pcre2" "$root\compat\win\wincompat.c" "$PSScriptRoot\wincompat_probe.c" user32.lib /Fewincompat_probe.exe
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     $psi = [System.Diagnostics.ProcessStartInfo]::new()

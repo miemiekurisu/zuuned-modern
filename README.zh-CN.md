@@ -149,6 +149,11 @@ build\zuuned.exe
 依赖是零，所以改完头文件做一次增量构建，会安静地链接上陈旧的目标文件。`BUILDING.md` 里有
 解释，并附上上游 issue 编号。
 
+`build\zuuned.exe` 是 GUI 子系统的映像，所以双击它只会开出自己的窗口，不会开出命令行窗口：
+没人要的日志属于构建残留，不算功能。想要日志的时候就明说要：`build\zuuned.exe --debug`，或者
+`ZUUNED_DEBUG=1`，它会接回自己来自的那个终端，只有在确实没有终端时才开一个自己的窗口；
+`build\zuuned.exe > zuuned.log 2>&1` 则把它留在文件里。
+
 树里带两个纯软件门禁，两个都不碰播放器：
 
 ```powershell

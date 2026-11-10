@@ -859,6 +859,27 @@ static void test_shell_bytes(void)
         SKIP("every candidate character is spellable in this machine's ANSI code page");
 }
 
+/* Which channel the process really owns.  zuuned.exe is a GUI-subsystem image
+ * now, so a double-clicked app has no stdio at all until --debug asks for it
+ * back, and the one rule that makes that safe is that a stream somebody is
+ * already reading never gets replaced underneath them.  This probe is always
+ * launched with both streams redirected - the gate reads the lines below off a
+ * pipe - so the honest answers here are 1 and then 0: the launcher owns the
+ * output, and zuuned_win_debug_console() has to see that and decline.  What is
+ * deliberately left unexercised is the other branch.  A process handed no
+ * handles at all really does get a console window, and that is the app's own
+ * double-click, measured by launching the built executable; opening one from in
+ * here would only steal the harness that is reporting this probe. */
+static void test_output_channel(void)
+{
+    CHECK(zuuned_win_output_available() == 1,
+          "a probe with both streams redirected claims it has nowhere to print");
+    CHECK(zuuned_win_debug_console() == 0,
+          "zuuned_win_debug_console() took the console from a launcher that redirected it");
+    CHECK(zuuned_win_output_available() == 1,
+          "the stream this probe prints on changed underneath it");
+}
+
 int main(void)
 {
     zuuned_win_runtime_init();
@@ -910,6 +931,8 @@ int main(void)
     test_file_identity();
     printf("--- shell_bytes\n");
     test_shell_bytes();
+    printf("--- output_channel\n");
+    test_output_channel();
 
     sweep(root_ext);
     printf("%d checks, %d failures, %d skips\n", checks, failures, skips);
