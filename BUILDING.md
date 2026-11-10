@@ -222,6 +222,19 @@ naming nothing but the package, which is where a DLL that only resolved because
 reported `30 checks, 0 failures` over 1,557 files and wrote
 `Zuuned-0.2.0-win64.zip` at 176.8 MB with its SHA-256.
 
+`windeployqt` answers an import table out of the environment as much as out of Qt, and that
+proved to be a way for the packager's shell to reach inside a stranger's download.  From a
+shell that names `VCINSTALLDIR` it also copies `vc_redist.x64.exe`, 25,635,768 bytes of
+Visual Studio redistributable installer, into a folder whose whole promise is that it
+installs nothing; from one that names `WindowsSdkDir` it takes `d3dcompiler_47.dll` out of
+`%WindowsSdkDir%\Redist\D3D\x64` at 4,741,568 bytes instead of Qt's own at 4,173,928.
+Measured one variable at a time into four directories, same exe, same Qt, same flags: 43
+files from a bare shell, 44 with the MSVC environment loaded, `WindowsSdkDir` alone moving
+the shader compiler and `VCINSTALLDIR` alone producing the installer.  `deploy.ps1` now
+clears both variables for that one call and passes `--no-compiler-runtime`, and `-Release`
+fails on a staged `vc_redist*` rather than shipping one, because the answer to a missing
+VC++ runtime in this package is the ten CRT DLLs it already carries app-local.
+
 That folder is a **preview**. `-Release` is the beta, and it changes three things.
 
 ```powershell

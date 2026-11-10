@@ -376,18 +376,43 @@ Pass ($buildDlls.Count.ToString() + ' runtime DLLs from the build tree: ' +
 # at the end of this script runs the staged exe with a PATH naming nothing but the staged
 # directory, and a Qt bin left in front of it would answer that question with D:\dev\Qt
 # before the question had been asked.
+#
+# It also reads the environment for two things that are not Qt, which is a second and far
+# less obvious way for the folder a stranger downloads to depend on the shell that packed
+# it.  Measured with one exe, one Qt and one set of flags into four directories: a bare
+# shell lays down 43 files with Qt's own D3Dcompiler_47.dll at 4,173,928 bytes; a shell
+# with the MSVC environment loaded lays down 44, and the extra file is vc_redist.x64.exe
+# - 25,635,768 bytes of Visual Studio redistributable installer.  Setting the two variables
+# apart answers which half comes from where: WindowsSdkDir alone makes windeployqt take
+# d3dcompiler_47.dll out of %WindowsSdkDir%\Redist\D3D\x64 at 4,741,568 bytes instead of
+# out of Qt, and VCINSTALLDIR alone is the redistributable installer on its own.  So both
+# come off for this one call, the compiler environment belonging to the build and not to
+# the deliverable, and the installer is refused by name in the release pass below because
+# the folder already carries its own answer: the ten CRT DLLs made app-local further down.
 Step 'windeployqt'
 $pathWas = $env:PATH
 $env:PATH = (Join-Path $QtDir 'bin') + ';' + $env:PATH
+$envWas = @{}
+foreach ($v in @('VCINSTALLDIR', 'WindowsSdkDir')) {
+    $envWas[$v] = [Environment]::GetEnvironmentVariable($v)
+    Remove-Item -LiteralPath ('Env:\' + $v) -ErrorAction SilentlyContinue
+}
 $eapWas = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 try {
-    $wdqOut = & $windeployqt --release --force --qmldir $qmlDir --dir $stage `
-        (Join-Path $stage 'zuuned.exe') 2>&1
+    $wdqOut = & $windeployqt --release --force --no-compiler-runtime --qmldir $qmlDir `
+        --dir $stage (Join-Path $stage 'zuuned.exe') 2>&1
     $wdqExit = $LASTEXITCODE
 } finally {
     $ErrorActionPreference = $eapWas
     $env:PATH = $pathWas
+    foreach ($v in $envWas.Keys) {
+        if ($null -eq $envWas[$v]) {
+            Remove-Item -LiteralPath ('Env:\' + $v) -ErrorAction SilentlyContinue
+        } else {
+            [Environment]::SetEnvironmentVariable($v, $envWas[$v])
+        }
+    }
 }
 if ($wdqExit -ne 0) {
     Fail ('windeployqt exit ' + $wdqExit)
@@ -593,6 +618,21 @@ Step 'release trim'
 if (-not $Release) {
     Note 'preview: the command-line pair and the two DLLs only it needs stay staged'
 } else {
+    # Measured rather than assumed: from a shell that names VCINSTALLDIR windeployqt put the
+    # Visual Studio redistributable installer - 25,635,768 bytes - beside zuuned.exe in a
+    # folder whose whole promise is that it needs no installer.  The call above no longer
+    # offers it, and this is the check that keeps that true rather than a paragraph someone
+    # has to remember: a release folder carries the runtime app-local and no machine-wide
+    # installer at all, so one arriving means the staging is answering its environment again.
+    $redist = @(Get-ChildItem -LiteralPath $stage -Recurse -File |
+                Where-Object { $_.Name -match '^(?i)vc_redist' })
+    if ($redist.Count) {
+        Fail ('a redistributable installer is in the package (' +
+            (($redist | ForEach-Object { $_.Name }) -join ' ') +
+            '), so the staging answered its environment rather than the deliverable')
+    } else {
+        Pass 'no Visual Studio redistributable installer: the runtime is app-local instead'
+    }
     # Measured rather than assumed.  dumpbin over every binary in the last package named
     # avdevice-63.dll and avfilter-12.dll from ffmpeg.exe and ffprobe.exe and from nothing
     # else in the folder, so once the programs are gone the libraries have no user left.
