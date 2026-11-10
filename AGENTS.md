@@ -2600,3 +2600,20 @@ subsystem line.  **No capability on `docs/WINDOWS_PORT.md` moved:** one Pavo Zun
 and this sitting reached it only through harness launches browsing it read-only inside isolated
 profiles; nothing was sent, deleted or played, and nobody has heard audio out of this application
 on a PC.
+**2026-11-11 the beta was re-filed, and the shell that ran the packager was the bug.**  On the
+owner's instruction the published `v0.2.0-beta1` now carries `Zuuned-0.2.0-win64.zip` at
+166,275,611 bytes, sha256 `25407632A16A2BE02BEA985EB4D23CF3E8AF4948642F57038C0030304B5414F0`,
+built from clean `9f84648c9e0997712806675b7b8c789571f1a7cb` after `--clean-first`: replaced in
+place under the same asset names with `gh release upload --clobber`, tag not moved, nothing
+force-pushed, release body updated in both languages.  The shipped image is subsystem 2 with an
+associated icon.  `packaging/windows/deploy.ps1` no longer lets its own environment choose the
+contents, because `VCINSTALLDIR` made windeployqt stage `vc_redist.x64.exe` (25,635,768 bytes,
+identical to the VS 2022 14.44.35112 redistributable) while `WindowsSdkDir` made it take the
+Windows SDK's 4,741,568-byte `d3dcompiler_47.dll` instead of Qt's 4,173,928-byte one - each
+measured with the other variable absent.  Both are cleared around the windeployqt call and
+restored in `finally`, `--no-compiler-runtime` is passed, and `-Release` fails on any staged
+`vc_redist*`.  Release counters on the relinked build: `tests\win-compat` 204 / 0 / 0,
+`tests\win-usability` launches=18 checks=136 failures=0 skips=0 killed=0, `-Release` 51 / 0
+(one check more than the pre-fix 50, which is the guard), archive audit 18 / 0.  Publishing a
+file is not measuring a device: no send, deletion, readback or playback happened, and no device
+id, account, host name or test-library path left the machine.

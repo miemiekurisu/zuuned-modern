@@ -541,3 +541,72 @@ written to, deleted from or read back from a player, and the open list - every m
 that one, podcasts, audiobooks, photos and video on a player, audible PC playback, and
 this folder opened on a machine that did not build it - is exactly as the section above
 left it.
+
+## Re-filed in place, 2026-11-11
+
+The owner tried the rebuilt folder and answered 基本OK, asking for the beta to be replaced
+with it and pushed.  That is the decision the two sections above said was theirs to make, so
+`v0.2.0-beta1` now offers a different archive under the same two asset names, and the
+sentence "repackaging stays the owner's call" is closed for this artifact.
+
+**Built from a clean tree, and named three ways.**  HEAD
+`9f84648c9e0997712806675b7b8c789571f1a7cb` with nothing modified, one
+`cmake --build build --clean-first` to 341/342, `build\zuuned.exe` 32,815,104 bytes.  The
+`zuuned-build.json` inside the package names that same full revision with
+`applicationDirty: false`, and `zuuned.exe --version` answers
+`Zuuned 0.2.0 (app 9f84648c9e09; libzune unknown)` for exit 0 - read through `cmd /c`,
+because a GUI image holds NULL std handles and `--version` allocates its own console on
+purpose.  Read out of the shipped bytes rather than asserted, the two things the old archive
+lacked: subsystem word 2, and an associated icon that resolves at 32x32.
+
+**Gates on the relinked binaries, before anything was staged.**  `tests\win-compat` 204
+checks / 0 failures / 0 skips, and `tests\win-usability`
+`launches=18 checks=136 failures=0 skips=0 killed=0 OVERALL=ok`.  Both ran with a Pavo (Zune
+HD) bound on this machine, which is the ordinary state here, so the application's own
+auto-connect browsed it read-only inside every isolated profile, as it always has.
+
+**The packaging shell had been reaching into the download, and the first archive proved it.**
+Run from a shell that had loaded the MSVC environment, `-Release` staged
+`vc_redist.x64.exe` - 25,635,768 bytes, byte-identical to the VS 2022 14.44.35112
+redistributable - and took `d3dcompiler_47.dll` as the Windows SDK's 4,741,568-byte copy
+instead of Qt's 4,173,928-byte one.  That archive was 192,092,644 bytes at sha256
+`E9EF1E2C6ABF0F3544740EF1725DE6B752FB8D4682B2839427D8318234784FF1`; diffed member by member
+against the never-published 2026-11-10 repack, the delta is those entries plus a byte drift
+in `dxcompiler.dll` and `dxil.dll`, with 1,609 members shared.  Two single-variable runs then
+separated the causes: `VCINSTALLDIR` alone answers the redistributable, `WindowsSdkDir` alone
+answers the SDK's D3D compiler, and with neither set `windeployqt` stages the 43 files a
+plain shell gets.  `packaging\windows\deploy.ps1` now clears both variables around the
+`windeployqt` call and restores them in `finally`, passes `--no-compiler-runtime`, and fails
+the release branch outright if any staged file is named `vc_redist*`, so nobody's shell
+profile can put a runtime installer back into a tester's download.
+
+**The archive that is published.**  1,539 files and 418.2 MB staged outside the repository,
+`checks 51, failures 0` - one more than the 50 the same script answered from the polluted
+shell, because the guard is now a check - then `RESULT: archive clean - fit to publish` at 18
+checks / 0 failures, against the 16 the published beta's run reported.
+
+```text
+asset     Zuuned-0.2.0-win64.zip   166,275,611 bytes
+sha256    25407632A16A2BE02BEA985EB4D23CF3E8AF4948642F57038C0030304B5414F0
+sidecar   SHA256SUMS.txt           90 bytes, sha256
+          6cb4cac52f37e9cd95ad6fa8c796779c59370032509e256be03347b0e9d835c2
+```
+
+**Replaced in place, not re-tagged.**  `gh release upload --clobber` swaps the bytes under the
+existing asset ids, so a download URL anyone already has keeps working and nothing needed a
+force-push or a tag move: `v0.2.0-beta1` is still the annotated tag object it was, marking
+where the beta was cut.  The release body says that in both languages, carries the new digest
+and the new gate counters, records `8AA1F6C8...D0FA4` as superseded and the 2026-11-10
+repack as never published, and lists the four tester-visible differences - icon, no command
+window, `--debug`, a refusal message in the chosen language - beside a hardware statement it
+deliberately leaves untouched.  GitHub's own digest for the uploaded asset came back equal to
+the local sha256 byte for byte, and the same for the sidecar, so the transfer is exact.
+
+**What this sitting did not do.**  It published a file, not a capability.  Nothing was sent
+to, deleted from or read back from a player, nothing was played, and no gate that can reach a
+device was run.  `docs/WINDOWS_PORT.md` keeps its open list exactly as it was: deletion,
+podcasts, audiobooks, photos and video on a player, every model but that one Pavo, audible PC
+playback, and this folder opened on a machine that did not build it.  No device id, account
+name, host name or test-library path left the machine - the same audit judged all 1,539 staged
+files and then the finished `.zip` member by member - and the logs and drafts this section
+cites live under `_tmp/`, which the repository does not track.

@@ -2800,3 +2800,28 @@ console-subsystem executable, and repackaging stays the owner's call.  **No capa
 page moved:** one Pavo Zune HD, hand-tested, touched this time only by harness launches browsing
 it read-only inside isolated profiles; nothing was sent, deleted or played, and nobody has heard
 audio out of this application on a PC.
+
+**2026-11-11 the beta a tester downloads is the icon-and-no-console build, and the packager's
+shell stopped choosing what goes into it.**  The owner tried the rebuilt folder, answered
+基本OK and asked for the beta to be replaced with it, so `v0.2.0-beta1` now serves
+166,275,611 bytes at sha256 `25407632A16A2BE02BEA985EB4D23CF3E8AF4948642F57038C0030304B5414F0`
+in place of the 2026-11-09 archive: the same two asset names, the same URLs, the same
+annotated tag, because `gh release upload --clobber` swaps bytes under an existing asset and
+nothing here was force-pushed.  Both staleness notes this page had just recorded are now
+wrong about the download and right about nothing else - the shipped image is subsystem word 2
+with an associated icon, read out of the bytes.  What made the first replacement attempt worth
+a commit was the shell that ran it: from a shell carrying the MSVC environment, `windeployqt`
+laid down `vc_redist.x64.exe` (25,635,768 bytes, byte-identical to the 14.44.35112
+redistributable) and took `d3dcompiler_47.dll` from `%WindowsSdkDir%\Redist\D3D\x64` at
+4,741,568 bytes instead of Qt's 4,173,928, and two single-variable runs separated which name
+causes which.  `packaging\windows\deploy.ps1` clears `VCINSTALLDIR` and `WindowsSdkDir`
+around that call, restores them in `finally`, passes `--no-compiler-runtime`, and fails
+`-Release` outright on a staged `vc_redist*`.  Counters on the shipping binaries:
+`tests\win-compat` 204 checks / 0 failures / 0 skips, `tests\win-usability`
+`launches=18 checks=136 failures=0 skips=0 killed=0`, `deploy.ps1 -Release` 51 / 0, and its
+own audit of the finished archive 18 / 0.  The full record, including the superseded digest
+and why the tag stayed put, is in `docs/releases/BETA_WINDOWS_2026-11-08.md`.  **No capability
+on this page moved:** publishing a file is not measuring a device, and the open list is
+exactly as the last paragraph left it - deletion, podcasts, audiobooks, photos and video on a
+player, every model but the one Pavo (Zune HD) hand-tested here, audible PC playback, and this
+folder on a machine that did not build it.
