@@ -443,3 +443,101 @@ is published at all, its own tag - a decision for the owner rather than for a do
 edit.  The icon changes what the executable looks like and nothing else: no capability on
 `docs/WINDOWS_PORT.md` moved, and no player was written to, deleted from or read back from
 in this sitting.
+
+
+## The icon is in the bytes that ship, 2026-11-10
+
+A fix that lives only in a source tree is not an artifact, so the packaging run got to be
+the judge, and it justified itself on the first try.  The first `-Release` run after
+`d39833a` refused to publish what it had just staged:
+
+```
+  FAIL  the build record says be8494ad37da1d30fad47f6a3cc14f2cc64f1279 and the tree is
+        d39833a: rebuild from that commit before publishing
+  checks      47, failures 1
+  RESULT: not a deliverable - 1 failed check(s)
+```
+
+That check exists to stop a stale build being published and it fired on the machine that
+built the tree, which is the only honest way to learn it works.  The repair is a rebuild:
+`cmake --build build --clean-first`, 341 steps, last progress line
+`[341/342] Linking CXX executable zuuned.exe`, `EXITCODE=0`, after which
+`build/generated/zuuned-build.json` answers `d39833a5e6be4e4f0583c7e40862620081faca32`
+with `applicationDirty: false` and `git rev-parse HEAD` returns the same 40 characters.
+The archive that rejected run had already written - 166,256,567 bytes at
+`70E1F3D889BA54839A1A2462E3C574A70EEEAD25FBF4F210F8C68653A07F4E48` - describes a build
+that did not match its own tree, is not a deliverable, and no copy of it left this
+machine.  One asymmetry worth recording while it is fresh: `verify-zip.ps1` called that
+archive `fit to publish`, because the byte audit asks about privacy and structure and
+nothing about provenance, and the verdict that stopped it came from the deploy summary.
+
+The second run passed.
+
+```
+  command     packaging\windows\deploy.ps1 -Release -Out E:\Temp\zuuned-beta2
+  package     E:\Temp\zuuned-beta2\windows\Zuuned-0.2.0-win64
+  staged      1,539 files, 418.2 MB
+  archive     E:\Temp\zuuned-beta2\windows\Zuuned-0.2.0-win64.zip
+  size        166,256,019 bytes = 158.6 MB
+  sha256      B22E3B3A74F0B1C0CA1214FD1E1E4281DBAE57A8BE554F9980BEE1181BE9FAE5
+  checks      48, failures 0        RESULT: beta Windows artifact produced
+  archive     16 checks, failures 0  RESULT: archive clean - fit to publish
+```
+
+**48 is the number to expect from here on.**  The published beta's run reported 45 green
+and `Step 'icon'` adds three, so a `-Release` run answering anything else is a step that
+did not answer rather than a package that changed.  What the folder proved about itself is
+the same list as the run above plus one new question: `devicetool` answering `agree` from
+inside it, one page painted from an isolated profile with an empty library
+(`onboarding=true tracks=0 wfRows=0`), a self-close with exit 0, 107 binaries inventoried
+with all 460 package imports resolved and 258 from Windows, avdevice and avfilter dropped
+as command-line-only weight, `icuuc.dll` refused as a system duplicate, the QML debugger
+out, no `ffmpeg.exe` and no `ffprobe.exe`, and `1539 staged files, none of them a log,
+database, ini, pdb, playlist, audio, image or video file`.
+
+**The icon was then read out of the archive rather than out of the folder**, because the
+`.zip` is what a tester downloads.  Its `Zuuned-0.2.0-win64/zuuned.exe` member is
+32,812,032 bytes and hashes to
+`B3355DF31D0045B555EC5217BC70F1AB6AB2479A86372AFCA644441FDE2274AF`, byte-identical to
+`build\zuuned.exe`, so the file the run audited is the file the container carries.  A
+second reader, in Python rather than PowerShell, walks the same tree and answers resource
+types 3, 14 and 24; one `RT_GROUP_ICON` declaring 16, 24, 32, 48, 64, 128 and 256 at
+32 bpp; seven `RT_ICON` blobs whose sizes are exactly the seven the group declares; and,
+as the negative control inside the shipped container, `devicetool.exe` at types `24` alone
+with no group and no blob.
+
+Two traps from writing that second reader, both mine and neither present in
+`deploy.ps1`: `IMAGE_FILE_HEADER` contains a `TimeDateStamp`, so `SizeOfOptionalHeader` is
+at `pe + 20` - reading it at `pe + 16` answers 0 and hands back a section table of
+nonsense that still parses without complaining; and a resource `DATA` entry's own
+structure sits at *resource directory start + offset*, with the RVA as the first word
+inside it, so treating the `offset` itself as an RVA yields a small number that lives in no
+section at all.  `Convert-PeRvaToOffset` already had both right, which is worth knowing
+before assuming the script you inherited is the thing to debug.
+
+Diffed against the published archive member by member, this is measurably the same
+product: 1,539 entries in each, none added and none removed, and exactly three changed.
+`zuuned.exe` 32,665,600 to 32,812,032 bytes, which is the `.res` payload and the whole of
+the archive's 35,317-byte growth; `zuuned-build.json` the same 201 bytes naming the new
+revision; and `devicetool.exe` the same 93,184 bytes with a different checksum, which is a
+relink of unchanged source and not the icon - the negative control above is that file.
+
+A `SHA256SUMS.txt` sidecar now sits beside it in the format `v0.2.0-beta1` shipped,
+lowercase hex, two spaces, the file name, CRLF, 90 bytes, and that sidecar hashes to
+`81a1c32eca76aaef84b408d47150b90b0028edcaa5c47d2d3c1faf180829362d`.  For whoever runs this
+next: `-Out` names the parent, so the paths above carry a `windows` component of their
+own, and the beta1 archive at `E:\Temp\zuuned-beta\windows` was not touched by any of it.
+`tests/privacy/run.ps1` on the tree that carries this record answers `822 tracked files,
+19 checks, 0 failures` with 91 reviewed pictures and 171 drive-letter lines in 33 files,
+the same counters as the section before this one because a record written into an existing
+file adds no tracked file.
+
+**Publishing it is the owner's decision, and nothing in this sitting published anything.**
+`v0.2.0-beta1` and its two assets stay exactly where they are; a re-packaged folder is a
+different archive with a different digest and would need its own tag.  **And no capability
+moved.**  The Pavo (Zune HD) bound on this machine throughout the sitting was browsed
+read-only by the smoke launch, as every launch on this page has always been; nothing was
+written to, deleted from or read back from a player, and the open list - every model but
+that one, podcasts, audiobooks, photos and video on a player, audible PC playback, and
+this folder opened on a machine that did not build it - is exactly as the section above
+left it.

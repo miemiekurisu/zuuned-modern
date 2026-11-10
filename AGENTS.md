@@ -2423,3 +2423,36 @@ refused until somebody reads it.  Left alone on purpose: the PE subsystem of
 holds the gap this closes for Windows.  **Nothing here moves a capability on
 `docs/WINDOWS_PORT.md`.**  A Zune HD sat bound on WinUSB through the sitting and was
 browsed read-only by the smoke launch, which is harness context and not device evidence.
+
+
+**2026-11-10 the icon reached an archive, and two PE offsets are worth writing down.**
+`deploy.ps1 -Release` run after `d39833a` first answered
+`the build record says be8494ad37da1d30fad47f6a3cc14f2cc64f1279 and the tree is d39833a:
+rebuild from that commit before publishing` - so the provenance check does what it is for
+by failing a run whose `zuuned-build.json` names another revision than the tree beside it,
+on the machine that built it, and `cmake --build build --clean-first` is the only repair.
+The rerun produced the artifact: 1,539 files and 418.2 MB staged,
+`Zuuned-0.2.0-win64.zip` at 166,256,019 bytes and sha256
+`B22E3B3A74F0B1C0CA1214FD1E1E4281DBAE57A8BE554F9980BEE1181BE9FAE5`, `checks 48,
+failures 0`.  **48, not 45, is the `-Release` counter to expect from now on** - three of
+them are `Step 'icon'` - and the run that failed had already written a `.zip` at the same
+path, which the rerun overwrote.  Read the two verdicts apart: `verify-zip.ps1` called
+that rejected archive `fit to publish`, because a byte audit knows privacy and structure
+and nothing about provenance, so its RESULT is never a licence to ship.  Reading an icon
+out of the `.zip` member rather than the staged folder is the check that matters, and it is
+only worth doing with a second parser, which is where two offsets bite:
+`IMAGE_FILE_HEADER` contains a `TimeDateStamp`, so `SizeOfOptionalHeader` is at `pe + 20`
+- at `pe + 16` it reads 0 and the section table derived from it is nonsense that still
+parses - and a resource `DATA` entry's own structure sits at *resource directory start +
+offset*, the RVA being the first word inside it, so treating that `offset` as an RVA yields
+a small number that lives in no section.  `Convert-PeRvaToOffset` in
+`packaging/windows/deploy.ps1` has both right already; check it before debugging the
+script you inherited.  The shipped member hashes byte-identical to `build\zuuned.exe`, and
+`devicetool.exe` beside it is still types `24` alone - the negative control, inside the
+container.  Entry by entry the new archive and the published one differ in three files and
+nothing else, so an icon really is all that changed.  Two practical notes: `-Out` names the
+parent, and no `SHA256SUMS.txt` comes out of the script, so it was written by hand beside
+the archive in the format beta1 shipped (lowercase hex, two spaces, name, CRLF, 90 bytes).
+**Nothing was published here and publishing stays the owner's call;** `v0.2.0-beta1` and
+its assets stand untouched.  **No capability on `docs/WINDOWS_PORT.md` moved**, and the
+Zune HD bound through the sitting was browsed read-only by a smoke launch.

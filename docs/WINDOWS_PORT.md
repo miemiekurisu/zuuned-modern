@@ -2681,3 +2681,28 @@ enumeration, hotplug, the music-library read, MTPZ authentication, one send with
 readback, one download, one deletion and one WMA Lossless round trip that played on one
 Pavo Zune HD, and the player bound on this machine during the sitting was browsed
 read-only by a smoke launch, which is packaging context and not device evidence.
+
+
+**2026-11-10 the icon fix became an archive, and the stamp check fired for real.**  The
+paragraph above left the fix in a source tree; `packaging\windows\deploy.ps1 -Release
+-Out E:\Temp\zuuned-beta2` is what turns a tree into something a tester can download, and
+its first attempt answered `the build record says be8494ad37da1d30fad47f6a3cc14f2cc64f1279
+and the tree is d39833a: rebuild from that commit before publishing` - `47 checks,
+failures 1`, `RESULT: not a deliverable` - because a relink was owed.
+`cmake --build build --clean-first` paid the debt and the second run answered
+`48 checks, failures 0`: 1,539 files and 418.2 MB staged outside the repository,
+`Zuuned-0.2.0-win64.zip` at 166,256,019 bytes and sha256
+`B22E3B3A74F0B1C0CA1214FD1E1E4281DBAE57A8BE554F9980BEE1181BE9FAE5`, then `16 checks,
+failures 0` against the finished file.  **48 is the number to expect from here on**: the
+published beta's run reported 45 and `Step 'icon'` adds three.  The archive was then read
+as a file rather than as a folder, because the `.zip` is what ships - its `zuuned.exe`
+member is byte-identical to `build\zuuned.exe` and carries one `RT_GROUP_ICON` declaring
+16, 24, 32, 48, 64, 128 and 256 with a blob behind each, while `devicetool.exe` in the
+same container still answers types `24` alone.  Member by member the two archives differ in
+three entries and nothing else.  The full record, including the two PE offsets that a
+second, independent reader got wrong before it got right, is in
+`docs/releases/BETA_WINDOWS_2026-11-08.md`; `v0.2.0-beta1` and its assets were left
+published and untouched, because a different digest needs its own tag and that is the
+owner's call.  **No capability on this page moved:** the Pavo bound on this machine was
+browsed read-only by the smoke launch, nothing was written to or read back from a player,
+and the open list is as the paragraph above left it.
