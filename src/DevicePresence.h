@@ -28,6 +28,17 @@ struct ZuneSighting {
     // problem 0 and still never appears in libusb_get_device_list().  The fact
     // the app can act on is the pair (present, libusb blind), not this flag.
     bool usable = false;
+    // The kernel driver Windows bound to the devnode, lower-cased, as
+    // CM_DRP_SERVICE names it.  Diagnostic only: the one name this project has
+    // actually measured on a working Zune is `wudfwpdmtp`, the UMDF host for
+    // Windows' own MTP minidriver, and nothing here decides a road by this
+    // string.  Always empty on a platform that declines to answer.
+    QString driver;
+    // Whether Windows publishes a Windows Portable Devices interface for this
+    // devnode, which is the door the WPD backend walks.  A capability read from
+    // the same list IPortableDeviceManager enumerates, not a guess from a driver's
+    // name.  Always false on a platform that has no such list.
+    bool wpdInterface = false;
     quint16 vid = 0;
     quint16 pid = 0;
     QString instanceId;       // platform device id, e.g. USB\VID_045E&PID_063E\...
@@ -51,5 +62,14 @@ ZuneSighting scanForZune();
 // driver at all and a device bound to a driver zuuned cannot use are two
 // different things to tell a user about, and only the second has problem 0.
 QString describeSighting(const ZuneSighting &sighting, bool libusbSighted);
+
+// Whether zuuned has a road to a player the platform swears is attached, given
+// what libusb itself managed to enumerate.  Two roads exist on Windows and one
+// everywhere else, and "libusb cannot see it" stopped being the same sentence as
+// "zuuned cannot use it" the day the second one was wired up.  The second road is
+// answered by the WPD device interface, because that is the object the WPD backend
+// binds - a driver's name is Windows' implementation detail and two Zunes on two
+// Windows builds do not have to agree on it.
+bool zuunedCanReach(const ZuneSighting &sighting, bool libusbSighted);
 
 } // namespace Zuuned

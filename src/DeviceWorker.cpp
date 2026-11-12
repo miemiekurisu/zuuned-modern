@@ -17,6 +17,14 @@
 
 #include "UiText.h"
 
+#if defined(Q_OS_WIN)
+// The second road to the same player: a Zune bound to Windows' own WPD/MTP
+// driver instead of to WinUSB.  src/wpd/WpdBackend.h carries why both are needed
+// and what this one cannot do.
+#include "wpd/WpdBackend.h"
+#include "library/LibraryPaths.h"
+#endif
+
 extern "C" {
 #include "zune.h"
 }
@@ -107,9 +115,24 @@ QString readSpokenInventory(ZuneDevice *dev, QVariantList &podcasts, QVariantLis
 }
 }
 
+// The special members live here because m_wpd is a Wpd::Session this header only
+// forward declares: the Windows backend is complete here and nowhere else, and
+// that is the whole point.
+DeviceWorker::DeviceWorker() = default;
+DeviceWorker::~DeviceWorker() = default;
+
 void DeviceWorker::doReadSpokenMedia(quint64 generation, quint64 request, const QString &serial) {
     QVariantList podcasts, books;
     QString error;
+#if defined(Q_OS_WIN)
+    if (m_wpdShared.load() && m_wpd) {
+        // A show, its feed identity and its play state are ZMDB records; plain
+        // MTP has no such thing.  An empty list here would tell the app the
+        // episodes had been deleted from the player, which is a worse answer
+        // than the truth.
+        error = UiText::tr("This player is on Windows' MTP driver, which has no podcast or audiobook library to read.");
+    } else
+#endif
     if (generation != m_spokenGeneration.load() || !m_dev
         || QString::fromUtf8(zune_get_serial(m_dev)) != serial)
         error = UiText::tr("The Zune disconnected or changed. Reconnect and refresh.");
@@ -216,6 +239,17 @@ void DeviceWorker::doBreach() {
         r.error = err && err[0]
             ? QString::fromUtf8(err)
             : UiText::tr("No Zune found (%1)").arg(hint);
+#if defined(Q_OS_WIN)
+        // libusb cannot open a player whose interface a kernel driver owns, and
+        // that is the ordinary state of a Zune on a Windows machine nobody has
+        // given a driver to.  "zune_breach failed" is therefore not "no Zune" -
+        // it is "not on this road" - so ask Windows before saying absent.
+        if (breachWpd(&r)) {
+            emit breachDone(r);
+            return;
+        }
+        r.error += UiText::tr("; and Windows would not hand the player over either");
+#endif
         emit breachDone(r);
         return;
     }
@@ -224,6 +258,10 @@ void DeviceWorker::doBreach() {
     m_devShared.store(dev);
     emit stage(UiText::tr("Reading device info…"), 0.45);
     r.ok = true;
+    // The road this player answered on.  A Zune bound to WinUSB answers here;
+    // one left on Windows' own MediaDevice driver answers in breachWpd(), and
+    // the UI has to tell the two apart because they do not do the same things.
+    r.backend = QStringLiteral("libzune");
     r.name = QString::fromUtf8(zune_get_name(dev));
     r.model = QString::fromUtf8(zune_get_model(dev));
     r.serial = QString::fromUtf8(zune_get_serial(dev));
@@ -657,12 +695,546 @@ void DeviceWorker::doBreach() {
     emit breachDone(r);
 }
 
+#if defined(Q_OS_WIN)
+namespace {
+
+// A WPD object id is the MTP handle as the provider spells it - "s10001",
+// "o5000005" on a Zune - while everything above this block speaks quint32.
+bool wpdHandleOf(const QString &id, quint32 *out) {
+    if (id.size() < 2)
+        return false;
+    bool ok = false;
+    const quint32 value = id.mid(1).toUInt(&ok, 16);
+    if (ok && out)
+        *out = value;
+    return ok;
+}
+
+struct WpdSendProgress {
+    DeviceWorker *worker;
+    const QString *entryId;
+    double lastEmitted;
+};
+
+// Byte-fraction progress from the WPD stream loop, throttled to whole percents
+// because the queue repaints on every signal.  Same discipline as the libzune
+// progress thunk on the other road.
+void wpdSendProgressThunk(double fraction, void *userdata) {
+    auto *ctx = static_cast<WpdSendProgress *>(userdata);
+    if (!ctx || !ctx->entryId)
+        return;
+    const double pct = fraction < 0.0 ? 0.0 : (fraction > 1.0 ? 1.0 : fraction);
+    if (pct < 1.0 && pct - ctx->lastEmitted < 0.01)
+        return;
+    ctx->lastEmitted = pct;
+    ctx->worker->notifySendProgress(*ctx->entryId, pct);
+}
+
+} // namespace
+
+void DeviceWorker::noteWpdUnsupported(const char *feature) {
+    fprintf(stderr,
+            "[wpd] %s needs a ZMDB/vendor operation.  This player is on Windows'"
+            " own MTP driver, which has no such call - reporting failure instead"
+            " of answering with a success that did not happen.\n",
+            feature ? feature : "that operation");
+}
+
+bool DeviceWorker::breachWpd(BreachData *result) {
+    if (!result)
+        return false;
+    if (!m_wpd)
+        m_wpd = std::make_unique<Wpd::Session>();
+    Wpd::Session &wpd = *m_wpd;
+
+    // "Will Windows hand the player over?" is a different question from "can
+    // libusb open it?", and it has a different answer on every machine where
+    // nobody has run Zadig - which is every machine a tester arrives on.
+    emit stage(UiText::tr("Asking Windows for the player…"), 0.2);
+    QString error;
+    if (!wpd.openFirstZune(&error)) {
+        fprintf(stderr, "[wpd] Windows would not hand the player over: %s\n",
+                qUtf8Printable(error));
+        return false;
+    }
+    wpd.clearAbort();
+    m_wpdShared.store(true);
+    m_wpdIds.clear();
+    m_wpdFolders.clear();
+    m_wpdStorage.clear();
+    m_wpdArtReported = false;
+
+    emit stage(UiText::tr("Reading device info…"), 0.45);
+    Wpd::DeviceInfo info;
+    if (!wpd.readDevice(&info, &error) || info.storageIds.isEmpty()) {
+        fprintf(stderr, "[wpd] opened, then could not be read: %s\n",
+                qUtf8Printable(error));
+        m_wpdShared.store(false);
+        wpd.close();
+        return false;
+    }
+    // readDevice sorts storage by free space, so this is also "the roomiest
+    // place to put a file", which is the choice a user would make by hand.
+    m_wpdStorage = info.storageIds.first();
+
+    // Plain MTP enumeration instead of a ZMDB scan: one listing per folder, and
+    // the folders are the library.  There is no vendor database behind this road,
+    // which is also why no MTPZ credential is involved and a build that ships
+    // none works here.
+    emit stage(UiText::tr("Listing files over MTP…"), 0.6);
+    struct Found {
+        Wpd::ObjectInfo object;
+        QString folder;   // breadcrumb of the parent, e.g. "/Music/Artist/Album"
+        quint32 handle = 0;
+    };
+    QVector<Found> audio, video, photo;
+    QHash<quint32, QString> folderNames;
+    QString firstFailure;
+    int walked = 0;
+    bool truncated = false;
+    bool cancelled = false;
+    const int maxDepth = 12;
+    const int maxObjects = 30000;
+
+    std::function<bool(const QString &, int, const QString &)> descend;
+    descend = [&](const QString &parent, int depth, const QString &path) -> bool {
+        if (wpd.aborted()) {
+            cancelled = true;
+            return false;
+        }
+        if (depth > maxDepth || walked >= maxObjects) {
+            truncated = true;
+            return false;
+        }
+        QVector<Wpd::ObjectInfo> kids;
+        QString why;
+        const QString label = path.isEmpty() ? parent : path;
+        if (!wpd.children(parent, &kids, &why)) {
+            // One folder the player refuses is not a reason to report an empty
+            // library; it is a reason to say what was not read.
+            if (firstFailure.isEmpty())
+                firstFailure = QStringLiteral("%1: %2").arg(label, why);
+            fprintf(stderr, "[wpd] listing %s failed: %s\n", qUtf8Printable(label),
+                    qUtf8Printable(why));
+            return false;
+        }
+        for (const Wpd::ObjectInfo &kid : std::as_const(kids)) {
+            if (wpd.aborted()) {
+                cancelled = true;
+                return false;
+            }
+            if (++walked > maxObjects) {
+                truncated = true;
+                return false;
+            }
+            quint32 handle = 0;
+            if (!wpdHandleOf(kid.id, &handle))
+                continue;
+            m_wpdIds.insert(handle, kid.id);
+            const QString childPath = path + QLatin1Char('/') + kid.name;
+            if (kid.kind == Wpd::KindFolder) {
+                folderNames.insert(handle, kid.name);
+                descend(kid.id, depth + 1, childPath);
+            } else if (kid.kind == Wpd::KindAudio || kid.kind == Wpd::KindVideo
+                       || kid.kind == Wpd::KindImage) {
+                Found found;
+                found.object = kid;
+                found.folder = path;
+                found.handle = handle;
+                if (kid.kind == Wpd::KindAudio)
+                    audio.append(found);
+                else if (kid.kind == Wpd::KindVideo)
+                    video.append(found);
+                else
+                    photo.append(found);
+            }
+        }
+        return true;
+    };
+    for (const QString &storage : std::as_const(info.storageIds))
+        descend(storage, 1, QString());
+
+    QString scope;
+    if (truncated)
+        scope += QStringLiteral(" [stopped at the walk budget]");
+    if (cancelled)
+        scope += QStringLiteral(" [cancelled]");
+    if (!firstFailure.isEmpty())
+        scope += QStringLiteral(" first failure: ") + firstFailure;
+    fprintf(stderr,
+            "[wpd] walked %d object(s): %d audio, %d video, %d image%s;"
+            " writing to storage %s of %d\n",
+            walked, int(audio.size()), int(video.size()), int(photo.size()),
+            qUtf8Printable(scope), qUtf8Printable(m_wpdStorage),
+            int(info.storageIds.size()));
+
+    BreachData r;
+    r.ok = true;
+    r.backend = QStringLiteral("wpd");
+    r.name = info.friendlyName;
+    r.model = info.model;
+    // No serial, on purpose: Session never asks WPD for one, because the serial
+    // and the PnP id name a person's player and this project keeps device
+    // identity out of logs and files.  Nothing on this road needs it.
+    r.serial = info.serial;
+    // 0xFF because it is none of the libzune families.  Anything that branches
+    // on 0x05/0x06 would be asking this player to behave like a ZMDB device it is
+    // not currently connected to.
+    r.family = 0xFF;
+    r.battery = info.battery;
+    r.capacityGB = double(info.capacityBytes) / 1e9;
+    r.freeGB = double(info.freeBytes) / 1e9;
+
+    for (const Found &found : std::as_const(audio)) {
+        const Wpd::ObjectInfo &o = found.object;
+        TrackRow row;
+        row.itemId = found.handle;
+        // WPD has two name-ish properties and a provider fills either.  The Zune
+        // software leaves NAME as the bare title for its own syncs and keeps the
+        // file name in ORIGINAL_FILE_NAME, so both are candidates, and a moniker
+        // in either is the same "no name" the rest of the app already means.
+        const QString fromTitle = MusicIdentity::usableName(o.title);
+        const QString name = fromTitle.isEmpty()
+            ? MusicIdentity::usableName(o.name) : fromTitle;
+        row.title = name.isEmpty() ? UiText::tr("Unknown Title") : name;
+        row.artist = MusicIdentity::deviceArtist(o.artist);
+        row.album = MusicIdentity::deviceAlbum(o.album);
+        row.genre = MusicIdentity::deviceGenre(o.genre);
+        // Measured on this player: it stores and reports artist, duration and
+        // track number and drops album, genre and title on upload, while the
+        // objects the Zune software synced itself carry all of them.  So the
+        // folders this app wrote on the way in are the album record that
+        // survives - which is what the local scanner reads from a watch folder
+        // too: <storage>/Music/<artist>/<album>/file.
+        const QStringList below = found.folder.split(QLatin1Char('/'),
+                                                     Qt::SkipEmptyParts).mid(1);
+        if (row.album.isEmpty() && !below.isEmpty())
+            row.album = MusicIdentity::deviceAlbum(below.last());
+        if (row.artist.isEmpty() && below.size() >= 2)
+            row.artist = MusicIdentity::deviceArtist(below.at(below.size() - 2));
+        row.durationMs = int(o.durationMs);
+        row.trackNumber = int(o.trackNumber);
+        // Unlike a classic ZMDB track slot, this number came back out of the
+        // player's own property store; there is no disc property in MTP at all.
+        row.trackNumberReliable = true;
+        row.discNumberReliable = false;
+        row.identityFromReadback = true;
+        row.filesize = qint64(o.size);
+        r.tracks.append(std::move(row));
+    }
+    // Verbatim the libzune ordering, so one library lists the same way whichever
+    // road it arrived on.
+    std::sort(r.tracks.begin(), r.tracks.end(),
+              [](const TrackRow &a, const TrackRow &b) {
+        int c = a.artist.compare(b.artist, Qt::CaseInsensitive);
+        if (c != 0) return c < 0;
+        c = a.album.compare(b.album, Qt::CaseInsensitive);
+        if (c != 0) return c < 0;
+        if (a.trackNumber != b.trackNumber)
+            return a.trackNumber < b.trackNumber;
+        return a.title.compare(b.title, Qt::CaseInsensitive) < 0;
+    });
+
+    QMap<QString, int> artistCounts, genreCounts;
+    struct AlbumAgg { QString artist; int count = 0; };
+    QMap<QString, AlbumAgg> albumAgg;
+    for (const TrackRow &t : std::as_const(r.tracks)) {
+        const QString artist = t.artist.isEmpty()
+            ? QStringLiteral("Unknown Artist") : t.artist;
+        artistCounts[artist]++;
+        if (!t.album.isEmpty()) {
+            AlbumAgg &agg = albumAgg[t.album];
+            agg.artist = artist;
+            agg.count++;
+        }
+        if (!t.genre.isEmpty())
+            genreCounts[t.genre]++;
+    }
+    for (auto it = artistCounts.cbegin(); it != artistCounts.cend(); ++it)
+        r.artists.append(QVariantMap{{"name", it.key()},
+                                     {"count", it.value()}});
+    for (auto it = albumAgg.cbegin(); it != albumAgg.cend(); ++it)
+        r.albums.append(QVariantMap{{"name", it.key()},
+                                    {"subtitle", it.value().artist},
+                                    {"count", it.value().count},
+                                    // Always 0 on this road.  The player gives no
+                                    // picture for an audio object at all - asked
+                                    // directly: GetSupportedResources answers
+                                    // DEFAULT only, and a THUMBNAIL or ALBUM_ART
+                                    // stream fails with 0x8007138E.  An art request
+                                    // for handle 0 returns without touching the
+                                    // bus, so a 200-album library does not pay 200
+                                    // guaranteed failures for a picture that is
+                                    // not on the player.
+                                    {"artItemId", quint32(0)}});
+    for (auto it = genreCounts.cbegin(); it != genreCounts.cend(); ++it)
+        r.genres.append(QVariantMap{{"name", it.key()},
+                                    {"count", it.value()}});
+    // Derived, not read: ZMDB states an artist and album count of its own and
+    // there is nothing to state those numbers here.  The pivots above are built
+    // from the rows, so these agree with what the page can show.
+    r.albumCount = r.albums.size();
+    r.artistCount = r.artists.size();
+
+    for (const Found &found : std::as_const(video)) {
+        const Wpd::ObjectInfo &o = found.object;
+        // No metagenre and no series properties: those are Zune vendor
+        // extensions, and a plain MTP client neither writes nor reads them.  A
+        // video therefore arrives as a video, which is the honest depth here.
+        r.videos.append(QVariantMap{
+            {"itemId", found.handle},
+            {"name", o.name},
+            {"title", o.title.isEmpty() ? o.name : o.title},
+            {"filename", o.name},
+            {"format", 0},
+            {"sizeMB", double(o.size) / 1e6},
+            {"metagenre", 0},
+            {"kind", QStringLiteral("video")}});
+    }
+    QSet<quint32> photoParents;
+    for (const Found &found : std::as_const(photo)) {
+        const Wpd::ObjectInfo &o = found.object;
+        quint32 parent = 0;
+        wpdHandleOf(o.parentId, &parent);
+        if (parent)
+            photoParents.insert(parent);
+        r.photos.append(QVariantMap{
+            {"itemId", found.handle},
+            {"name", o.name},
+            {"parentId", parent},
+            {"sizeMB", double(o.size) / 1e6}});
+    }
+    // Photo albums over MTP are the folders the pictures sit in - the same
+    // conclusion the ZMDB path reached for a different reason (see the photo
+    // album block in doBreach), so the two roads agree on what an album is.
+    for (quint32 parent : std::as_const(photoParents)) {
+        const QString name = folderNames.value(parent);
+        r.photoAlbums.append(QVariantMap{
+            {"itemId", parent},
+            {"name", name.isEmpty() ? QStringLiteral("photos") : name}});
+    }
+    // No playlists.  A Zune keeps them in its own metadata and MTP gives a
+    // generic client no way to read or build them, so the page stays empty
+    // rather than showing something that is not the player's list.
+    fprintf(stderr, "[wpd] library: %d tracks, %d albums, %d artists,"
+            " %d videos, %d photos, %d photo folders, 0 playlists\n",
+            int(r.tracks.size()), int(r.albums.size()), int(r.artists.size()),
+            int(r.videos.size()), int(r.photos.size()), int(r.photoAlbums.size()));
+
+    *result = r;
+    return true;
+}
+
+QString DeviceWorker::wpdObjectIdFor(quint32 itemId) const {
+    const auto hit = m_wpdIds.constFind(itemId);
+    if (hit != m_wpdIds.constEnd())
+        return hit.value();
+    // Only reachable for a handle that never came from a listing or a create.
+    // The provider's own string is always preferred: a Zune writes no leading
+    // zeros ("o5000005", not "o05000005"), and guessing its spelling is exactly
+    // the kind of assumption this file keeps getting caught out by.
+    return QStringLiteral("o%1").arg(itemId, 0, 16).toUpper();
+}
+
+bool DeviceWorker::ensureWpdFolder(const QString &parentId, const QString &name,
+                                   QString *objectId, QString *error) {
+    if (parentId.isEmpty() || name.isEmpty()) {
+        if (error)
+            *error = UiText::tr("A folder needs a parent and a name.");
+        return false;
+    }
+    // Windows' own case-insensitive matching is what the player emulates, so a
+    // second track for "Abba" must reuse "ABBA" rather than make a near-twin.
+    const QString cacheKey = parentId + QLatin1Char('|') + name.toLower();
+    const auto hit = m_wpdFolders.constFind(cacheKey);
+    if (hit != m_wpdFolders.constEnd()) {
+        if (objectId)
+            *objectId = hit.value();
+        return true;
+    }
+    Wpd::Session &wpd = *m_wpd;
+    QVector<Wpd::ObjectInfo> kids;
+    if (!wpd.children(parentId, &kids, error))
+        return false;
+    for (const Wpd::ObjectInfo &kid : std::as_const(kids)) {
+        if (kid.kind != Wpd::KindFolder)
+            continue;
+        if (kid.name.compare(name, Qt::CaseInsensitive) != 0)
+            continue;
+        quint32 handle = 0;
+        if (wpdHandleOf(kid.id, &handle))
+            m_wpdIds.insert(handle, kid.id);
+        m_wpdFolders.insert(cacheKey, kid.id);
+        if (objectId)
+            *objectId = kid.id;
+        return true;
+    }
+    QString created;
+    if (!wpd.makeFolder(parentId, name, &created, error))
+        return false;
+    quint32 handle = 0;
+    if (wpdHandleOf(created, &handle))
+        m_wpdIds.insert(handle, created);
+    m_wpdFolders.insert(cacheKey, created);
+    fprintf(stderr, "[wpd] made folder '%s' in %s as %s\n", qUtf8Printable(name),
+            qUtf8Printable(parentId), qUtf8Printable(created));
+    if (objectId)
+        *objectId = created;
+    return true;
+}
+
+void DeviceWorker::sendTrackWpd(const QString &entryId, const QString &filepath,
+                                const QString &title, const QString &albumartist,
+                                const QString &album, const QString &genre,
+                                int trackNumber, int durationMs) {
+    if (!m_wpd) {
+        emit sendDone(entryId, false, 0, QStringLiteral("NotConnected"));
+        return;
+    }
+    Wpd::Session &wpd = *m_wpd;
+    wpd.clearAbort();
+    if (m_wpdStorage.isEmpty()) {
+        // A storage list is two property reads; if the connection predates this
+        // class knowing where to write, ask now rather than fail the send.
+        Wpd::DeviceInfo info;
+        QString why;
+        if (wpd.readDevice(&info, &why) && !info.storageIds.isEmpty())
+            m_wpdStorage = info.storageIds.first();
+        else
+            fprintf(stderr, "[wpd] no storage to write to: %s\n", qUtf8Printable(why));
+    }
+    if (m_wpdStorage.isEmpty()) {
+        emit sendDone(entryId, false, 0, QStringLiteral("NoStorage"));
+        return;
+    }
+
+    // The same shape the libzune road makes, and for the same reason the name
+    // goes through LibraryPaths::safeComponent(): a Zune-supplied album called
+    // "P:44 / Vol. 2" is a path traversal waiting to happen, not a folder name.
+    // On this road the folders ARE the album grouping - there is no album object
+    // to forge - so skipping them would lose the album on the player's screen.
+    QString parent = m_wpdStorage;
+    QString error;
+    const QStringList chain{
+        QStringLiteral("Music"),
+        LibraryPaths::safeComponent(albumartist, QString()),
+        LibraryPaths::safeComponent(album, QString())};
+    for (const QString &part : chain) {
+        if (part.isEmpty())
+            continue;   // no artist or no album: the level above is the right shelf
+        QString folder;
+        if (!ensureWpdFolder(parent, part, &folder, &error)) {
+            emit sendDone(entryId, false, 0, QStringLiteral("Wpd: ") + error);
+            return;
+        }
+        parent = folder;
+    }
+
+    Wpd::ObjectInfo meta;
+    meta.title = title;
+    // The wire artist is the albumartist here too, which is the rule the libzune
+    // path already follows: what groups an album is the album's owner.
+    meta.artist = albumartist;
+    meta.albumArtist = albumartist;
+    meta.album = album;
+    meta.genre = genre;
+    meta.durationMs = quint32(durationMs > 0 ? durationMs : 0);
+    meta.trackNumber = quint32(trackNumber > 0 ? trackNumber : 0);
+
+    QString objectId;
+    WpdSendProgress ctx{this, &entryId, 0.0};
+    if (!wpd.upload(parent, filepath, meta, wpdSendProgressThunk, &ctx,
+                    &objectId, &error)) {
+        emit sendDone(entryId, false, 0, QStringLiteral("Wpd: ") + error);
+        return;
+    }
+    quint32 handle = 0;
+    if (!wpdHandleOf(objectId, &handle))
+        handle = 0;
+    if (handle)
+        m_wpdIds.insert(handle, objectId);
+    emit sendDone(entryId, true, handle, QString());
+}
+
+bool DeviceWorker::downloadWpd(quint32 itemId, const QString &destPath,
+                               QString *written, QString *error) {
+    if (!m_wpd) {
+        if (error)
+            *error = UiText::tr("No player is connected over MTP.");
+        return false;
+    }
+    Wpd::Session &wpd = *m_wpd;
+    const QString id = wpdObjectIdFor(itemId);
+    fprintf(stderr, "[wpd] extract %u (%s) -> %s\n", itemId, qUtf8Printable(id),
+            qUtf8Printable(destPath));
+
+    // The extension is settled here because this is the only place the
+    // container is actually in hand.  A WPD object's display name is a title, a
+    // title with no dot reaches DeviceService as a bare name that gets `.mp3`
+    // bolted on, and this very player has been measured storing ASF bytes behind
+    // an `.mp3` name on the WinUSB road - so the format property wins when the
+    // two disagree.
+    //
+    // One known cost, deliberately paid: DeviceService clears its pending-name
+    // set with the key of the path handed back (src/DeviceService.cpp), so a
+    // corrected extension leaves the original key pending until the profile
+    // restarts.  That bumps one candidate name later; a file that lies about
+    // what it is stays wrong forever.
+    QString target = destPath;
+    Wpd::ObjectInfo info;
+    QString unreadable;
+    if (wpd.objectInfo(id, &info, &unreadable)) {
+        const QString want = Wpd::Session::extensionForFormat(info.format);
+        const QFileInfo requested(destPath);
+        if (!want.isEmpty()
+            && requested.suffix().compare(want, Qt::CaseInsensitive) != 0) {
+            const QString corrected = requested.path() + QLatin1Char('.') + want;
+            if (QFile::exists(corrected)) {
+                // Never overwrite something the user already has to improve a
+                // guess; the requested name is the one this call was promised.
+                fprintf(stderr, "[wpd] the player says .%s but %s already exists"
+                        " - keeping the requested name\n", qUtf8Printable(want),
+                        qUtf8Printable(corrected));
+            } else {
+                fprintf(stderr, "[wpd] the player says this object is .%s, not .%s:"
+                        " saving as %s\n", qUtf8Printable(want),
+                        qPrintable(requested.suffix()), qUtf8Printable(corrected));
+                target = corrected;
+            }
+        }
+    }
+
+    if (!wpd.download(id, target, nullptr, nullptr, error)) {
+        QFile::remove(target + QStringLiteral(".wpd-part"));
+        fprintf(stderr, "[wpd] extract %u failed: %s\n", itemId,
+                qUtf8Printable(error ? *error : QString()));
+        return false;
+    }
+    m_wpdIds.insert(itemId, id);
+    if (written)
+        *written = target;
+    return true;
+}
+#endif
+
 void DeviceWorker::doSever() {
     if (m_dev) {
         m_devShared.store(nullptr);
         zune_sever(m_dev);
         m_dev = nullptr;
     }
+#if defined(Q_OS_WIN)
+    if (m_wpd) {
+        // m_wpdShared goes false BEFORE the session closes, which is the same
+        // handshake m_devShared uses: a reader that saw true may still touch a
+        // live object, and a reader that saw false never touches a dead one.
+        m_wpdShared.store(false);
+        m_wpd->close();
+        m_wpdIds.clear();
+        m_wpdFolders.clear();
+        m_wpdStorage.clear();
+    }
+#endif
     emit severDone();
 }
 
@@ -672,6 +1244,13 @@ void DeviceWorker::requestAbort() {
     // clears m_devShared BEFORE freeing.
     if (ZuneDevice *dev = m_devShared.load())
         zune_abort(dev);
+#if defined(Q_OS_WIN)
+    // The session is allocated once and never freed while this object lives, so
+    // the pointer is good even if the UI thread races a sever; m_wpdShared only
+    // says whether flipping it would reach an open connection.
+    if (m_wpdShared.load() && m_wpd)
+        m_wpd->requestAbort();
+#endif
 }
 
 void DeviceWorker::doPurgeItems(const QVariantList &itemIds) {
@@ -679,6 +1258,31 @@ void DeviceWorker::doPurgeItems(const QVariantList &itemIds) {
     QVariantList purged;
     const int total = itemIds.size();
     fprintf(stderr, "[worker] purge: %d item(s) requested\n", total);
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        QStringList ids, gone;
+        for (const QVariant &v : itemIds) {
+            const quint32 handle = v.toUInt();
+            ids << wpdObjectIdFor(handle);
+            m_wpdIds.remove(handle);
+        }
+        QString why;
+        // One object per delete call, so a player that refuses one object does
+        // not take the rest of the selection with it.
+        const bool allGone = m_wpd->removeObjects(ids, &gone, &why);
+        ok = gone.size();
+        fail = ids.size() - ok;
+        for (const QString &id : std::as_const(gone)) {
+            quint32 handle = 0;
+            if (wpdHandleOf(id, &handle))
+                purged.append(handle);
+        }
+        fprintf(stderr, "[wpd] purge: %d of %d deleted%s\n", ok, int(ids.size()),
+                allGone ? "" : qPrintable(QStringLiteral(" - ") + why));
+        emit purgeDone(ok, fail, purged);
+        return;
+    }
+#endif
     for (int i = 0; i < total; i++) {
         if (!m_dev) { fail = total - i; break; }
         const quint32 id = itemIds[i].toUInt();
@@ -782,6 +1386,13 @@ void DeviceWorker::doSendTrack(const QString &entryId, const QString &filepath,
                                const QString &title, const QString &albumartist,
                                const QString &album, const QString &genre,
                                int trackNumber, int durationMs) {
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        sendTrackWpd(entryId, filepath, title, albumartist, album, genre,
+                     trackNumber, durationMs);
+        return;
+    }
+#endif
     if (!m_dev) {
         emit sendDone(entryId, false, 0, QStringLiteral("NotConnected"));
         return;
@@ -842,6 +1453,19 @@ void DeviceWorker::doSendVideo(const QString &entryId, const QString &filepath,
                                const QString &description,
                                const QString &posterPath,
                                const QString &series, int season, int episode) {
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        // A Zune files a video by vendor metadata (metagenre, and 0xDA9A/0xDAB5/
+        // 0xDAB6 for a series episode) and takes its poster as a representative
+        // sample.  Plain MTP can put bytes in a folder; it cannot make the
+        // player's video library understand them, and a file the browser does
+        // not list is a sync that lied.
+        noteWpdUnsupported("video transfer");
+        emit sendVideoDone(entryId, false, 0,
+                           UiText::tr("This player is on Windows' MTP driver, which cannot add videos to the Zune's video library. Connect it to WinUSB for video sync."));
+        return;
+    }
+#endif
     if (!m_dev) {
         emit sendVideoDone(entryId, false, 0, QStringLiteral("NotConnected"));
         return;
@@ -888,6 +1512,13 @@ void DeviceWorker::doSendVideo(const QString &entryId, const QString &filepath,
 
 void DeviceWorker::doForgePlaylist(const QString &name,
                                    const QVariantList &trackIds) {
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        noteWpdUnsupported("playlist creation");
+        emit forgePlaylistDone(name, 0, false);
+        return;
+    }
+#endif
     if (!m_dev || name.isEmpty()) {
         emit forgePlaylistDone(name, 0, false);
         return;
@@ -907,6 +1538,18 @@ void DeviceWorker::doForgePlaylist(const QString &name,
 
 void DeviceWorker::doSendPhoto(const QString &entryId, const QString &filepath,
                                const QString &albumName) {
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        // The libzune call arms and resizes the picture for the player before it
+        // sends, and the device album is ZMDB state.  Dropping a raw JPEG into a
+        // folder is a different operation that has not been measured, so it is
+        // not offered as if it were the same feature.
+        noteWpdUnsupported("photo transfer");
+        emit sendPhotoDone(entryId, false, 0,
+                           UiText::tr("This player is on Windows' MTP driver, which cannot add photos to the Zune's photo albums. Connect it to WinUSB for photo sync."));
+        return;
+    }
+#endif
     if (!m_dev) {
         emit sendPhotoDone(entryId, false, 0, UiText::tr("no device"));
         return;
@@ -924,6 +1567,14 @@ void DeviceWorker::doSendPhoto(const QString &entryId, const QString &filepath,
 }
 
 void DeviceWorker::doExtractPhoto(quint32 itemId, const QString &destPath) {
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        QString written, why;
+        const bool ok = downloadWpd(itemId, destPath, &written, &why);
+        emit extractPhotoDone(itemId, written.isEmpty() ? destPath : written, ok);
+        return;
+    }
+#endif
     if (!m_dev) {
         emit extractPhotoDone(itemId, destPath, false);
         return;
@@ -938,6 +1589,14 @@ void DeviceWorker::doExtractPhoto(quint32 itemId, const QString &destPath) {
 }
 
 void DeviceWorker::doExtractTrack(quint32 itemId, const QString &destPath) {
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        QString written, why;
+        const bool ok = downloadWpd(itemId, destPath, &written, &why);
+        emit extractTrackDone(itemId, written.isEmpty() ? destPath : written, ok);
+        return;
+    }
+#endif
     if (!m_dev) {
         emit extractTrackDone(itemId, destPath, false);
         return;
@@ -954,6 +1613,16 @@ void DeviceWorker::doExtractTrack(quint32 itemId, const QString &destPath) {
 }
 
 void DeviceWorker::doExtractVideo(quint32 itemId, const QString &destPath) {
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        // The container is the interesting part of a pull here: this player
+        // states a format property, and the name it displays is a title.
+        QString written, why;
+        const bool ok = downloadWpd(itemId, destPath, &written, &why);
+        emit extractVideoDone(itemId, written.isEmpty() ? destPath : written, ok);
+        return;
+    }
+#endif
     if (!m_dev) {
         emit extractVideoDone(itemId, destPath, false);
         return;
@@ -970,6 +1639,13 @@ void DeviceWorker::doExtractVideo(quint32 itemId, const QString &destPath) {
 }
 
 void DeviceWorker::doRenameItem(quint32 itemId, const QString &newName) {
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        noteWpdUnsupported("item rename");
+        emit renameItemDone(itemId, newName, false);
+        return;
+    }
+#endif
     if (!m_dev || newName.isEmpty()) {
         emit renameItemDone(itemId, newName, false);
         return;
@@ -980,6 +1656,24 @@ void DeviceWorker::doRenameItem(quint32 itemId, const QString &newName) {
 }
 
 void DeviceWorker::doRefreshStorage() {
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        // The player's own storage properties, which is the same ground truth
+        // the other road gets from GetStorageInfo.
+        Wpd::DeviceInfo info;
+        QString why;
+        if (m_wpd->readDevice(&info, &why)) {
+            const double cap = double(info.capacityBytes) / 1e9;
+            const double free = double(info.freeBytes) / 1e9;
+            fprintf(stderr, "[wpd] storage refresh: %.1f GB free of %.1f GB\n",
+                    free, cap);
+            emit storageRefreshed(cap, free);
+        } else {
+            fprintf(stderr, "[wpd] storage refresh failed: %s\n", qUtf8Printable(why));
+        }
+        return;
+    }
+#endif
     if (!m_dev)
         return;
     const double cap = zune_get_capacity(m_dev) / 1e9;
@@ -990,6 +1684,17 @@ void DeviceWorker::doRefreshStorage() {
 }
 
 void DeviceWorker::doRenameDevice(const QString &newName) {
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        // Renaming the player is vendor property 0xD402.  WPD has a friendly
+        // name property too; whether a Zune provider obeys a write to it has
+        // never been asked here, and asking is how an untested write is learned
+        // about, so this stays a refusal until someone measures it.
+        noteWpdUnsupported("device rename");
+        emit renameDeviceDone(newName, false);
+        return;
+    }
+#endif
     if (!m_dev || newName.isEmpty()) {
         emit renameDeviceDone(newName, false);
         return;
@@ -1018,6 +1723,19 @@ void DeviceWorker::doSyncNotify(const QString &name, int itemIndex,
 }
 
 void DeviceWorker::doForgeAlbums(const QVariantList &buckets) {
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        // Album objects are ZMDB records, so there is nothing to forge here:
+        // sendTrackWpd() has already filed every file of this batch under
+        // <artist>/<album>/, and on a plain MTP player those folders are the
+        // grouping.  The zeros are not politeness - SyncEngine::onForgeDone reads
+        // a non-zero failCount as an error and would mark a good sync broken.
+        fprintf(stderr, "[wpd] album forge skipped: over MTP the folders are the"
+                " album grouping (%d bucket(s))\n", int(buckets.size()));
+        emit forgeDone(0, 0);
+        return;
+    }
+#endif
     if (!m_dev || buckets.isEmpty()) {
         emit forgeDone(0, m_dev ? 0 : buckets.size());
         return;
@@ -1163,6 +1881,18 @@ void DeviceWorker::doForgeAlbums(const QVariantList &buckets) {
 }
 
 void DeviceWorker::doFinalize() {
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        // Nothing to commit.  A ZMDB finalize asks the player to fold vendor
+        // records into its library; over MTP a file has been in its folder since
+        // the transfer closed.  Read this as "nothing was queued", which is not
+        // the same claim as "the player re-indexed" - that was never measured.
+        fprintf(stderr, "[wpd] finalize: nothing pending - MTP has no vendor"
+                " re-index to wait for\n");
+        emit finalizeDone(true);
+        return;
+    }
+#endif
     if (!m_dev) {
         emit finalizeDone(false);
         return;
@@ -1175,6 +1905,19 @@ void DeviceWorker::doGrabPhotoThumb(quint32 itemId, const QString &cachePath) {
         emit artDone(itemId, cachePath, true);
         return;
     }
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        if (!m_wpdArtReported) {
+            m_wpdArtReported = true;
+            fprintf(stderr, "[wpd] this player keeps no picture for its objects"
+                    " over MTP: GetSupportedResources names DEFAULT only, and a"
+                    " THUMBNAIL or ALBUM_ART stream fails with 0x8007138E. Art"
+                    " comes from a file's own tag instead.\n");
+        }
+        emit artDone(itemId, cachePath, false);
+        return;
+    }
+#endif
     if (!m_dev) {
         emit artDone(itemId, cachePath, false);
         return;
@@ -1188,6 +1931,20 @@ void DeviceWorker::doGrabArt(quint32 itemId, const QString &cachePath) {
         emit artDone(itemId, cachePath, true);
         return;
     }
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        // Same measured answer as the photo thumbnail above, for the same
+        // player: no stream exists to ask for.  The album's picture is the one
+        // embedded in the audio file, which the library already reads.
+        if (!m_wpdArtReported) {
+            m_wpdArtReported = true;
+            fprintf(stderr, "[wpd] no album art over MTP on this player (see the"
+                    " thumbnail note above)\n");
+        }
+        emit artDone(itemId, cachePath, false);
+        return;
+    }
+#endif
     if (!m_dev) {
         emit artDone(itemId, cachePath, false);
         return;
@@ -1379,6 +2136,14 @@ void DeviceWorker::doInspectPodcasts(const QString &token, const QString &serial
                                      const QVariantList &episodes) {
     QVariantList result;
     QString error;
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        noteWpdUnsupported("podcast episode lookup");
+        emit podcastsInspected(token, serial, result,
+                               UiText::tr("This player is on Windows' MTP driver, which has no podcast or audiobook library to read."));
+        return;
+    }
+#endif
     if (!m_dev || QString::fromUtf8(zune_get_serial(m_dev)) != serial)
         error = UiText::tr("The Zune disconnected or changed; add the episodes again.");
     else {
@@ -1401,6 +2166,18 @@ void DeviceWorker::doInspectPodcasts(const QString &token, const QString &serial
 
 void DeviceWorker::doSendPodcast(const QString &entryId, const QString &filepath,
                                   const QVariantMap &episode) {
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        // A podcast folder and show object are forged with vendor calls, and the
+        // feed/source identity lives in ZMDB, so there is nowhere to put an
+        // episode that the player would still recognise as one.
+        noteWpdUnsupported("podcast transfer");
+        emit podcastSendDone(entryId, false, 0,
+                             UiText::tr("This player is on Windows' MTP driver, which has no podcast library to add to. Connect it to WinUSB for podcasts."),
+                             false);
+        return;
+    }
+#endif
     if (!m_dev) {
         emit podcastSendDone(entryId, false, 0, UiText::tr("Zune disconnected"), false);
         return;
@@ -1484,6 +2261,14 @@ struct BookTransferInput {
 }
 void DeviceWorker::doInspectAudiobooks(const QString &token, const QString &serial, const QVariantList &parts) {
     QVariantList result; QString error;
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        noteWpdUnsupported("audiobook part lookup");
+        emit audiobooksInspected(token, serial, result,
+                                 UiText::tr("This player is on Windows' MTP driver, which has no podcast or audiobook library to read."));
+        return;
+    }
+#endif
     if (!m_dev || QString::fromUtf8(zune_get_serial(m_dev)) != serial)
         error=UiText::tr("The Zune disconnected or changed; add the book again.");
     else {
@@ -1500,6 +2285,15 @@ void DeviceWorker::doInspectAudiobooks(const QString &token, const QString &seri
     emit audiobooksInspected(token,serial,result,error);
 }
 void DeviceWorker::doSendAudiobook(const QString &entryId, const QString &filepath, const QVariantMap &part) {
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        noteWpdUnsupported("audiobook transfer");
+        emit audiobookSendDone(entryId, false, 0,
+                               UiText::tr("This player is on Windows' MTP driver, which has no audiobook library to add to. Connect it to WinUSB for audiobooks."),
+                               false);
+        return;
+    }
+#endif
     if (!m_dev) { emit audiobookSendDone(entryId,false,0,"Zune disconnected",false); return; }
     zune_clear_abort(m_dev);
     if (part.value("partNumber").toInt()<1 || part.value("partNumber").toInt()>65535) {

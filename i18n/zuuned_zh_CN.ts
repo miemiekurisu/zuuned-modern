@@ -3132,12 +3132,12 @@ or select photos and choose Add.</source>
         <translation>macOS 既不需要驱动也不需要规则 —— zuuned 通过 libusb 访问 Zune。</translation>
     </message>
     <message>
-        <source>Windows claims the Zune through a WinUSB driver - no rules, no sudo.</source>
-        <translation>Windows 通过 WinUSB 驱动接管 Zune —— 不需要规则，也不需要 sudo。</translation>
-    </message>
-    <message>
         <source>Zune plugged in, but not visible to libusb</source>
         <translation>Zune 已插上，但 libusb 看不到它</translation>
+    </message>
+    <message>
+        <source>Zune reached through the Windows MTP driver</source>
+        <translation>Zune 已通过 Windows 自带的 MTP 驱动连接</translation>
     </message>
     <message>
         <source>Zune visible to libusb</source>
@@ -3146,6 +3146,10 @@ or select photos and choose Add.</source>
     <message>
         <source>No Zune visible to libusb</source>
         <translation>libusb 看不到 Zune</translation>
+    </message>
+    <message>
+        <source>Windows already hands this player to zuuned through its own MTP driver, so there is nothing to install here. Binding WinUSB to it with the Zadig utility would replace the driver Windows is using now.</source>
+        <translation>Windows 已经通过自带的 MTP 驱动把这台播放器交给 zuuned，这里无需安装任何东西。如果用 Zadig 给它绑定 WinUSB，反而会替换掉 Windows 现在正在使用的驱动。</translation>
     </message>
     <message>
         <source>zuuned talks to the Zune through libusb, which on macOS needs no driver installed. If a plugged-in Zune never shows up here, something else already holds its USB interface. zuuned never installs a driver.</source>
@@ -3360,6 +3364,18 @@ or select photos and choose Add.</source>
         <translation>型号</translation>
     </message>
     <message>
+        <source>Connection</source>
+        <translation>连接方式</translation>
+    </message>
+    <message>
+        <source>Windows MTP driver</source>
+        <translation>Windows 自带 MTP 驱动</translation>
+    </message>
+    <message>
+        <source>WinUSB, Zune database</source>
+        <translation>WinUSB，直读 Zune 数据库</translation>
+    </message>
+    <message>
         <source>Serial</source>
         <translation>序列号</translation>
     </message>
@@ -3546,6 +3562,10 @@ or select photos and choose Add.</source>
     <message>
         <source>Bit rate is constant only. A variable-bitrate MP3 header is not written by this build - measured, the LAME/Xing frame is absent and the player then reports a track three minutes shorter than it is - so VBR is not offered.</source>
         <translation>码率只能是恒定的。本版本不会写入可变码率的 MP3 头 —— 实测缺少 LAME/Xing 帧，播放器随后会把曲目时长少报三分钟 —— 因此不提供 VBR。</translation>
+    </message>
+    <message>
+        <source>Windows hands the Zune to zuuned through a WinUSB or MTP driver - no rules, no sudo.</source>
+        <translation>Windows 通过 WinUSB 或 MTP 驱动把 Zune 交给 zuuned —— 不需要规则，也不需要 sudo。</translation>
     </message>
     <message>
         <source>Auto decodes on the GPU through VideoToolbox, then falls back to software. NVIDIA and AMD name an API this platform cannot reach, so both pills are inert here and those picks decode on the CPU. The H.264 encoder is VideoToolbox whatever this pill says, and reaches the CPU only if macOS refuses a VideoToolbox session.</source>
@@ -4821,6 +4841,10 @@ Star an episode in any show to find it here.</source>
         <translation>无法从这台 Zune 读取有声内容。</translation>
     </message>
     <message>
+        <source>This player is on Windows&apos; MTP driver, which has no podcast or audiobook library to read.</source>
+        <translation>这台播放器走的是 Windows 自己的 MTP 驱动，而 MTP 上没有可供读取的播客或有声书资料库。</translation>
+    </message>
+    <message>
         <source>The Zune disconnected or changed. Reconnect and refresh.</source>
         <translation>Zune 已断开或发生变化。请重新连接并刷新。</translation>
     </message>
@@ -4865,6 +4889,10 @@ Star an episode in any show to find it here.</source>
         <translation>未找到 Zune（%1）</translation>
     </message>
     <message>
+        <source>; and Windows would not hand the player over either</source>
+        <translation>；而且 Windows 也不肯把播放器交出来</translation>
+    </message>
+    <message>
         <source>Reading device info…</source>
         <translation>正在读取设备信息……</translation>
     </message>
@@ -4877,8 +4905,36 @@ Star an episode in any show to find it here.</source>
         <translation>正在加载视频（HD MTP 回退）……</translation>
     </message>
     <message>
+        <source>Asking Windows for the player…</source>
+        <translation>正在请求 Windows 把播放器交给 zuuned……</translation>
+    </message>
+    <message>
+        <source>Listing files over MTP…</source>
+        <translation>正在通过 MTP 列出文件……</translation>
+    </message>
+    <message>
+        <source>Unknown Title</source>
+        <translation>未知标题</translation>
+    </message>
+    <message>
+        <source>A folder needs a parent and a name.</source>
+        <translation>文件夹需要同时有上级目录和名称。</translation>
+    </message>
+    <message>
+        <source>No player is connected over MTP.</source>
+        <translation>没有播放器通过 MTP 连接。</translation>
+    </message>
+    <message>
+        <source>This player is on Windows&apos; MTP driver, which cannot add videos to the Zune&apos;s video library. Connect it to WinUSB for video sync.</source>
+        <translation>这台播放器走的是 Windows 自己的 MTP 驱动，MTP 无法把视频添加进 Zune 的视频资料库。要同步视频，请为它绑定 WinUSB。</translation>
+    </message>
+    <message>
         <source>uploaded; title or size readback could not be verified</source>
         <translation>已上传；未能核实读回的标题或大小</translation>
+    </message>
+    <message>
+        <source>This player is on Windows&apos; MTP driver, which cannot add photos to the Zune&apos;s photo albums. Connect it to WinUSB for photo sync.</source>
+        <translation>这台播放器走的是 Windows 自己的 MTP 驱动，MTP 无法把照片添加进 Zune 的相册。要同步照片，请为它绑定 WinUSB。</translation>
     </message>
     <message>
         <source>no device</source>
@@ -4949,6 +5005,10 @@ Star an episode in any show to find it here.</source>
         <translation>Zune 已断开或发生变化；请重新添加这些单集。</translation>
     </message>
     <message>
+        <source>This player is on Windows&apos; MTP driver, which has no podcast library to add to. Connect it to WinUSB for podcasts.</source>
+        <translation>这台播放器走的是 Windows 自己的 MTP 驱动，MTP 上没有可以添加到的播客资料库。要同步播客，请为它绑定 WinUSB。</translation>
+    </message>
+    <message>
         <source>Zune disconnected</source>
         <translation>Zune 未连接</translation>
     </message>
@@ -4959,6 +5019,10 @@ Star an episode in any show to find it here.</source>
     <message>
         <source>The Zune disconnected or changed; add the book again.</source>
         <translation>Zune 已断开或发生变化；请重新添加这本书。</translation>
+    </message>
+    <message>
+        <source>This player is on Windows&apos; MTP driver, which has no audiobook library to add to. Connect it to WinUSB for audiobooks.</source>
+        <translation>这台播放器走的是 Windows 自己的 MTP 驱动，MTP 上没有可以添加到的有声书资料库。要同步有声书，请为它绑定 WinUSB。</translation>
     </message>
     <message>
         <source>Invalid audiobook part order</source>
@@ -5907,6 +5971,10 @@ Star an episode in any show to find it here.</source>
     <message>
         <source>Zune %1 is on the bus, invisible to libusb, and Windows has no driver for it (problem %2: %3) - %4</source>
         <translation>Zune %1 在总线上，libusb 看不到它，Windows 也没有为它准备驱动（问题 %2：%3）—— %4</translation>
+    </message>
+    <message>
+        <source>Zune %1 is on the bus, invisible to libusb, and Windows drives it in a way zuuned can use (%2)</source>
+        <translation>Zune %1 已经在总线上，libusb 看不到它，而 Windows 驱动它的方式正好是 zuuned 能用的（%2）</translation>
     </message>
     <message>
         <source>Zune %1 is on the bus, invisible to libusb, and Windows says a driver owns it - so what owns it is not one zuuned can use (%2)</source>

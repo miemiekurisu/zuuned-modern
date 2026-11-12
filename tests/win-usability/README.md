@@ -1,7 +1,8 @@
 # Windows capture tool
 
 `winshot.cpp` is the eye of the Windows usability gate.  It captures what a
-window of a running `zuuned.exe` actually paints, with no device, no user audio
+window of a running `zuuned.exe` actually paints, opening no device handle of its
+own and playing no user audio
 and without disturbing the desktop session, because a Qt Quick window can start
 with a perfectly clean stderr and still render nothing.  Every launch case in
 the gate is meant to end with a capture and a blankness check.
@@ -128,7 +129,8 @@ the seeded library (`-Only fixture,pages`).
   folder, because a photo library is otherwise only readable by an eye.  Also seeds the
   library the page cases copy into their profiles.
 - `pages` - one launch each for music, videos, photos, podcasts and audiobooks with
-  the seeded library, plus the device page with no device attached.  Every one ends
+  the seeded library, plus the device page, which this harness attaches nothing to.
+  Every one ends
   with a capture, a paint verdict and the app's own `[qa]` report.  The music case
   also pins the path spelling it reports: at least one watch folder reached the app,
   every label it shows is spelled natively with no forward slash left in it, every
@@ -193,9 +195,13 @@ the seeded library (`-Only fixture,pages`).
 
 Six things it cannot certify, and does not claim to:
 
-- **Nothing here drives a device.**  No USB handle is opened, and the device page is
-  checked only in its healthy no-device state.  The Windows wire evidence is the hand
-  test in `docs/WINDOWS_PORT.md`: one Pavo Zune HD, opened, authenticated and written.
+- **This harness drives no device.**  It opens no USB handle and no MTP session of its
+  own, and the device-page case asserts only that the page opens and paints.  When a
+  player happens to be on the cable the application's own auto-connect browses it
+  inside every isolated profile, which is the app's behaviour observed rather than a
+  claim this gate makes.  The Windows wire evidence stays the hand test in
+  `docs/WINDOWS_PORT.md`: one Pavo Zune HD over WinUSB, and one Zune HD over the
+  in-box Windows MTP driver.
 - The WASAPI run is muted.  It proves the Windows audio output opens and clocks
   playback; nobody listened to it, so it certifies no waveform.
 - Dismissing the Now Playing island by clicking its X needs a mouse.  The gate proves

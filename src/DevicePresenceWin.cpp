@@ -50,6 +50,67 @@ bool countsAsAttached(ULONG problem) {
            && problem != 45 /* CM_PROB_NOT_CONNECTED */;
 }
 
+// Which kernel driver owns the devnode.  Read from the same place Device
+// Parameters is read - the devnode's own registry key - because the device
+// interface list answers a different question: it names the interfaces a driver
+// publishes, and a WPD player publishes ones libusb does not look for.
+QString driverOf(DEVINST devNode) {
+    WCHAR buffer[256] = {};
+    ULONG length = sizeof(buffer);
+    if (CM_Get_DevNode_Registry_PropertyW(devNode, CM_DRP_SERVICE, nullptr,
+                                         buffer, &length, 0) != CR_SUCCESS)
+        return QString();
+    return QString::fromWCharArray(buffer).toLower();
+}
+
+// Whether Windows publishes a Windows Portable Devices interface for this
+// instance.  That interface is the road src/wpd/WpdBackend.cpp travels: the WPD
+// enumerator answers from exactly this device-interface class, so one filtered
+// call here asks, without COM and without a devnode handle to the WPD driver, the
+// same question the backend is about to ask.
+//
+// The instance id is passed as the list's filter, which is what the API is for -
+// an unfiltered list plus a mapping per link would cost a call per phone on the
+// machine.  Measured on the Zune HD this port runs on while it sat on Windows'
+// own MTP driver: this list answers one link for it and no link for a player
+// bound to nothing, which is the pair of answers that separates "use the other
+// road" from "install a driver".
+bool publishesWpdInterface(const QString &instanceId) {
+    // GUID_DEVINTERFACE_WPD, spelled here rather than read from functionsteps.h:
+    // one constant is not worth a header-version dependency in a file the Linux
+    // build never compiles.
+    static const GUID kWpdInterfaceClass = {
+        0x6ac27878, 0xa6fa, 0x4155,
+        {0xba, 0x85, 0xf9, 0x8f, 0x49, 0x1d, 0x4f, 0x33}};
+    PWSTR id = const_cast<PWSTR>(
+        reinterpret_cast<const WCHAR *>(instanceId.utf16()));
+
+    // The API wants a non-const GUID pointer for a value it only reads.
+    LPGUID iface = const_cast<LPGUID>(&kWpdInterfaceClass);
+    // The list call does not report the room it wants - it only refuses a buffer
+    // that is too small - so the size comes from its own sibling.  Writing this
+    // against the list call alone was measured answering "no interface" for a
+    // player that publishes one: the probe left the size at zero and every
+    // answer became false.
+    ULONG needed = 0;
+    if (CM_Get_Device_Interface_List_SizeW(
+            &needed, iface, id,
+            CM_GET_DEVICE_INTERFACE_LIST_PRESENT) != CR_SUCCESS)
+        return false;
+    // A length of one is the lone double-null terminator: a devnode that
+    // publishes no interface of this class.
+    if (needed <= 1)
+        return false;
+
+    std::vector<WCHAR> buffer(size_t(needed), WCHAR(0));
+    if (CM_Get_Device_Interface_ListW(iface, id, buffer.data(), needed,
+                                      CM_GET_DEVICE_INTERFACE_LIST_PRESENT) != CR_SUCCESS)
+        return false;
+    // A double-null list with room to spare means at least one interface is
+    // present; an empty answer is a lone terminator.
+    return buffer[0] != WCHAR(0);
+}
+
 bool parseIds(const QString &instanceId, quint16 &vid, quint16 &pid) {
     const QString upper = instanceId.toUpper();
     const int v = upper.indexOf(QStringLiteral("VID_"));
@@ -110,6 +171,8 @@ ZuneSighting scanForZune() {
         sighting.supported = true;
         sighting.present = true;
         sighting.usable = problem == 0;
+        sighting.driver = driverOf(devNode);
+        sighting.wpdInterface = publishesWpdInterface(instanceId);
         sighting.vid = vid;
         sighting.pid = pid;
         sighting.instanceId = instanceId;

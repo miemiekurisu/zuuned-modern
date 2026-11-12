@@ -53,6 +53,12 @@ class DeviceService : public QObject {
     Q_PROPERTY(QString status READ status NOTIFY stateChanged)
     Q_PROPERTY(QString name READ name NOTIFY stateChanged)
     Q_PROPERTY(QString deviceSerial READ deviceSerial NOTIFY stateChanged)
+    // Which protocol this session reached the player over: "libzune" for the
+    // ZMDB/MTPZ protocol on a WinUSB-bound interface, "wpd" for Windows'
+    // own MediaDevice (MTP) driver.  Empty while nothing is connected, and on
+    // Linux, which only has the first road.  The UI uses it to say so rather
+    // than to change what it asks for - DeviceWorker already picked the road.
+    Q_PROPERTY(QString deviceBackend READ deviceBackend NOTIFY stateChanged)
     Q_PROPERTY(QString model READ model NOTIFY stateChanged)
     // ZuneDeviceFamily (0xD21A): 0x00 Keel/30, 0x02 Scorpius, 0x03 Draco,
     // 0x06 Pavo/HD, 0xFF unknown — Settings shows the matching profile
@@ -263,6 +269,7 @@ public:
     bool purgeInterruptedVideo(const QString &filename);
     bool purgeInterruptedObject(const QVariantMap &record);
     QString deviceSerial() const { return m_connected ? m_serial : QString(); }
+    QString deviceBackend() const { return m_connected ? m_backend : QString(); }
     QVariantMap onDeviceKeys() const { return m_onDeviceKeys; }
     quint64 musicIdentityRevision() const { return m_musicIdentityRevision; }
     Q_INVOKABLE QVariantList musicIdentityPeers(const QVariantMap &track) const;
@@ -441,6 +448,7 @@ private:
     QString m_status = UiText::tr("Waiting for a Zune…");
     QString m_name, m_model;
     QString m_serial;
+    QString m_backend;
     int m_family = 0xFF;
     int m_battery = 0;
     double m_capacityGB = 0, m_freeGB = 0;

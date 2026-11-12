@@ -593,6 +593,41 @@ target_link_libraries(devicetool PRIVATE zuuned_presence Qt6::Core ${LIBUSB_LIBR
 target_include_directories(devicetool PRIVATE ${LIBUSB_INCLUDE_DIRS})
 zuuned_long_paths(devicetool)
 
+# =================================================================
+# The second road to a Zune.  A player bound to the Windows Portable
+# Devices driver answers the same file-level questions over WPD/COM
+# without anybody rebinding it, without MTPZ credentials, and inside
+# the same client the user already knows, so the app takes this road
+# when it finds the device there and keeps libzune when the device is
+# on WinUSB.  Windows-only by construction: WPD is a Windows compo-
+# nent, and Linux keeps its one road untouched.  wpdtool is the CLI
+# that lets a script ask the same questions headlessly.
+# =================================================================
+if(WIN32)
+    add_library(zuuned_wpd STATIC
+        src/wpd/WpdBackend.cpp
+        src/wpd/WpdBackend.h
+    )
+    target_include_directories(zuuned_wpd PUBLIC src)
+    target_link_libraries(zuuned_wpd PUBLIC Qt6::Core zuuned_presence
+        # PortableDeviceGuids.lib carries the property keys.  The COM
+        # interfaces themselves come from the WPD service at run time,
+        # so beyond the GUIDs only the property-variant helpers and
+        # COM itself have to be named.
+        PortableDeviceGuids.lib propsys.lib ole32 oleaut32)
+
+    add_executable(wpdtool src/wpdtool.cpp)
+    target_link_libraries(wpdtool PRIVATE zuuned_wpd zuuned_presence Qt6::Core
+        ${LIBUSB_LIBRARIES} ${ZUUNED_WINCOMPAT})
+    target_include_directories(wpdtool PRIVATE ${LIBUSB_INCLUDE_DIRS})
+    zuuned_long_paths(wpdtool)
+
+    # And inside the application: the point of this backend is that the one
+    # client the user already opens picks the road by itself, so zuuned has to
+    # carry it rather than shelling out to wpdtool.
+    target_link_libraries(zuuned PRIVATE zuuned_wpd)
+endif()
+
 # ═══════════════════════════════════════════════════════════════════
 # Phase 2: transcode layer (transcode/) — shared C logic with the mac
 # app, built against SYSTEM FFmpeg + LAME. Standalone static lib +

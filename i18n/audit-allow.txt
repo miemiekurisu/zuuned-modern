@@ -12,6 +12,8 @@
 
 # --- output that never reaches a widget -------------------------------------
 SKIP-LINE :: \bfprintf\s*\( :: diagnostics written to stderr; the session log, not the UI
+SKIP-LINE :: \bnoteWpdUnsupported\s*\( :: a stderr note naming the feature MTP cannot do; the sentence a user reads is the UiText::tr beside it
+[stopped at the walk budget] :: a suffix on a walk summary that only ever reaches fprintf(stderr) in the function that builds it; a log line, not the UI
 SKIP-LINE :: \bprintf\s*\( :: C-level stdout/stderr in the transcode and CLI tools
 SKIP-LINE :: \b(?:qWarning|qDebug|qInfo|qCritical|qFatal)\s*\( :: Qt log categories, never rendered
 SKIP-LINE :: SessionLog|sessionLog|->diagnostic|appendDiagnostic :: session-log lines a user is not shown
@@ -38,6 +40,8 @@ SKIP-FILE :: src/spoken/spokenmediatool.cpp :: CLI probe for spoken-media schema
 SKIP-FILE :: src/player/MprisService.cpp :: Linux MPRIS D-Bus identity strings for other apps, not our UI
 SKIP-FILE :: src/ProfilePaths.h :: filesystem layout constants
 SKIP-FILE :: src/UiText.h :: the translation door itself
+SKIP-FILE :: src/wpd/WpdBackend.cpp :: transport diagnostics that name a COM HRESULT and the WPD property set it came from; every sentence a user reads is in src/DeviceWorker.cpp behind UiText::tr
+SKIP-FILE :: src/wpdtool.cpp :: offline CLI probe; its stdout is read by a developer and by gate scripts, not by a user
 SKIP-FILE :: src/library/NetworkAccess.h :: one session-log line about the network route plus a librarytool assertion that matches its English wording; it is never rendered
 
 SKIP-LINE :: [\\]n" :: the tail of a printf format string that ends in a newline

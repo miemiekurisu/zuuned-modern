@@ -1265,7 +1265,7 @@ Item {
                             ? qsTr("let zuuned own the Zune without sudo each time.")
                             : Qt.platform.os === "osx"
                               ? qsTr("macOS needs no driver and no rules - zuuned reaches the Zune through libusb.")
-                              : qsTr("Windows claims the Zune through a WinUSB driver - no rules, no sudo.")
+                              : qsTr("Windows hands the Zune to zuuned through a WinUSB or MTP driver - no rules, no sudo.")
                         // Windows and macOS have no udev: name WinUSB, or nothing at
                         // all, instead of offering a rule install.
                         ColumnLayout {
@@ -1279,12 +1279,25 @@ Item {
                             // is still nowhere in libusb_get_device_list().
                             readonly property bool blocked:
                                 DeviceService.devicePresent && DeviceService.usbAccessProblem
+                            // Which road is carrying this player right now.  A
+                            // Zune that Windows gave to its own MTP driver is
+                            // reached over that driver and needs nothing
+                            // installed, so the Zadig advice below has to go
+                            // quiet - binding WinUSB there would replace the
+                            // driver that is working.  Measured on a Zune HD
+                            // bound to wudfwpdmtp: libusb opens the descriptor,
+                            // claim_interface answers ACCESS_DENIED, and the MTP
+                            // road is the only one that carries any bytes.
+                            readonly property bool overWpd:
+                                DeviceService.deviceBackend === "wpd"
                             Text {
                                 text: usbAccessCol.blocked
                                       ? qsTr("Zune plugged in, but not visible to libusb")
-                                      : DeviceService.devicePresent
-                                        ? qsTr("Zune visible to libusb")
-                                        : qsTr("No Zune visible to libusb")
+                                      : usbAccessCol.overWpd
+                                        ? qsTr("Zune reached through the Windows MTP driver")
+                                        : DeviceService.devicePresent
+                                          ? qsTr("Zune visible to libusb")
+                                          : qsTr("No Zune visible to libusb")
                                 font.pixelSize: 14; font.weight: Font.Light
                                 color: DeviceService.devicePresent && !usbAccessCol.blocked
                                        ? Theme.textPrimary : Theme.warning
@@ -1308,7 +1321,9 @@ Item {
                                 // sends a tester to a tool that cannot help. The
                                 // transport is libusb on both platforms, only what
                                 // the operating system wants first differs.
-                                text: Qt.platform.os === "osx"
+                                text: usbAccessCol.overWpd
+                                      ? qsTr("Windows already hands this player to zuuned through its own MTP driver, so there is nothing to install here. Binding WinUSB to it with the Zadig utility would replace the driver Windows is using now.")
+                                      : Qt.platform.os === "osx"
                                       ? qsTr("zuuned talks to the Zune through libusb, which on macOS needs no driver installed. If a plugged-in Zune never shows up here, something else already holds its USB interface. zuuned never installs a driver.")
                                       : qsTr("zuuned talks to the Zune through libusb, which on Windows needs a WinUSB driver bound to the device. If a plugged-in Zune never shows up here, install WinUSB for it with the Zadig utility, then replug. zuuned never installs a driver.")
                                 font.pixelSize: 11; font.weight: Font.Light
@@ -1663,6 +1678,20 @@ Item {
                                           ? DeviceService.modelName : DeviceService.model)
                                        : (thisZuneCard.rememberedModel.length > 0
                                           ? thisZuneCard.rememberedModel
+                                          : qsTr("not reported"))
+                            }
+                            // Which road the bytes actually took.  The same
+                            // client reaches a player two different ways on
+                            // Windows, and a user who is told "it is connected"
+                            // deserves to see that one of them has no photo or
+                            // podcast library at the far end.
+                            StatRow {
+                                label: qsTr("Connection")
+                                visible: thisZuneCard.live
+                                value: DeviceService.deviceBackend === "wpd"
+                                       ? qsTr("Windows MTP driver")
+                                       : (DeviceService.deviceBackend.length > 0
+                                          ? qsTr("WinUSB, Zune database")
                                           : qsTr("not reported"))
                             }
                             StatRow {

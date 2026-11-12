@@ -7,10 +7,15 @@
 #include <QVariantList>
 
 #include <atomic>
+#include <memory>
 
 #include "TrackModel.h"
 
 struct ZuneDevice;
+
+namespace Wpd {
+class Session;
+}
 
 // Everything libzune, on one thread — the C++ equivalent of ZuunedMac's
 // `actor MTPService`. The worker OWNS the ZuneDevice handle; the UI-thread
@@ -22,6 +27,13 @@ class DeviceWorker : public QObject {
     Q_OBJECT
 
 public:
+    // Both halves out of line.  m_wpd owns a Wpd::Session and this header only
+    // forward declares it, and MSVC needs to be able to destroy that member in
+    // whichever translation unit builds either the constructor's cleanup path or
+    // the destructor - so neither of them may be generated here.
+    DeviceWorker();
+    ~DeviceWorker() override;
+
     struct BreachData {
         bool ok = false;
         QString error;
@@ -35,6 +47,11 @@ public:
         QVector<TrackRow> tracks;
         int albumCount = 0, artistCount = 0;
         QVariantList artists, albums, genres;
+        // Which road this player came in on: "libzune" for the vendor ZMDB path,
+        // "wpd" for Windows' own MTP driver.  Not a cosmetic label - most of what
+        // the device page offers exists only on the first one, and the UI has to
+        // be able to say which half the user is looking at.
+        QString backend;
         QVariantList videos, photos, playlists;
         // Device photo folder-albums: [{itemId, name}] (ZMDB scan)
         QVariantList photoAlbums;
@@ -194,6 +211,53 @@ private:
     std::atomic<quint64> m_spokenGeneration{1};
     // Mirror of m_dev for the cross-thread requestAbort() read.
     std::atomic<ZuneDevice *> m_devShared{nullptr};
+
+#if defined(Q_OS_WIN)
+    // A Zune that Windows already owns - bound to Windows' own WPD/MTP driver
+    // rather than to WinUSB - is reachable only through Windows.  This backend is
+    // Windows-only by construction; everywhere else the player has one road.
+    //
+    // The session is allocated once and never freed while the worker lives, so
+    // requestAbort() on the UI thread only reads a pointer that outlives it.
+    // m_wpdShared says whether that session is open right now and is cleared
+    // before the session closes - the handshake m_devShared already uses.
+    bool breachWpd(BreachData *r);
+    QString wpdObjectIdFor(quint32 itemId) const;
+    // One file onto the player, into <artist>/<album>/ under the storage this
+    // connection picked.  Emits sendDone itself because the failure text differs
+    // from libzune's autopsy names: there is no vendor autopsy on this road.
+    void sendTrackWpd(const QString &entryId, const QString &filepath,
+                      const QString &title, const QString &albumartist,
+                      const QString &album, const QString &genre,
+                      int trackNumber, int durationMs);
+    // Downloads one object and reports the path it really wrote.  A WPD object's
+    // format property is the only place this player states the container it holds -
+    // the name it displays is a title, and a bare name reaches us as `.mp3` - so the
+    // extension is settled here, where the format is actually in hand.
+    bool downloadWpd(quint32 itemId, const QString &destPath, QString *written,
+                     QString *error);
+    // Resolve one folder under a parent, creating it only when the parent's own
+    // listing says it is not there.  Cached for the connection: a 200-track sync
+    // otherwise re-enumerates the same artist folder 200 times.
+    bool ensureWpdFolder(const QString &parentId, const QString &name,
+                         QString *objectId, QString *error);
+    QString m_wpdStorage;            // storage a send writes to
+    QHash<QString, QString> m_wpdFolders;   // "parent/name" -> folder object id
+    std::unique_ptr<Wpd::Session> m_wpd;
+    std::atomic<bool> m_wpdShared{false};
+    // The object ids this player really used, keyed by the quint32 handle the
+    // rest of this class speaks.  A WPD id is the MTP handle behind a one-letter
+    // namespace, but it is the provider's own string, so the string that worked
+    // is remembered rather than rebuilt from a rule.
+    QHash<quint32, QString> m_wpdIds;
+    // One line per connection is enough to explain why the device page has no
+    // pictures on this road; a per-request line would be noise.
+    bool m_wpdArtReported = false;
+    // Says out loud that a request needs a vendor operation this road does not
+    // have.  Every caller of it still emits its failure signal: the app reports
+    // "not possible over MTP" rather than pretending a ZMDB-only operation ran.
+    static void noteWpdUnsupported(const char *feature);
+#endif
 };
 
 Q_DECLARE_METATYPE(DeviceWorker::BreachData)

@@ -96,7 +96,8 @@ what zuuned says.
 
 ## What has actually been done on Windows
 
-Hand-tested against one Pavo-generation Zune HD on the development machine:
+Hand-tested on the development machine.  The bullets below ran against one Pavo-generation
+Zune HD over WinUSB, except the one that says it did not.
 
 - **Driver binding** - the player bound to WinUSB, read back as `CM_PROB_NONE` with an
   interface GUID ([`packaging/windows/DRIVER_INSTALL.md`](packaging/windows/DRIVER_INSTALL.md)).
@@ -114,13 +115,23 @@ Hand-tested against one Pavo-generation Zune HD on the development machine:
   container that comes back is not the one that went out: a Zune re-wraps an ASF on ingest and
   rewrites the Author inside the file from the name it holds device-side, so the invariant for this
   format is the codec tag the player serves plus the decoded samples, never the bytes.
+- **The same client over Windows' own MTP driver** - a second player, sitting on the
+  in-box `wudfwpdmtp` driver with nothing installed by hand: 768 objects walked and 585
+  tracks / 68 albums / 40 artists indexed, a card reporting 32 GB, 93% and its own free
+  space, one track sent, one pulled back **byte-identical to a separate read of the same
+  object**, and one deleted with both the row count and the player's free space agreeing.
+  MTP as zuuned uses it reports neither a model nor a serial, so this page does not name
+  that player, and the categories MTP has no target for are refused in words rather than
+  failing quietly.  That player keeps no picture for its objects over MTP
+  (`0x8007138E`), so a device-side cover there comes from a file's own tag or not at all.
 - **Deletion** - one music track purged through the right-click control, and the next
   launch read 168 tracks in 10 albums by 10 artists back off the player with its own free
   space 18.5 MB larger. The agreement is the device's, not a row dropped from a list.
 
 **Not yet proven on Windows**, and not inherited from Linux either: any deletion beyond
-that one music track, the podcast, audiobook, photo and video transfer categories, every Zune
-model but that one Pavo, audible PC-side playback (the automated gate opens WASAPI muted, so
+those two music tracks (one per road), the podcast, audiobook, photo and video transfer
+categories - adding photos or video over the MTP road is refused by design rather than left
+untested - every Zune model but that one Pavo, audible PC-side playback (the automated gate opens WASAPI muted, so
 no automated run has heard anything), and the packaged folder with a player attached or on a machine
 that did not build it - there is a preview artifact now, but still no installer and no code signing.
 **WMA Lossless** is encoded on Windows, by the encoder the operating system already ships rather than
@@ -130,9 +141,18 @@ offered one and the setting says out loud that the likely result elsewhere is a 
 
 ## Getting a Zune seen by Windows
 
-libusb cannot see a Zune that has no driver bound, and Windows ships none for one. An
-unbound player sits at PnP *problem 28* and appears nowhere. Binding is a one-time manual
-step per machine and **nothing in Zuuned installs a driver**:
+**Ask before installing anything.**  Some Zunes are driven by a driver Windows already
+ships, and zuuned reaches a player through whatever driver Windows gave it.  Where that is
+the case the device page connects on its own and there is nothing to install - and binding
+WinUSB over it would replace a driver that works.  `build\devicetool.exe` names the road it
+can see: `os_wpd_interface=1` means Windows is already handing the player over on its own
+MTP driver, which is the road the MTP bullet above was measured on.
+
+The Zadig step below is for the other case, and only that case: a player sitting on the
+vendor `USB\MS_COMP_MTPZ` interface, for which Windows ships no driver at all.  libusb
+cannot see one of those with no driver bound; it sits at PnP *problem 28* and appears
+nowhere.  Binding is a one-time manual step per machine and **nothing in Zuuned installs a
+driver**:
 
 1. Plug the player in and run [`packaging/windows/check-driver.ps1`](packaging/windows/check-driver.ps1)
    to see what Windows thinks it has.

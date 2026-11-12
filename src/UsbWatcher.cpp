@@ -44,6 +44,12 @@ void pollPresence(libusb_context *ctx, const std::atomic<bool> &stop,
     // only the passes where libusb saw nothing reach the platform scan.
     constexpr int kPresenceScanEvery = 4;
     unsigned passes = 0;
+    // Whether the platform scan has an unclaimed arrival outstanding.  libusb is
+    // blind to a player Windows kept for its own MediaDevice driver, so the
+    // arrival and the departure of that player exist only in this loop, and
+    // `present` alone cannot carry them: it is libusb's own state and would stay
+    // false for the whole lifetime of a session the user can see working.
+    bool platformPresent = false;
 #endif
     while (!stop) {
         libusb_device **devices = nullptr;
@@ -81,16 +87,40 @@ void pollPresence(libusb_context *ctx, const std::atomic<bool> &stop,
         // replug and slow enough to stay off the enumeration path.
         if (!sighted && ++passes % kPresenceScanEvery == 0) {
             const Zuuned::ZuneSighting sighting = Zuuned::scanForZune();
+            const bool reachable = Zuuned::zuunedCanReach(sighting, sighted);
             const QString detail = Zuuned::describeSighting(sighting, sighted);
-            if (detail != blockedDetail) {
-                blockedDetail = detail;
-                if (sighting.present) {
-                    fprintf(stderr, "[usbwatcher] %s\n", qUtf8Printable(detail));
-                    emit self->zuneBlocked(detail);
+            // An access problem the user can act on, and nothing else.  A player
+            // on Windows' MTP driver is not blocked: DeviceWorker reaches it
+            // through the WPD backend, so saying otherwise would tell the user to
+            // go install a driver for no reason.
+            const QString blocked = reachable ? QString() : detail;
+            if (blocked != blockedDetail) {
+                blockedDetail = blocked;
+                if (!blockedDetail.isEmpty()) {
+                    fprintf(stderr, "[usbwatcher] %s\n", qUtf8Printable(blockedDetail));
+                    emit self->zuneBlocked(blockedDetail);
                 } else {
-                    fprintf(stderr, "[usbwatcher] no Zune devnode either\n");
+                    fprintf(stderr, "[usbwatcher] the platform no longer reports a "
+                                    "Zune zuuned cannot reach\n");
                     emit self->zuneUnblocked();
                 }
+            }
+            // Presence for the road libusb cannot see.  Emitted after the block
+            // state above settles, because a device that changed roads without
+            // leaving the bus must not be reported gone on its way in.
+            if (reachable && !platformPresent) {
+                platformPresent = true;
+                present = true;
+                absences = 0;
+                fprintf(stderr, "[usbwatcher] Zune arrived on a driver zuuned "
+                                "can use (%s)\n",
+                        sighting.driver.toUtf8().constData());
+                emit self->zuneArrived();
+            } else if (!sighting.present && platformPresent) {
+                platformPresent = false;
+                present = false;
+                fprintf(stderr, "[usbwatcher] Zune left (platform scan)\n");
+                emit self->zuneLeft();
             }
         }
 #endif

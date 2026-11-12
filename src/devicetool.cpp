@@ -75,6 +75,8 @@ int main(int argc, char **argv) {
            usb.enumerated ? 1 : 0, usb.devices, usb.hotplug, usb.sighted ? 1 : 0);
     printf("os_supported=%d os_present=%d os_usable=%d os_problem=%u\n",
            os.supported ? 1 : 0, os.present ? 1 : 0, os.usable ? 1 : 0, os.problem);
+    printf("os_driver=%s os_wpd_interface=%d\n", os.driver.toUtf8().constData(),
+           os.wpdInterface ? 1 : 0);
     if (!os.instanceId.isEmpty())
         printf("os_instance=%s\n", os.instanceId.toUtf8().constData());
     const QString detail = Zuuned::describeSighting(os, usb.sighted);
@@ -101,6 +103,14 @@ int main(int argc, char **argv) {
         return 0;
     }
     if (os.present) {
+        // libusb is blind and the devnode is real.  Since the WPD backend that is
+        // the second road to the same player, that pair no longer means blocked
+        // on its own - which driver Windows bound decides it, and the caller
+        // should see the difference rather than infer it from a problem code.
+        if (Zuuned::zuunedCanReach(os, false)) {
+            printf("VERDICT=agree via=%s\n", os.driver.toUtf8().constData());
+            return 0;
+        }
         printf("VERDICT=blocked\n");
         return 0;
     }

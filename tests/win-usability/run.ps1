@@ -3,7 +3,8 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tests\win-usability\run.ps1
 #
 # Answers one question with evidence: is this Windows build actually usable?  It
-# is the GUI equivalent of tests/win-compat: no device, no sound (ZUUNED_MPV_AO is
+# is the GUI equivalent of tests/win-compat: this harness opens no device handle
+# and plays no sound (ZUUNED_MPV_AO is
 # the null driver) and no contact with the real profile, because every launch gets
 # its own ZUUNED_PROFILE_DIR plus its own ZUUNED_LOCK_SUFFIX and the run compares
 # the real profile before and after.  It needs no network to pass, and it does not
@@ -942,11 +943,12 @@ if (Select-Phase 'pages') {
                     ($asked.Count -eq 0) ('' + ($asked | Select-Object -First 1))
             }
         }
-        # A device page with nothing attached is the case a user hits every time the
-        # cable is out; it must open and stay quiet even though no device claim here
-        # is possible.
+        # The device page is the case a user hits every time the cable is out, and
+        # this harness attaches nothing.  It is not a claim about the cable: when a
+        # player is plugged in the app's own auto-connect browses it inside this
+        # isolated profile, which is the app's business and not this case's.
         $deviceCase = Invoke-Case -Name 'page-deviceMusic' -Arguments @('--page', 'deviceMusic') -Seed
-        Assert-Case -Case $deviceCase -Label 'a device page opens with no device attached and stays clean' `
+        Assert-Case -Case $deviceCase -Label 'a device page opens and stays clean with nothing attached by this harness' `
             -ExpectOnboarding 'false'
         Write-Host ('  note device page reported page=' + (Get-QaField $deviceCase.QaSplash 'page') +
             ' panel=' + (Get-QaField $deviceCase.QaSplash 'panel'))
@@ -1927,7 +1929,9 @@ if ($script:failures) {
 }
 # Truthful scope: the audio phase does open the real Windows output, but
 # only muted, so nothing in this gate is certified by anyone listening to it.
-Write-Host ('scope: ' + $script:caseSeq + ' instrumented launches, no device, one real audio output opened muted and never heard')
-Write-Host 'SCOPE: no device handle opened here; the Windows wire evidence is the hand test in docs\WINDOWS_PORT.md'
+Write-Host ('scope: ' + $script:caseSeq + ' instrumented launches, one real audio output opened muted and never heard')
+Write-Host 'SCOPE: this harness opens no device handle; when a player is on the cable the app browses it on'
+Write-Host '       its own inside every isolated profile, so the Windows wire evidence stays the hand test in'
+Write-Host '       docs\WINDOWS_PORT.md'
 Write-Host 'OVERALL=ok'
 exit 0

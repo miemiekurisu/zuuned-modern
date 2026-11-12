@@ -475,6 +475,7 @@ void DeviceService::onBreachDone(const DeviceWorker::BreachData &r) {
         m_name = r.name;
         m_model = r.model;
         m_serial = r.serial;
+        m_backend = r.backend;
         m_family = r.family;
         m_battery = r.battery;
         m_capacityGB = r.capacityGB;

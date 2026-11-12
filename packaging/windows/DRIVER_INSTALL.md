@@ -7,6 +7,37 @@ quite enough on their own.
 Nothing in Zuuned installs a driver.  Until a Windows installer exists, binding
 is a one-time manual step per machine, done by whoever is testing hardware.
 
+## First, check whether you need any of this
+
+Binding WinUSB buys the ZMDB line, where the app reads the player's own database.  It
+is not the only way zuuned reaches a player on Windows.  A player Windows has already
+given a driver to - on the development machine, the in-box UMDF MTP driver
+`wudfwpdmtp` - is reachable *through that driver*, and zuuned then browses it, sends to
+it, reads a file back and deletes one with nothing installed by hand.  That is measured
+on one player; `docs/WINDOWS_PORT.md` owns that evidence.
+
+So ask before installing anything, with the player attached:
+
+```
+powershell -NoProfile -File packaging\windows\check-driver.ps1
+build\devicetool.exe
+```
+
+`devicetool` opens nothing and answers for both lines at once.  What its answers mean:
+
+- `os_wpd_interface=1` with `os_driver=wudfwpdmtp` - Windows already hands this player
+  to zuuned over MTP.  **Stop here.**  Installing WinUSB over it replaces the driver
+  Windows is using now, and nothing in zuuned needs that in order to talk to the player.
+- `os_problem=CM_PROB_FAILED_INSTALL`, no driver at all - nothing can reach the player,
+  and Route A below is the fix.
+- `os_driver=WinUSB` with a device interface GUID - the ZMDB line, which is what the
+  rest of this page is about.
+
+`libusb_sighted=1` on its own is not a claim that the app can use the player.  On an
+MTP-bound player libusb reads the descriptors and then fails `claim_interface` with
+Access denied, because Windows owns the interface; zuuned notices that and takes the MTP
+route rather than reporting a dead device.
+
 **Status: run against hardware on 2026-10-20, and it worked.**  A Zune HD on the
 development machine went from problem 28 to `CM_PROB_NONE`, is bound to `WinUSB`,
 registers an interface GUID, is sighted by libusb, and has been opened and read by
@@ -129,7 +160,8 @@ to prefer if Secure Boot refuses Zadig's self-signed package.
 1. `powershell -NoProfile -File packaging\windows\check-driver.ps1` - expect
    `status   : OK  problem=CM_PROB_NONE`, a `driver` line plus `service  : WinUSB`,
    and an `ifaces` line naming a GUID.  Read-only script: it installs nothing and
-   needs no elevation.  Both runs above are its literal output.
+   needs no elevation.  Both runs above are its literal output.  A `service` naming
+   `wudfwpdmtp` rather than `WinUSB` is not a failure - see the first section.
 2. `build\devicetool.exe` - expect `libusb_sighted=1` and `VERDICT=agree`, which is
    what this machine answers now.  It opens no handle by design, so it proves
    reachability only, never MTPZ auth.

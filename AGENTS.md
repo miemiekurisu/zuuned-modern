@@ -2617,3 +2617,46 @@ restored in `finally`, `--no-compiler-runtime` is passed, and `-Release` fails o
 (one check more than the pre-fix 50, which is the guard), archive audit 18 / 0.  Publishing a
 file is not measuring a device: no send, deletion, readback or playback happened, and no device
 id, account, host name or test-library path left the machine.
+
+**2026-11-13 the second line to a player, and an API that does not fill in its own
+length:** a player Windows has already handed to its in-box MTP driver is a player this
+client can use, and the choice is made per connection rather than by asking the tester to
+change a driver.  `doBreach()` still tries libzune first - whether a WinUSB-bound player
+answers `os_wpd_interface=0` has never been measured, and guessing would cost those users
+their ZMDB line - and when libusb reads the descriptors and then fails `claim_interface`
+with `Access denied` the same `DeviceWorker` verbs run on `src/wpd/WpdBackend.{h,cpp}`,
+with `src/wpdtool.cpp` the same transport as one command.  Presence became a *capability*:
+`present && (libusbSighted || wpdInterface)`, with `os_driver` kept as a diagnosis that
+decides nothing; a driver-name whitelist was written first and refuted by measurement.
+`publishesWpdInterface()` had been answering `os_wpd_interface=0` for every devnode on
+every machine because `CM_Get_Device_Interface_ListW` does not fill in a length - the size
+comes from `CM_Get_Device_Interface_List_SizeW` - so ask for the size, then for the list.
+Measured inside `zuuned.exe` on the in-box driver: `walked 768 object(s): 585 audio, 7
+video, 5 image` and `585 tracks, 68 albums, 40 artists, 7 videos, 5 photos`; the card and
+`devices.json` show 32 GB, 93% and `capacityGB 32.079` while `family` stays `0xFF` and
+`serial` is empty **on purpose**, so this tree does not name that player's model; one
+track up `failed=0` in 941 ms; one track down **byte-identical** to the same object read
+by `wpdtool`; one deletion, 586 rows to 585, free space up, completion line in Chinese.
+Two behaviours to stop re-discovering: a send is **not** a byte-preserving copy because
+the app retags through FFmpeg first (45,203 bytes in, 46,331 out, `Lavf60.4.100`, and the
+file's own album tag beats the album the caller passed), and that player keeps no picture
+for its objects over MTP - `GetSupportedResources` names `DEFAULT` only, `THUMBNAIL` and
+`ALBUM_ART` fail with `0x8007138E` - so device-side covers come from a file's own tag or
+not at all.  Podcast, audiobook, photo and video **add**, playlist, album forge and rename
+are refused over MTP with translated text, not silence; MTPZ is not on this line and the
+WinUSB MTPZ evidence neither helped nor was borrowed.  Settings said something that would
+have broken a tester's player: the USB-access block told a user whose player already
+worked over MTP to install WinUSB with Zadig, so it now reads `deviceBackend === "wpd"`
+and says there is nothing to install, from `i18n/zh_CN.tsv` (`AUDIT=ok`, 1560 texts, 0
+missing, 0 stale).  The usability gate's `no device` scope line had become a lie by
+omission - it described the harness and read as a claim about the machine while the app
+was browsing 585 tracks inside every isolated profile of the run - and now says the
+harness opens no device handle.  Counters on a 350-step `--clean-first` rebuild:
+`tests\win-compat` 204 / 0 / 0, `tests\win-usability` launches=18 checks=136 failures=0
+skips=0 killed=0 with the real profile unchanged at 191 files.  **Nothing was listened
+to**, playback, spoken media, photo/video add, playlists and rename stay closed on both
+lines, this player's model is unknown to MTP and no second model has been attached,
+packaging has not been re-run with the backend present, and the WinUSB line is no longer
+re-verifiable on this machine without destroying a driver that works.  The Settings
+`Connection` row naming the backend is verified by gates and logs only: that part of the
+page needs a scroll no harness can drive.
