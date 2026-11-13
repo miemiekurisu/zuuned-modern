@@ -195,15 +195,22 @@ Item {
     // one of their own albums, so the Artists pivot borrows exactly that. Built
     // once per library revision rather than per cell: a large library would
     // otherwise rescan every album for every artist tile.
+    // The device pivots borrow the same thing, from the same place: the local
+    // library's own albums.  A record that lives on the player and in the
+    // library already has its cover on this disk, and that is the only picture
+    // this player can be given - over MTP it keeps none for an audio object.
+    // Nothing is asked of the device or of a store here, because albumHasArt()
+    // only reads, so a device tile gains a cover without gaining a request.
     readonly property var artistArtOwners: MusicIdentity.localArtOwners(
-        deviceSource ? [] : source.albumsList, root.albumHasArt)
+        deviceSource ? LibraryService.albumsList : source.albumsList,
+        root.albumHasArt)
 
     // Does the library's own art cache hold this album's picture right now. A
     // read, never a request: an album tile asks for its cover, an artist tile
     // only looks at what that already produced.
     function albumHasArt(album) {
-        return String(LibraryService.artPaths[LibraryService.artKey(
-            album.artArtist || "", album.artAlbum || "")] || "") !== ""
+        return LibraryService.localArtPath(
+            album.artArtist || "", album.artAlbum || "") !== ""
     }
 
     // ── Songs pivot: search + sortable columns ──
@@ -719,7 +726,14 @@ Item {
                         subtitle: modelData.subtitle || ""
                         artItemId: modelData.artItemId || 0
                         localArt: !root.deviceSource
-                        artArtist: modelData.artArtist || ""
+                        // A device album row carries its artist in `subtitle`,
+                        // and naming it here is what lets AlbumArt recognise a
+                        // cover the local library already holds for the same
+                        // record. Local rows always carry artArtist, so this
+                        // answers for a device row and nothing else.
+                        artArtist: modelData.artArtist
+                                   || (root.deviceSource
+                                       ? (modelData.subtitle || "") : "")
                         artAlbum: modelData.artAlbum || modelData.name
                         artFilepath: modelData.firstTrackPath || ""
                         artworkDiscovery: root.deviceSource ? ({})

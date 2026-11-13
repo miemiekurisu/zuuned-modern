@@ -187,7 +187,9 @@ int main(int argc, char **argv) {
         }
         report(QStringLiteral("wpd_zunes=%1").arg(ids.size()));
         for (const QString &id : ids)
-            report(QStringLiteral("pnp=%1").arg(id));
+            // Masked for the same reason the backend masks it: whatever this
+            // tool prints is what a tester pastes into a report.
+            report(QStringLiteral("pnp=%1").arg(Wpd::Session::maskedPathText(id)));
         report(QStringLiteral("VERDICT=%1").arg(ids.isEmpty() ? QStringLiteral("absent")
                                                               : QStringLiteral("present")));
         return ids.isEmpty() ? 1 : 0;

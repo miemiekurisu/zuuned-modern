@@ -22,9 +22,13 @@ Item {
     property var artworkDiscovery: ({})
     // The cover as the library's art cache holds it right now. Read only: an
     // artist tile never asks for artwork, it shows what the album side found.
+    // localArtPath() also answers for a cover that is on disk but that no view
+    // has asked this service to publish yet; reading artPaths is what makes this
+    // re-run when the cache finds one.
     readonly property string albumFallbackUrl: fallbackAlbum === "" ? ""
         : (LibraryService.artPaths[
-              LibraryService.artKey(fallbackArtist, fallbackAlbum)] || "")
+              LibraryService.artKey(fallbackArtist, fallbackAlbum)]
+           || LibraryService.localArtPath(fallbackArtist, fallbackAlbum))
     readonly property string missingArtStatus: {
         if (!localArt || photoUrl || albumFallbackUrl) return ""
         switch (artworkDiscovery.status) {

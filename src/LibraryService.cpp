@@ -1174,6 +1174,17 @@ void LibraryService::requestArt(const QString &artist, const QString &album,
     m_art->requestSources(artist, album, sources);
 }
 
+QString LibraryService::localArtPath(const QString &artist,
+                                     const QString &album) const {
+    if (album.isEmpty())
+        return QString();
+    const QString published = m_artPaths.value(artKey(artist, album)).toString();
+    if (!published.isEmpty())
+        return published;
+    const QString cached = m_art->cachedArtPath(artist, album);
+    return cached.isEmpty() ? QString() : QUrl::fromLocalFile(cached).toString();
+}
+
 void LibraryService::discoverMissingArtwork() {
     // Both setup and later imports use this path. Embedded and folder art comes
     // from the user's own files and is never replaced; an album that ends up

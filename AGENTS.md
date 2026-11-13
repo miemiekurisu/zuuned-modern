@@ -2660,3 +2660,49 @@ packaging has not been re-run with the backend present, and the WinUSB line is n
 re-verifiable on this machine without destroying a driver that works.  The Settings
 `Connection` row naming the backend is verified by gates and logs only: that part of the
 page needs a scroll no harness can drive.
+
+**2026-11-13 photo previews, borrowed album covers, and the frame that will not photograph:**
+the report was "no album covers and no photo previews" with the constraint not to disturb
+what the beta already stands behind, so every line stayed device-side and
+`local: !root.deviceSource` is still the switch.  The MTP photo refusal had quietly become
+false: `GetSupportedResources` naming only `DEFAULT` and `THUMBNAIL`/`ALBUM_ART` answering
+`0x8007138E` says the player keeps no *second* copy of a picture - it does not say a still
+image has no preview, which is what the code had concluded.  `DeviceWorker::grabWpdPhotoThumb()`
+tries the player's thumbnail stream, then gates on the size `objectInfo()` reports (0 bytes
+or over 24 MB is a download, not a tile) and decodes the object's own `DEFAULT` stream,
+`setAutoTransform(true)`, 512-pixel long edge, RGB32 because JPEG has no alpha, JPEG 82.
+Measured on the player: three `photo preview %u: 320x240 made from the object's own DEFAULT
+stream` lines for the three layers of one card, `photo_50331661..63.jpg` written at
+16,410/15,372/17,827 bytes beside the 109,168-byte whole object that sized the rule, and a
+real photo in the album tile.  An *audio* object keeps no art stream either, so the album
+tile borrows the cover this machine already holds: `LibraryService::localArtPath()` is a
+**read and never a request** (published path, else the on-disk art cache, else empty; no
+socket, no discovery - the unconditional artwork search the user rejected stays rejected),
+`AlbumArt.qml` orders player-then-local, and three wiring faults had to go for it to answer
+at all: the device pivots built their artist-to-cover map from `[]`, a device album row's
+artist is called `subtitle` and was never passed as `artArtist`, and an artist tile looked
+only at what some view had published this session.  Six local albums against 68 device
+albums means 62 correct placeholders - read that as the rule, not as a failure.  A PnP
+device path is a serial number in a coat: `Wpd::Session::maskedPathText()` keeps hardware id
+and interface class and aliases the instance chunk (stable, so two lines about one player
+still pair), `wpdtool enumerate` masks through it, and a `pnpPath` rule in
+`src/diagnostics/Redactor.cpp` catches anything else; the backend prints `serial-<6 hex>`
+and the session log a tester would paste reads `[instance]`.  **The counter to distrust is
+the paint check.**  `tests\win-usability` answered `launches=18 checks=136 failures=20`
+with all twenty being `blank-ish distinct=128 dominant=0.977`: `winshot` was returning an
+unpainted 7 KB white client area, and this is capture, not painting - every non-capture
+check in the same run passed, including the three that only answer if the album grid really
+has pictures, and the app's own probe reported `albums=6 artWith=6 artAgree=6
+artOwnerWanted=6 artOwnerFound=6` on the page that would not photograph.  Minimise and
+restore, `HWND_TOPMOST` plus `SetForegroundWindow`, and a same-monitor resize change the
+frame by zero bytes; the same binary and tool painted at `1942x1256 dpi=144` earlier the
+same morning with the window on the *other* monitor, and every blank frame since sits on the
+100 % primary at `1296x839 dpi=96` - `PrintWindow` cannot reach that swapchain from that
+monitor on this hybrid-adapter desktop.  So a usability counter depends on where Windows put
+the window: check the `dpi=` and `rect=` of a run before quoting its failures, and a
+`--place` in `winshot` is the shape of the fix nobody has built.  `tests\win-compat`
+photographs nothing and is 204 / 0 / 0 on the same relinked build.  **Not claimed:** the
+borrowed device cover is not yet an eyeballed fact on the device Albums pivot - no harness
+here can select a pivot, the tabs are plain `MouseArea`s outside the UI tree - and device
+playback, audible audio, spoken media, photo/video add, MTP deletion, playlists, rename, the
+video poster (still `requestArt`, empty by choice) and every unnamed model stay open.

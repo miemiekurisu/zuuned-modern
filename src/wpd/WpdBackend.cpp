@@ -24,6 +24,7 @@
 
 #include <wrl/client.h>
 
+#include <QCryptographicHash>
 #include <QFile>
 #include <QFileInfo>
 #include <QPair>
@@ -505,6 +506,26 @@ bool Session::openFirstZune(QString *error) {
     return open(ids.first(), error);
 }
 
+QString Session::maskedPathText(const QString &pnpId) {
+    // \?\usb#vid_045e&pid_0710#<instance>#{interface class} - the only shape a
+    // PnP path comes in, so anything else is not a path this code should be
+    // printing at all.
+    const int first = pnpId.indexOf(QLatin1Char('#'));
+    const int second = pnpId.indexOf(QLatin1Char('#'), first + 1);
+    if (first < 1 || second < 0)
+        return QStringLiteral("[device path withheld]");
+    const int third = pnpId.indexOf(QLatin1Char('#'), second + 1);
+    const QString head = pnpId.left(second + 1);
+    const QString tail = third < 0 ? QString() : pnpId.mid(third);
+    const QString instance = third < 0
+        ? pnpId.mid(second + 1)
+        : pnpId.mid(second + 1, third - second - 1);
+    const QByteArray alias = QCryptographicHash::hash(instance.toUtf8(),
+                                                      QCryptographicHash::Sha1)
+                                 .left(3).toHex();
+    return head + QStringLiteral("serial-") + QString::fromLatin1(alias) + tail;
+}
+
 bool Session::open(const QString &pnpId, QString *error) {
     setReason(error, QString());
     if (m_device) {
@@ -557,7 +578,9 @@ bool Session::open(const QString &pnpId, QString *error) {
     m_content = content.Detach();
     m_pnpId = pnpId;
     clearAbort();
-    fprintf(stderr, "[wpd] opened %s\n", qUtf8Printable(pnpId));
+    // Masked, because this line is in every session log and the instance chunk
+    // of a PnP path is the player's serial number.
+    fprintf(stderr, "[wpd] opened %s\n", qUtf8Printable(maskedPathText(pnpId)));
     return true;
 }
 

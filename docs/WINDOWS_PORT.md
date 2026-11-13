@@ -2955,3 +2955,98 @@ on WinUSB, and rebinding it was not done because it would destroy the working dr
 prove a line that already has its own evidence.  The QML `Connection` row that names the
 backend in Settings is the one change in this sitting verified only by the gates and the
 logs, not by an eye - that part of the page needs a scroll no harness can drive.
+
+## 2026-11-13 (later) - a tile for every photo, and the cover the player never kept
+
+The report was one sentence - no album covers, no photo previews - with a constraint
+attached that mattered more than the bug: **do not disturb the parts the beta release
+already stands behind**.  So the whole sitting stayed inside the device pivots.  Not one
+line of the local-library paint path changed its behaviour, and `local: !root.deviceSource`
+is still the switch the two halves are chosen by.
+
+**The photo refusal had stopped being true, and it was the application's fault.**  The
+MTP backend had been recording, once per session, that this player "keeps no picture for
+its objects": `GetSupportedResources` names `DEFAULT` and nothing else, and asking for a
+`THUMBNAIL` or an `ALBUM_ART` stream answers `0x8007138E`.  That is a fact about *second*
+copies of a picture, and it is still true.  What was never true is the conclusion drawn
+from it, because a still image **is** its own preview - the player was being asked for a
+thumbnail, refused, and the code stopped asking anything.  `DeviceWorker::grabWpdPhotoThumb()`
+asks properly: the player's own thumbnail stream first, then - gated on the size
+`objectInfo()` reports, because 0 bytes or more than 24 MB is a download and not a tile -
+the object's own `DEFAULT` stream, decoded through `QImageReader` with
+`setAutoTransform(true)`, scaled to a 512-pixel long edge, flattened to RGB32 because
+JPEG has no alpha to argue about, and written as the JPEG the cache asked for.  Three
+requests and one screen:
+
+```
+[wpd] photo preview 50331661: 320x240 made from the object's own DEFAULT stream
+[wpd] photo preview 50331662: 320x240 made from the object's own DEFAULT stream
+[wpd] photo preview 50331663: 320x240 made from the object's own DEFAULT stream
+```
+
+The tile is on screen - one photo album card showing the picture, header
+`1 个相册 · 5 张照片` - and the cache is the receipt: `photo_50331661.jpg` 16,410 bytes,
+`_50331662` 15,372, `_50331663` 17,827, beside the 109,168-byte whole object that the
+7:40 measurement pulled to size the rule.  The three requests are the three layers of the
+one card stack, not three photos.  A second launch asks for none of them again: the after-
+change runs log the walk and no preview line at all, because `doGrabPhotoThumb()` returns
+on the cache it already owns.
+
+**An album tile on this line cannot get its cover from the player, and now says where it
+got one instead.**  An *audio* object genuinely has no art stream - that refusal stands,
+and reading the tag inside the file would mean pulling a whole song over the cable for one
+thumbnail.  So `AlbumArt.qml` borrows: the player's own picture if it has one, then the
+cover this machine already holds for the same artist and album.  The new
+`LibraryService::localArtPath()` is the whole of that door and it is a **read, never a
+request** - published art path, else the art cache on disk, else empty; no socket, no
+lookup, no discovery, which is what keeps this from becoming the unconditional
+search-the-internet behaviour that was explicitly rejected a week ago.  Three wiring
+faults had to go first for it to answer at all: the device pivots built their
+artist-to-cover map from an empty list (`deviceSource ? [] : ...`), a device album row
+never named its artist because that field is called `subtitle` over MTP, and an artist
+tile's fallback looked only at what some view had happened to publish this session.
+Measured limit, stated so nobody reads it as a bug: this library holds **6** albums, the
+player reports **68**, so 62 device tiles are *correctly* a placeholder.
+
+**A PnP device path is a serial number wearing a coat**, and it was going into every
+session log.  `Wpd::Session::maskedPathText()` keeps the hardware id and the device
+interface class - the two things a reader needs to identify a player - and replaces the
+instance chunk between the `#`s with a short stable alias, so two lines about one player
+still recognisably belong together; unrecognised input is withheld rather than printed.
+`wpdtool enumerate` masks through the same function, and `src/diagnostics/Redactor.cpp`
+carries a `pnpPath` rule behind it for anything arriving from a driver tool.  Observed, in
+the order the two layers catch it: the backend prints `serial-<6 hex>` and the session log
+that a tester would paste reads `[instance]`.
+
+**A harness fact that will bite the next person, and that is not about this change.**  The
+usability gate came back `launches=18 checks=136 failures=20` and all twenty failures are
+one string: `blank-ish distinct=128 dominant=0.977`.  `winshot` was capturing an unpainted
+client area - a real PNG, 7 KB, white, at `rect=1296x839 dpi=96`.  This is capture, not
+painting, and the evidence is that the run is otherwise clean and the frame is not:
+every non-capture check in the same run passed, including the ones that only answer if the
+album grid really has pictures (`the fixture cover is extracted and reaches the running
+album grid`, `every album resolves the same picture in the grid and the player`, `every
+album with a cover hands one to its artist tile`), and the application's own probe said
+`albums=6 artWith=6 artAgree=6 artOwnerWanted=6 artOwnerFound=6` on the page it could not
+be photographed on.  Tried and ruled out: minimise and restore, `HWND_TOPMOST` plus
+`SetForegroundWindow`, and a same-monitor resize - the frame does not change by one byte.
+The same binary and the same tool painted real frames between 08:29 and 09:02 the same
+morning, at `1942x1256 dpi=144`, with the window on the *other* monitor; every blank frame
+since has a window on the 100 % primary.  The honest reading is that `PrintWindow` cannot
+reach this window's swapchain from that monitor on this hybrid-adapter desktop, and that a
+counter which depends on where Windows happened to place the window is a counter that can
+lie - the `136 checks / 0 failures` figure above it was taken on the other monitor.  Not
+fixed here: a placement option in `winshot` is the shape of that fix and it is not this
+change.  `tests\win-compat`, which photographs nothing, is **204 checks / 0 failures / 0
+skips** on the same relinked build.
+
+**What this sitting does not claim.**  The borrowed album cover is verified by the code
+path and by the fields it is given - the device scan really does emit `name`/`subtitle`
+pairs that match the six local rows, GUID moniker mapped to `Unknown Artist` on both sides
+- and it is **not yet an eyeballed fact on the device Albums pivot**: no harness on this
+machine can select a pivot, the tabs are plain `MouseArea`s and absent from the UI tree.
+Device-side playback, audible audio, the spoken categories, photo and video **add**,
+deletion over MTP, playlists, rename, the video poster (`qml/DeviceVideosPage.qml` still
+uses `requestArt` and stays empty by choice), every model but the ones already named and
+anything anyone has listened to all stay exactly as open as they were.  The Linux line is
+untouched by construction and unverified on this machine.

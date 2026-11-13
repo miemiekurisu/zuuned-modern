@@ -223,6 +223,11 @@ private:
     // before the session closes - the handshake m_devShared already uses.
     bool breachWpd(BreachData *r);
     QString wpdObjectIdFor(quint32 itemId) const;
+    // One tile-sized preview for a photo this player serves over MTP.  It lives
+    // here rather than in DeviceService because this is the thread allowed to
+    // touch the session, and because the answer needs a real read: see the
+    // definition for what the player was asked and what it was found to keep.
+    bool grabWpdPhotoThumb(quint32 itemId, const QString &cachePath);
     // One file onto the player, into <artist>/<album>/ under the storage this
     // connection picked.  Emits sendDone itself because the failure text differs
     // from libzune's autopsy names: there is no vendor autopsy on this road.

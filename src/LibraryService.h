@@ -154,6 +154,15 @@ public:
     // lowercase(artist)+"\n"+lowercase(album).
     Q_INVOKABLE void requestArt(const QString &artist, const QString &album,
                                 const QString &trackFilepath);
+    // The cover the library already holds for an album, as a url, or "".  A read
+    // and never a request: nothing here opens a socket or starts a lookup, so a
+    // caller on the device side can borrow a picture the user already owns
+    // without that ever turning into artwork discovery it did not ask for.
+    // Publishes the disk cache rather than only what requestArt() has handed
+    // out, which is the difference between "the cover is on this disk" and "some
+    // view happened to ask for it during this session".
+    Q_INVOKABLE QString localArtPath(const QString &artist,
+                                     const QString &album) const;
     void importDeviceAlbumArt(const QString &artist, const QString &album,
                               const QString &sourcePath);
     Q_INVOKABLE static QString artKey(const QString &artist, const QString &album);

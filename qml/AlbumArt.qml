@@ -22,11 +22,24 @@ Item {
     property real cornerRadius: Theme.radiusMd
     property bool showPlaceholder: true
 
+    // The device side has two sources, in the order they cost.  The player's own
+    // picture first: a Zune on WinUSB answers that with a representative sample.
+    // Then the cover this machine already holds for the same artist and album -
+    // over MTP a player keeps no picture for an audio object at all, and reading
+    // the tag inside the file would mean pulling the whole song down the cable
+    // for one tile.  `localArtPath` is a read and never a request, so borrowing
+    // a local cover cannot start an artwork lookup, and because it answers from
+    // artist and album a cell that only knows an item id is untouched by it.
+    // Reading `artPaths` is also what re-runs this when the cache finds one.
+    readonly property string deviceArtUrl:
+        (itemId > 0 ? (DeviceService.artPaths[String(itemId)] || "") : "")
+        || LibraryService.artPaths[LibraryService.artKey(artist, album)]
+        || LibraryService.localArtPath(artist, album)
     readonly property string artUrl: local
         ? (album.length > 0
            ? (LibraryService.artPaths[LibraryService.artKey(artist, album)] || "")
            : "")
-        : (itemId > 0 ? (DeviceService.artPaths[String(itemId)] || "") : "")
+        : deviceArtUrl
 
     onItemIdChanged: request()
     onAlbumChanged: request()

@@ -64,6 +64,20 @@ QString Redactor::sanitize(const QString &input) const
         "(\\[libzune\\] connected: )[^\\r\\n]*?(?=\\s\\([^\\r\\n]*\\), battery:)"));
     text.replace(deviceName, QStringLiteral("\\1[device name]"));
 
+    // A PnP device path spells the player's serial number as the instance chunk
+    // between its second and third '#'.  The bus and hardware id in front of it
+    // is what a reader needs to identify the model, so only the instance goes.
+    // Belt to the backend's braces: Session::maskedPathText() already refuses to
+    // print one, so anything reaching here arrived from a driver tool or a
+    // third-party log.
+    static const QRegularExpression pnpPath(QStringLiteral(
+        "((?:\\\\\\?\\\\)?(?:usb|usbdev|usbccgp|wpdbus|bth|bthenum|pci|swd)"
+        "#[^#\\s]+#)([^#{\\s]+)"),
+        QRegularExpression::CaseInsensitiveOption);
+    text = replaceMatches(text, pnpPath, [](const auto &match) {
+        return match.captured(1) + QStringLiteral("[instance]");
+    });
+
     // Keep provider/host/error context, but discard all URL query values and
     // fragments: even a harmless-looking query can contain a private title.
     static const QRegularExpression urls(QStringLiteral("[a-z][a-z0-9+.-]*://[^\\s<>\\\"']+"),

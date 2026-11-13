@@ -130,6 +130,15 @@ public:
     void clearAbort() { m_abort.store(false); }
     bool aborted() const { return m_abort.load(); }
 
+    // A PnP device path with the serial taken out of it.  The instance chunk
+    // between the two '#' is the player's serial number in another dress, and a
+    // session log is the thing that becomes a support report somebody else
+    // reads.  The hardware id and the device interface class either side of it
+    // are what a reader actually needs, so those stay and the instance becomes a
+    // short stable alias - two log lines about one player still recognisably
+    // belong together.  Unrecognised input is withheld rather than passed on.
+    static QString maskedPathText(const QString &pnpId);
+
     static QString kindName(int kind);
     // The WPD format a file should be announced as, from its extension:
     // 1 WMA, 2 MP3, 3 FLAC, 4 WAV, 0 unspecified.

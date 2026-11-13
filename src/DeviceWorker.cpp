@@ -23,6 +23,11 @@
 // and what this one cannot do.
 #include "wpd/WpdBackend.h"
 #include "library/LibraryPaths.h"
+// A photo preview on this road is decoded from the player's own bytes, which is
+// a pixel job the rest of this file never does - hence QtGui here and nowhere
+// else.  The app's own target links QtGui on every platform already.
+#include <QImage>
+#include <QImageReader>
 #endif
 
 extern "C" {
@@ -1900,6 +1905,89 @@ void DeviceWorker::doFinalize() {
     emit finalizeDone(zune_finalize(m_dev) == 0);
 }
 
+#if defined(Q_OS_WIN)
+// A tile-sized picture for a photo this player serves over MTP.
+//
+// Asked of the player first, and answered by measurement: GetSupportedResources
+// names DEFAULT and nothing else for its image objects, and THUMBNAIL and
+// ALBUM_ART both refuse with 0x8007138E - a Zune keeps no second, smaller copy
+// of a still the way a phone does.  What it does keep is the still itself, and
+// for the pictures this player holds that is already near tile-sized (five
+// objects, 77-168 KB, the largest measured at 320x240), so an honest preview is
+// a decoded, downscaled read of the object's own bytes rather than a refusal
+// that blames the player for a question nobody finished asking.
+//
+// Two rules keep this from turning into a way to fill a disk with pictures
+// nobody asked for: it only ever writes where DeviceService pointed it, inside
+// the thumbnail cache, and past a size no photo on this player comes close to
+// it says "that is a download, not a thumbnail" and leaves the object alone.
+// Nothing here reaches a network.
+bool DeviceWorker::grabWpdPhotoThumb(quint32 itemId, const QString &cachePath) {
+    Wpd::Session &wpd = *m_wpd;
+    const QString id = wpdObjectIdFor(itemId);
+    QString why;
+    // The player's own picture streams first.  Firmware that does maintain a
+    // thumbnail answers here and costs one small read instead of a file.
+    if (wpd.readThumbnail(id, cachePath, &why))
+        return QFile::exists(cachePath);
+
+    QString unreadable;
+    Wpd::ObjectInfo info;
+    if (!wpd.objectInfo(id, &info, &unreadable)) {
+        fprintf(stderr, "[wpd] photo preview %u: the player keeps no thumbnail"
+                " (%s) and would not describe the object either: %s\n",
+                itemId, qUtf8Printable(why), qUtf8Printable(unreadable));
+        QFile::remove(cachePath);
+        return false;
+    }
+    // 24 MB is already two orders above what any still on this player measured
+    // at, so a refusal past it is a rule about what a preview is, not a guess
+    // about this particular library.
+    constexpr quint64 kLargestSource = 24ULL * 1024 * 1024;
+    constexpr int kLongEdge = 512;
+    if (info.size == 0 || info.size > kLargestSource) {
+        fprintf(stderr, "[wpd] photo preview %u: left alone - a %llu-byte object"
+                " is not worth pulling in to make one tile\n", itemId,
+                static_cast<unsigned long long>(info.size));
+        return false;
+    }
+
+    QString failure;
+    if (!wpd.download(id, cachePath, nullptr, nullptr, &failure)) {
+        QFile::remove(cachePath);
+        fprintf(stderr, "[wpd] photo preview %u: reading the object itself"
+                " failed: %s\n", itemId, qUtf8Printable(failure));
+        return false;
+    }
+    QImageReader probe(cachePath);
+    probe.setAutoTransform(true);
+    QImage image = probe.read();
+    QFile::remove(cachePath);
+    if (image.isNull()) {
+        fprintf(stderr, "[wpd] photo preview %u: what the player gave is not a"
+                " picture this build can decode (%s)\n", itemId,
+                qUtf8Printable(probe.errorString()));
+        return false;
+    }
+    if (qMax(image.width(), image.height()) > kLongEdge) {
+        image = image.scaled(QSize(kLongEdge, kLongEdge), Qt::KeepAspectRatio,
+                             Qt::SmoothTransformation);
+    }
+    // JPEG carries no alpha, and leaving the encoder to decide what to do about
+    // one answers differently on different Qt versions.  One conversion of a
+    // tile-sized image costs nothing and takes a whole failure class away.
+    image = image.convertToFormat(QImage::Format_RGB32);
+    if (!image.save(cachePath, "JPG", 82) || !QFile::exists(cachePath)) {
+        fprintf(stderr, "[wpd] photo preview %u: the tile could not be"
+                " written\n", itemId);
+        return false;
+    }
+    fprintf(stderr, "[wpd] photo preview %u: %dx%d made from the object's own"
+            " DEFAULT stream\n", itemId, image.width(), image.height());
+    return true;
+}
+#endif
+
 void DeviceWorker::doGrabPhotoThumb(quint32 itemId, const QString &cachePath) {
     if (QFile::exists(cachePath)) {
         emit artDone(itemId, cachePath, true);
@@ -1907,14 +1995,9 @@ void DeviceWorker::doGrabPhotoThumb(quint32 itemId, const QString &cachePath) {
     }
 #if defined(Q_OS_WIN)
     if (!m_dev && m_wpdShared.load() && m_wpd) {
-        if (!m_wpdArtReported) {
-            m_wpdArtReported = true;
-            fprintf(stderr, "[wpd] this player keeps no picture for its objects"
-                    " over MTP: GetSupportedResources names DEFAULT only, and a"
-                    " THUMBNAIL or ALBUM_ART stream fails with 0x8007138E. Art"
-                    " comes from a file's own tag instead.\n");
-        }
-        emit artDone(itemId, cachePath, false);
+        // A still is its own preview on this road: see grabWpdPhotoThumb() for
+        // what the player was asked for and what it was measured to keep.
+        emit artDone(itemId, cachePath, grabWpdPhotoThumb(itemId, cachePath));
         return;
     }
 #endif
@@ -1933,13 +2016,17 @@ void DeviceWorker::doGrabArt(quint32 itemId, const QString &cachePath) {
     }
 #if defined(Q_OS_WIN)
     if (!m_dev && m_wpdShared.load() && m_wpd) {
-        // Same measured answer as the photo thumbnail above, for the same
-        // player: no stream exists to ask for.  The album's picture is the one
-        // embedded in the audio file, which the library already reads.
+        // Asked of the player and answered: an audio object names DEFAULT and
+        // nothing else, so there is no THUMBNAIL or ALBUM_ART stream here at
+        // all - unlike a photo, whose preview is its own bytes two functions up.
+        // An album's picture lives inside the audio file, and reading that tag
+        // would mean pulling the whole song over the cable for one thumbnail,
+        // so the tile shows the cover the local library already holds for the
+        // same record instead (AlbumArt.qml), or nothing.
         if (!m_wpdArtReported) {
             m_wpdArtReported = true;
-            fprintf(stderr, "[wpd] no album art over MTP on this player (see the"
-                    " thumbnail note above)\n");
+            fprintf(stderr, "[wpd] no album art over MTP on this player: an"
+                    " audio object offers DEFAULT only\n");
         }
         emit artDone(itemId, cachePath, false);
         return;
