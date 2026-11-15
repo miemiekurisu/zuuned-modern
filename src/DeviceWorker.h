@@ -206,7 +206,11 @@ signals:
     void extractPhotoDone(quint32 itemId, const QString &destPath, bool ok);
     void extractTrackDone(quint32 itemId, const QString &destPath, bool ok);
     void renameItemDone(quint32 itemId, const QString &newName, bool ok);
-    void forgePlaylistDone(const QString &name, quint32 playlistId, bool ok);
+    // The count and the ids are what the player was handed, not what was asked
+    // for: a member this listing never saw is left out on purpose, and the row
+    // the device page keeps has to say what the playlist really holds.
+    void forgePlaylistDone(const QString &name, quint32 playlistId, int memberCount,
+                           const QVariantList &memberTrackIds, bool ok);
     void renameDeviceDone(const QString &newName, bool ok);
     void storageRefreshed(double capacityGB, double freeGB);
     void forgeProgress(int current, int total);

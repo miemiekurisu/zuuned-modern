@@ -245,7 +245,8 @@ public slots:
     void onPhotoSendDone(const QString &entryId, bool ok, quint32 itemId,
                          const QString &autopsyName);
     // DeviceWorker::forgePlaylistDone (playlist phase)
-    void onPlaylistForgeDone(const QString &name, quint32 playlistId, bool ok);
+    void onPlaylistForgeDone(const QString &name, quint32 playlistId, int memberCount,
+                             const QVariantList &memberTrackIds, bool ok);
 
     // Internal: pool thread → UI (queued invokes)
     void onTranscodeProgress(const QString &entryId, double frac);

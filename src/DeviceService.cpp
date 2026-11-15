@@ -166,12 +166,33 @@ DeviceService::DeviceService(QObject *parent, bool watchDevice) : QObject(parent
     connect(this, &DeviceService::workerForgePlaylist,
             m_worker, &DeviceWorker::doForgePlaylist);
     connect(m_worker, &DeviceWorker::forgePlaylistDone, this,
-            [this](const QString &name, quint32 playlistId, bool ok) {
+            [this](const QString &name, quint32 playlistId, int memberCount,
+                   const QVariantList &memberTrackIds, bool ok) {
         if (ok) {
-            m_playlistsList.append(QVariantMap{{"itemId", playlistId},
-                                               {"name", name},
-                                               {"count", 0},
-                                               {"trackIds", QVariantList{}}});
+            // The row is the playlist the player has, so it carries the members that
+            // actually landed.  A zero here read as "empty playlist" until somebody
+            // browsed again, which is the opposite of what the control just did.
+            const QVariantMap row{{"itemId", playlistId},
+                                  {"name", name},
+                                  {"count", memberCount},
+                                  {"trackIds", QVariantList(memberTrackIds)}};
+            // A playlist synced twice is one playlist: the worker refills the object
+            // that is already on the player and hands the same id back, so the page
+            // updates that row where it stands rather than growing a second one for
+            // it.  Same shape as pruneDevicePlaylists, which does the delete half of
+            // the same promise without a re-browse.
+            qsizetype held = -1;
+            for (qsizetype i = 0; i < m_playlistsList.size(); ++i) {
+                if (m_playlistsList[i].toMap().value(QStringLiteral("itemId")).toUInt()
+                    == playlistId) {
+                    held = i;
+                    break;
+                }
+            }
+            if (held >= 0)
+                m_playlistsList[held] = row;
+            else
+                m_playlistsList.append(row);
             emit stateChanged();
         }
         emit playlistCreated(name, ok);
@@ -560,7 +581,12 @@ void DeviceService::onSeverDone() {
     if (m_ejecting) {
         m_ejecting = false;
         m_awaitingDisconnect = false;  // auto-detect may reconnect now (mac)
-        m_status = UiText::tr("Disconnected — the Zune is re-indexing");
+        // No re-index happens on Windows' own MTP driver - a file is in its
+        // folder the moment the transfer closes - so promising one there would be
+        // a status the user waits for and never gets.
+        m_status = m_ejectingWpd && m_devicePresent
+                       ? UiText::tr("Disconnected (Zune still plugged in)")
+                       : UiText::tr("Disconnected — the Zune is re-indexing");
         emit stateChanged();
         // On Linux the re-index re-enumerates the player and zuneArrived()
         // does the rest.  A Zune on Windows keeps its WinUSB interface the
@@ -635,9 +661,13 @@ void DeviceService::eject() {
     // Mac disconnectDevice(): (sync forceStop is SyncEngine's duty),
     // finalize → sever → clear awaitingDisconnect.
     m_ejecting = true;
+    m_ejectingWpd = onWindowsMtpDriver();
     m_connected = false;
     clearDeviceState();
-    m_status = UiText::tr("Finalizing — device will re-index…");
+    // Nothing is finalized and nothing re-indexes over WPD, so that road says
+    // what happened instead of naming work it is not doing.
+    m_status = m_ejectingWpd ? UiText::tr("Disconnected (Zune still plugged in)")
+                             : UiText::tr("Finalizing — device will re-index…");
     emit stateChanged();
     emit workerFinalize();
 }

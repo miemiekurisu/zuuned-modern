@@ -1452,6 +1452,17 @@ void DeviceWorker::doPurgeInterruptedVideo(const QString &filename) {
     // Resolve ObjectFileName directly only when recovery is requested.
     // ZMDB exposes Name instead; matching that could delete an unrelated
     // episode called "Pilot". Refuse ambiguous filename matches too.
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load()) {
+        // The recovery record points at a ZMDB video record, and a player on
+        // Windows' own MTP driver has no ZMDB for zuuned to match against.  Say
+        // that, because a plain failure here reads as a disconnect to whoever is
+        // reading the log - and the player is plainly still connected.
+        fprintf(stderr, "[wpd] interrupted video cleanup needs the ZMDB video table,"
+                        " which this driver does not expose; nothing was deleted. Remove"
+                        " the leftover from the player itself if it is in the way.\n");
+    }
+#endif
     QVariantList ids;
     if (m_dev && !filename.isEmpty()) {
         int count = 0;
@@ -1477,6 +1488,15 @@ void DeviceWorker::doPurgeInterruptedVideo(const QString &filename) {
 
 void DeviceWorker::doPurgeInterruptedObject(const QVariantMap &record) {
     bool ok = false;
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load()) {
+        // Same as the video case: the record is matched against ZMDB tracks or
+        // photos, so on this driver there is nothing to match against and this
+        // recovery can never fire.  It is a gap, not a disconnect.
+        fprintf(stderr, "[wpd] interrupted-object cleanup needs the ZMDB tables, which"
+                        " this driver does not expose; nothing was deleted.\n");
+    }
+#endif
     const auto id = RecoveryIdentity::objectId(record.value("itemId"));
     if (m_dev && RecoveryIdentity::refusal(record, QString::fromUtf8(zune_get_serial(m_dev))).isEmpty()) {
         QVariantList matches;
@@ -1666,6 +1686,7 @@ void DeviceWorker::doForgePlaylist(const QString &name,
         // the map would become a guessed id, and a playlist naming a track the
         // player does not have is worse than a playlist never attempted.
         QStringList members;
+        QVariantList resolved;
         int unknown = 0;
         for (const QVariant &v : trackIds) {
             const auto hit = m_wpdIds.constFind(v.toUInt());
@@ -1674,6 +1695,7 @@ void DeviceWorker::doForgePlaylist(const QString &name,
                 continue;
             }
             members.append(hit.value());
+            resolved.append(v);
         }
         if (unknown)
             fprintf(stderr, "[wpd] %d of %d playlist members were not objects this"
@@ -1698,19 +1720,19 @@ void DeviceWorker::doForgePlaylist(const QString &name,
             else
                 fprintf(stderr, "[wpd] playlist %s has no handle zuuned can use\n",
                         qUtf8Printable(done));
-            emit forgePlaylistDone(name, 0, false);
+            emit forgePlaylistDone(name, 0, 0, QVariantList(), false);
             return;
         }
         m_wpdIds.insert(handle, done);
         fprintf(stderr, "[wpd] forged playlist '%s' as %s under %s with %d of %d"
                         " members\n", qUtf8Printable(name), qUtf8Printable(done),
                 qUtf8Printable(parent), int(members.size()), int(trackIds.size()));
-        emit forgePlaylistDone(name, handle, true);
+        emit forgePlaylistDone(name, handle, int(members.size()), resolved, true);
         return;
     }
 #endif
     if (!m_dev || name.isEmpty()) {
-        emit forgePlaylistDone(name, 0, false);
+        emit forgePlaylistDone(name, 0, 0, QVariantList(), false);
         return;
     }
     zune_clear_abort(m_dev);
@@ -1723,7 +1745,9 @@ void DeviceWorker::doForgePlaylist(const QString &name,
     if (plid == 0)
         fprintf(stderr, "[worker] playlist forge failed (%s)\n",
                 zune_autopsy_name(zune_autopsy(m_dev)));
-    emit forgePlaylistDone(name, plid, plid != 0);
+    // The libzune road hands the whole list over in one vendor call, so what it
+    // asked for is what the player was given.
+    emit forgePlaylistDone(name, plid, int(trackIds.size()), trackIds, plid != 0);
 }
 
 void DeviceWorker::doSendPhoto(const QString &entryId, const QString &filepath,
@@ -1831,8 +1855,26 @@ void DeviceWorker::doExtractVideo(quint32 itemId, const QString &destPath) {
 void DeviceWorker::doRenameItem(quint32 itemId, const QString &newName) {
 #if defined(Q_OS_WIN)
     if (!m_dev && m_wpdShared.load() && m_wpd) {
-        noteWpdUnsupported("item rename");
-        emit renameItemDone(itemId, newName, false);
+        // Renaming is the one edit this driver does have: WPD_OBJECT_NAME is an
+        // ordinary writable property, so "rename" is not a ZMDB operation at all
+        // and refusing it was this client's limitation, not the player's.
+        const auto hit = m_wpdIds.constFind(itemId);
+        if (hit == m_wpdIds.constEnd()) {
+            fprintf(stderr, "[wpd] rename %u: no player object behind that row, so"
+                            " nothing was renamed\n", itemId);
+            emit renameItemDone(itemId, newName, false);
+            return;
+        }
+        QString kept;
+        QString why;
+        if (!m_wpd->setObjectName(hit.value(), newName, &kept, &why)) {
+            fprintf(stderr, "[wpd] rename %u failed: %s\n", itemId, qUtf8Printable(why));
+            emit renameItemDone(itemId, newName, false);
+            return;
+        }
+        // Report what the player keeps, because that is the name the row on
+        // screen has to match without waiting for anyone to browse again.
+        emit renameItemDone(itemId, kept.isEmpty() ? newName : kept, true);
         return;
     }
 #endif
@@ -1880,7 +1922,11 @@ void DeviceWorker::doRenameDevice(const QString &newName) {
         // name property too; whether a Zune provider obeys a write to it has
         // never been asked here, and asking is how an untested write is learned
         // about, so this stays a refusal until someone measures it.
-        noteWpdUnsupported("device rename");
+        // IPortableDeviceManager can set a friendly name, so this is not a
+        // missing call - it is a call zuuned does not make yet.  Saying "no such
+        // operation" would blame the driver for this client's gap.
+        fprintf(stderr, "[wpd] device rename is not implemented on the Windows MTP road"
+                        " yet; the player kept its current name.\n");
         emit renameDeviceDone(newName, false);
         return;
     }

@@ -116,7 +116,7 @@ int usage(const QString &why) {
     report(QStringLiteral("VERDICT=usage reason=%1").arg(why));
     report(
         "usage: wpdtool enumerate|info|tree|get|head|put|props|thumb|resources|rm|mkdir"
-        "|mkpl|refs|plprobe|rawmtp [args]");
+        "|mkpl|refs|plprobe|rename|rawmtp [args]");
     return 2;
 }
 
@@ -470,6 +470,19 @@ int main(int argc, char **argv) {
         for (const QString &line : std::as_const(lines))
             report(line);
         report(QStringLiteral("properties=%1 VERDICT=ok").arg(lines.size()));
+        return 0;
+    }
+    if (command == QStringLiteral("rename") && args.size() >= 3) {
+        QString kept;
+        if (!session.setObjectName(args[1], args[2], &kept, &error)) {
+            report(QStringLiteral("VERDICT=fail reason=%1").arg(error));
+            return 1;
+        }
+        // What the player states afterwards, not what was asked for: a name the
+        // player rewrote is still a name the user has to live with.
+        report(QStringLiteral("kept-name=%1").arg(kept.isEmpty() ? QStringLiteral("(none)")
+                                                                 : kept));
+        report(QStringLiteral("VERDICT=ok"));
         return 0;
     }
     if (command == QStringLiteral("rm") && args.size() >= 2) {

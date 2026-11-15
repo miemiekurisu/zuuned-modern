@@ -527,6 +527,10 @@ private:
     QColor m_moodColor; // invalid/transparent when disconnected
     bool m_awaitingDisconnect = false;
     bool m_ejecting = false;
+    // Whether the session that is being torn down was on Windows' own MTP driver.
+    // onWindowsMtpDriver() asks m_connected, and an eject clears it before the
+    // wording gets written, so the answer is taken once and kept.
+    bool m_ejectingWpd = false;
     // Post-re-index reconnect ladder (see scheduleReprobeAfterReindex).
     QTimer m_reprobeTimer;
     int m_reprobeAttempt = 0;

@@ -2808,8 +2808,15 @@ void SyncEngine::advancePlaylist() {
 }
 
 void SyncEngine::onPlaylistForgeDone(const QString &name, quint32 playlistId,
-                                     bool ok) {
+                                     int memberCount,
+                                     const QVariantList &memberTrackIds, bool ok) {
     Q_UNUSED(playlistId);
+    // Named here rather than left in the parameter list: the signal gained the
+    // member count and the ids, and a slot that stops one argument short would
+    // bind `ok` to the member count, because int converts to bool silently and a
+    // queue that calls a failed forge verified is worse than one that never ran.
+    Q_UNUSED(memberCount);
+    Q_UNUSED(memberTrackIds);
     if (!m_isSyncing || !m_inPlaylistPhase)
         return;
     if (m_playlistPos >= m_playlistRound.size())

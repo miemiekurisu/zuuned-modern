@@ -952,6 +952,47 @@ const NamedKey probeKeys[] = {
     {"image.horizontal-resolution", WPD_IMAGE_HORIZONTAL_RESOLUTION},
 };
 
+// The label a refused property deserves.  A count tells the next reader nothing:
+// "refused 1 property" and "this provider refuses WPD_MUSIC_ALBUM on SetValues" are
+// not the same statement, and only the second one turns into a fix.  A key outside
+// the table still gets its GUID so no refusal is hidden by the naming.
+QString propertyKeyLabel(const PROPERTYKEY &key) {
+    for (const NamedKey &named : probeKeys) {
+        if (sameKey(key, named.key))
+            return QString::fromLatin1(named.name);
+    }
+    return QStringLiteral("unknown(%1:%2)").arg(QUuid(key.fmtid).toString().toUpper())
+                                          .arg(key.pid);
+}
+
+// Say, field by field, what the player did with a property request.  SetValues hands
+// back this collection for its per-field verdict while its own return code describes
+// only the call as a whole, so it is the one place a partly-obeyed request can be seen.
+// It is not a list of refusals: measured on this player, renaming an object puts
+// WPD_OBJECT_NAME in the collection carrying S_OK.  So the code is printed with the
+// name and only a real failure earns the word "refused" - a log that calls a success a
+// failure is how the next person ends up debugging the wrong layer.
+void reportPropertyStatus(const char *what, IPortableDeviceValues *result) {
+    if (!result)
+        return;
+    DWORD count = 0;
+    result->GetCount(&count);
+    for (DWORD i = 0; i < count; ++i) {
+        PROPERTYKEY key{};
+        PROPVARIANT value{};
+        if (FAILED(result->GetAt(i, &key, &value)))
+            continue;
+        const HRESULT code = value.vt == VT_ERROR ? value.scode : S_OK;
+        if (FAILED(code))
+            fprintf(stderr, "[wpd] %s: player refused %s (%s)\n", what,
+                    qPrintable(propertyKeyLabel(key)), qPrintable(explain(code)));
+        else
+            fprintf(stderr, "[wpd] %s: player answered %s ok\n", what,
+                    qPrintable(propertyKeyLabel(key)));
+        PropVariantClear(&value);
+    }
+}
+
 } // namespace
 
 bool Session::describe(const QString &id, QVector<QString> *lines, QString *error) {
@@ -1573,6 +1614,93 @@ bool Session::makePlaylist(const QString &parentId, const QString &name,
         return false;
     }
 
+    // A second sync of the same playlist is not a request for a second copy of it.
+    // Measured on this player: forging a list twice left two objects under the
+    // playlist folder, each holding the same members, because this function only ever
+    // created.  So ask the parent for a playlist that already answers to the name and
+    // refill that one - which is also the only way a changed playlist ever reaches the
+    // player, since otherwise every resync piles up another copy.  The name is
+    // compared trimmed and case-insensitively, and against the file name as well,
+    // because a playlist the Zune software made is filed as "<name>.zpl" while the
+    // name a browser shows is "<name>".
+    QString existing;
+    {
+        QVector<ObjectInfo> siblings;
+        QString looked;
+        if (children(parent, &siblings, &looked)) {
+            for (const ObjectInfo &sibling : siblings) {
+                if (sibling.kind != KindPlaylist)
+                    continue;
+                const QString held = sibling.name.trimmed();
+                if (held.compare(name.trimmed(), Qt::CaseInsensitive) == 0
+                    || held.compare(fileName, Qt::CaseInsensitive) == 0) {
+                    existing = sibling.id;
+                    break;
+                }
+            }
+        } else {
+            // Not being able to look is not a reason to make a duplicate blind, so the
+            // create road still runs; saying so keeps a pile-up explainable.
+            fprintf(stderr, "[wpd] could not list %s to look for an existing '%s': %s\n",
+                    qUtf8Printable(parent), qUtf8Printable(name), qPrintable(looked));
+        }
+    }
+    if (!existing.isEmpty()) {
+        // An object the player already had is never reaped by this call: a failed
+        // refresh has to leave the working playlist alone rather than delete it.
+        ComPtr<IPortableDeviceProperties> properties;
+        HRESULT hr = content->Properties(&properties);
+        if (failed(hr) || !properties) {
+            setReason(error, QStringLiteral("The playlist '%1' already exists as object %2"
+                                            " and the player would not let its members be"
+                                            " rewritten: %3")
+                                 .arg(name, existing, explain(hr)));
+            return false;
+        }
+        const ComPtr<IPortableDeviceValues> refill = newValues();
+        if (!refill) {
+            setReason(error, QStringLiteral("Could not build the member list for object %1.")
+                                 .arg(existing));
+            return false;
+        }
+        refill->SetIPortableDevicePropVariantCollectionValue(WPD_OBJECT_REFERENCES,
+                                                            references.Get());
+        const std::wstring refillWide = toWide(existing);
+        ComPtr<IPortableDeviceValues> refused;
+        hr = properties->SetValues(refillWide.c_str(), refill.Get(), &refused);
+        reportPropertyStatus("playlist refill", refused.Get());
+        if (failed(hr)) {
+            setReason(error, QStringLiteral("The playlist '%1' already exists as object %2"
+                                            " and the player refused its new member list: %3")
+                                 .arg(name, existing, explain(hr)));
+            return false;
+        }
+        QStringList held;
+        QString why;
+        if (!objectReferences(existing, &held, &why)) {
+            setReason(error, QStringLiteral("The playlist '%1' was refilled as object %2 and"
+                                            " the player would not read its members"
+                                            " back: %3")
+                                 .arg(name, existing, why));
+            return false;
+        }
+        if (held.size() != memberIds.size()) {
+            setReason(error, QStringLiteral("The playlist '%1' was refilled as object %2 and"
+                                            " the player keeps %3 of its %4 tracks.")
+                                 .arg(name, existing)
+                                 .arg(held.size())
+                                 .arg(memberIds.size()));
+            return false;
+        }
+        if (objectId)
+            *objectId = existing;
+        fprintf(stderr, "[wpd] playlist '%s' already existed under %s as object %s, so its"
+                        " %d members were rewritten instead of making a second copy\n",
+                qUtf8Printable(name), qUtf8Printable(parent), qUtf8Printable(existing),
+                int(memberIds.size()));
+        return true;
+    }
+
     struct Shape {
         GUID contentType;
         bool withContentType;
@@ -1722,10 +1850,8 @@ bool Session::makePlaylist(const QString &parentId, const QString &name,
     const std::wstring idWide = toWide(id);
     ComPtr<IPortableDeviceValues> refused;
     hr = properties->SetValues(idWide.c_str(), again.Get(), &refused);
-    if (refused)
-        fprintf(stderr, "[wpd] the player refused %lu of the playlist properties\n",
-                countOf(refused.Get()));
-    else if (FAILED(hr))
+    reportPropertyStatus("playlist members", refused.Get());
+    if (FAILED(hr))
         fprintf(stderr, "[wpd] playlist member list answer: %s\n",
                 qPrintable(explain(hr)));
     if (failed(hr)) {
@@ -2365,6 +2491,10 @@ bool Session::upload(const QString &parentId, const QString &srcPath, const Obje
             if (failed(set))
                 fprintf(stderr, "[wpd] the player would not restamp properties on %s: %s\n",
                         qUtf8Printable(created), qUtf8Printable(explain(set)));
+            // A track the player files with no album shows under Unknown in its own
+            // browser, and this is the one call where that decision is still visible
+            // being made.  Name the field it would not take.
+            reportPropertyStatus("restamp", refusedValues.Get());
         }
         if (objectInfo(created, &filed, &unreadable))
             fprintf(stderr,
@@ -2438,6 +2568,69 @@ bool Session::removeObjects(const QStringList &objectIds, QStringList *purged,
                                                : lastFailure);
         return false;
     }
+    return true;
+}
+
+bool Session::setObjectName(const QString &objectId, const QString &newName,
+                            QString *keptName, QString *error) {
+    if (keptName)
+        keptName->clear();
+    if (!m_content) {
+        setReason(error, QStringLiteral("Not connected."));
+        return false;
+    }
+    const QString wanted = newName.trimmed();
+    if (objectId.isEmpty() || wanted.isEmpty()) {
+        setReason(error, QStringLiteral("Nothing to rename."));
+        return false;
+    }
+    auto *content = static_cast<IPortableDeviceContent *>(m_content);
+    ComPtr<IPortableDeviceProperties> properties;
+    HRESULT hr = content->Properties(&properties);
+    if (failed(hr) || !properties) {
+        setReason(error, QStringLiteral("The player would not let this object's name be"
+                                        " written: %1")
+                             .arg(explain(hr)));
+        return false;
+    }
+    const ComPtr<IPortableDeviceValues> values = newValues();
+    if (!values) {
+        setReason(error, QStringLiteral("Could not build the rename request."));
+        return false;
+    }
+    const std::wstring wantedWide = toWide(wanted);
+    hr = values->SetStringValue(WPD_OBJECT_NAME, wantedWide.c_str());
+    if (failed(hr)) {
+        setReason(error, QStringLiteral("Could not put the new name in the request: %1")
+                             .arg(explain(hr)));
+        return false;
+    }
+    const std::wstring idWide = toWide(objectId);
+    ComPtr<IPortableDeviceValues> refused;
+    hr = properties->SetValues(idWide.c_str(), values.Get(), &refused);
+    reportPropertyStatus("rename", refused.Get());
+    if (failed(hr)) {
+        setReason(error, QStringLiteral("the player refused the new name: %1")
+                             .arg(explain(hr)));
+        return false;
+    }
+    // Ask what it kept instead of believing the return code.  This provider is
+    // measured to answer part of a property request and say nothing about the
+    // rest, which is exactly how a rename that "succeeded" leaves the old name
+    // on the player's own screen; the read-back is the only honest answer.
+    ObjectInfo now;
+    QString unreadable;
+    if (!objectInfo(objectId, &now, &unreadable)) {
+        setReason(error, QStringLiteral("the name was sent and then the player would not"
+                                        " say what the object is called: %1")
+                             .arg(unreadable));
+        return false;
+    }
+    if (keptName)
+        *keptName = now.name;
+    if (now.name != wanted)
+        fprintf(stderr, "[wpd] rename of %s was accepted and the player keeps '%s'\n",
+                qUtf8Printable(objectId), qUtf8Printable(now.name));
     return true;
 }
 

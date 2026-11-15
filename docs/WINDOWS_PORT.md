@@ -3485,3 +3485,96 @@ the device, deleting content the user put there themselves, and every model but 
 a playlist this application made has been exercised; deleting a user object has not.  **Nothing was
 listened to**, the WinUSB/libzune line is untouched by this, and no Linux playlist evidence - which
 comes from a different transport and a different recipe - is carried into any of it.
+
+## A rename that reaches the player, and a playlist that stops doubling (2026-11-15)
+
+**The item rename control was this client's gap, not the driver's.**  Renaming a device row
+over Windows' own MTP driver used to be answered with `this player is on Windows' MTP driver,
+which cannot do that`.  It can: `WPD_OBJECT_NAME` is an ordinary writable property, so a rename
+is not a ZMDB operation at all.  `Wpd::Session::setObjectName()` (`src/wpd/WpdBackend.cpp`)
+writes that one property and nothing else - there is deliberately no general property setter,
+because a client that can restamp anything can leave a player holding metadata its own database
+cannot represent - and then reads the object back and reports the name the player *keeps* rather
+than the name that was sent, because this provider is measured to answer part of a request and
+say nothing about the rest.  `DeviceWorker::doRenameItem()` uses it, and the row on screen adopts
+what the player states, so no re-browse is needed to see the change.  Measured twice on the
+player: the rename is accepted, the read-back agrees, and only the display name moves -
+the stored file name is a separate field and stays as it was.  The object that was renamed was
+given its original name back afterwards.
+
+**A rename that a device does not have says so honestly now.**  Changing the player's own
+friendly name is refused still, but the wording changed: `IPortableDeviceManager` can set a
+friendly name, so this is a call zuuned does not make yet rather than an operation the driver
+lacks, and the log says that.  Same reasoning behind the eject wording: over WPD nothing
+finalizes and nothing re-indexes when a session closes - a file is in its folder the moment the
+transfer closes - so `eject()` and the sever path now read `Disconnected (Zune still plugged
+in)` when the player is on this driver and still plugged in, instead of naming work it is not
+doing and making the user wait for it.
+
+**The property report that names the field.**  `reportPropertyStatus()` and
+`propertyKeyLabel()` walk the collection a `SetValues` call hands back and print one line per
+property: the label, and the code, with the word `refused` reserved for a real failure.  They
+are wired into all three places this file sends properties - the playlist member list, the
+upload restamp, and a rename.  The trap is worth more than the fix: **that collection is a
+per-property status report, not a refusal list.**  On this player a rename puts
+`object.name` in it carrying `S_OK`, and a first version of this diagnostic counted every entry
+as a refusal, which would have sent the next reader to the wrong layer.  A count of refusals is
+not a diagnosis either; only "this provider refuses this field with this code" turns into a fix.
+
+**The empty-album defect is answered, and it is the driver.**  With the field named, a synthetic
+file with no tags at all - made for this question, uploaded with album, title, artist and album
+artist all asked for - answered outright:
+
+```
+restamp: player refused media.title        (ERROR_UNKNOWN_PROPERTY)
+restamp: player refused music.album        (E_ACCESSDENIED, i.e. read-only)
+restamp: player refused media.album-artist (ERROR_NOT_SUPPORTED)
+restamp: player answered media.artist      ok
+```
+
+Windows' MTP provider for this player will not accept album, title or album-artist by any route
+this client uses; artist and the numeric fields go through.  `fillMediaProperties()` skips empty
+fields, so what the property sheet shows is the object's untouched default and not a write that
+was lost - which is why an uploaded track sits under Unknown Album in the player's own browser
+while the tag is intact inside the file.  The probe object was deleted again once it had answered.
+Not tried and still a candidate: a raw MTP `SetObjectPropertyValue` through the WPD MTP
+extension, which `wpdtool rawmtp` can already reach.
+
+**One playlist per name.**  Syncing the same playlist twice made a second copy of it - measured
+as two objects in the player's playlist folder holding the identical member list - because
+`Session::makePlaylist()` only ever created and never looked.  It now asks the parent folder for
+a playlist that already answers to the name, comparing trimmed and case-insensitively against
+both the display name and the `.zpl` file name a previous round may have used, and rewrites that
+object's `WPD_OBJECT_REFERENCES`.  An object this call did not create is never taken back by the
+guard that reaps a half-made playlist, because a failed refresh must not cost the user a list
+that was working.  Measured on the player: three forges of one name left one object and the
+folder count unchanged while its members went three, then two, then one, and a forge under a
+differently-cased name found the same object.  The test playlist was deleted afterwards and the
+folder holds exactly what it held before, which is also this round's second deletion over this
+driver.
+
+**The queue row follows the same promise.**  `forgePlaylistDone` carries the members that
+actually landed, so the row the device page keeps is not an empty playlist waiting for a
+re-browse, and `DeviceService` updates the row for an object id that is already listed instead
+of appending a second row for the same object - the same shape as `pruneDevicePlaylists()`,
+which has long done the delete half of that promise without a re-browse.  `SyncEngine::
+onPlaylistForgeDone` now names the whole signal signature on purpose: a slot that stops one
+argument short bound `ok` to the member count, because `int` converts to `bool` silently, and a
+queue that calls a failed forge verified is worse than one that never ran.
+
+**Both directions, read rather than assumed.**  Over this driver, going *to* the player is wired
+for tracks, videos, the album forge and playlists; coming *back* is wired for tracks, videos and
+photos, and a pull keeps the device's name and judges the payload rather than the extension.
+Still deliberate refusals, all of them ZMDB or vendor operations rather than missing calls:
+sending a photo to the player (the libzune recipe arms and resizes the picture first and the
+Zune photo album is ZMDB state; dropping a raw JPEG into a folder is a different, unmeasured
+operation and is not offered as if it were the same feature), the podcast and audiobook
+categories in both directions, the spoken-media purge, and the player's own friendly name.  One
+honest limit on "immediate": objects added to the player outside zuuned - by Explorer, say -
+need a re-browse, because zuuned registers no `IPortableDeviceEvents` sink.
+
+**Gates.**  Against a full `--clean-first` rebuild (352 steps, every executable relinked):
+`tests\win-compat` 204 checks / 0 failures / 0 skips, plus the `wpdtool` measurements above
+made on the player with the app not running.  `tests\win-usability` result is recorded in the
+commit message rather than assumed.  **Nothing was listened to**, the WinUSB/libzune line is
+untouched, and no Linux playlist evidence is carried into any of it.

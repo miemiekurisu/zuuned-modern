@@ -2952,3 +2952,48 @@ the player's on-screen playlist view, playing a forged playlist on the device, d
 content (deleting what zuuned itself made is measured), and every model but this Pavo.  Nothing was
 listened to, the libzune line is untouched, and no Linux playlist evidence - different transport,
 different recipe - is carried into any of it.
+**2026-11-15 a rename that reaches the player, and a playlist that stops doubling:** item
+rename over Windows' own MTP driver used to be refused as a ZMDB operation, which was this
+client's gap and not the player's - `WPD_OBJECT_NAME` is an ordinary writable property.
+`Wpd::Session::setObjectName()` writes that one property and nothing else (deliberately no
+general setter: a client that can restamp anything leaves a player holding metadata its own
+database cannot represent), then reads the object back and returns the name the player *keeps*,
+because this provider answers part of a request and says nothing about the rest;
+`DeviceWorker::doRenameItem()` uses it so the row adopts what the player states without a
+re-browse.  Measured twice, read-back agreeing, only the display name moving while the stored
+file name stays, and the object restored to its original name.  A device friendly-name change is
+still refused but says it is not implemented on this road rather than blaming a driver
+`IPortableDeviceManager` could reach, and because nothing re-indexes over WPD the eject and sever
+wording reads `Disconnected (Zune still plugged in)` instead of promising a re-index.
+`reportPropertyStatus()`/`propertyKeyLabel()` name every field of the collection a `SetValues`
+call hands back, in all three places that sends properties, and carry the trap worth remembering:
+**that collection is a per-property status report, not a refusal list** - a rename puts
+`object.name` in it carrying `S_OK`, so a first version that called each entry refused would have
+sent the next reader to the wrong layer, and a bare count was never a diagnosis either.  Named at
+last, the empty-album defect is answered by a tagless file made for the question: this provider
+refuses `media.title` (`ERROR_UNKNOWN_PROPERTY`), `music.album` (`E_ACCESSDENIED`, read-only) and
+`media.album-artist` (`ERROR_NOT_SUPPORTED`) and takes only `media.artist` and the numbers, so an
+uploaded track under Unknown Album is a property the driver will not accept - `fillMediaProperties()`
+skips empty fields, which is why it reads as empty rather than absent - and not a lost write; the
+probe object was deleted once it had answered, and raw MTP `SetObjectPropertyValue` via
+`wpdtool rawmtp` stays an untried candidate.  Syncing a playlist twice made a second copy of it
+(two objects, identical member lists) because `Session::makePlaylist()` only ever created; it now
+finds a playlist already answering to the name under that parent - trimmed, case-insensitive,
+against both the display name and the `.zpl` file name - and rewrites that object's
+`WPD_OBJECT_REFERENCES`, and an object this call did not create is never reaped, because a failed
+refresh must not cost a working list.  Measured: three forges of one name left one object and the
+folder count unchanged while its members went 3, 2, 1, a differently-cased name matched the same
+object, and deleting the test playlist put the folder back as found (this round's second deletion
+over this driver).  `forgePlaylistDone` now carries the members that landed so the device page
+row is not an empty playlist, `DeviceService` updates the row for an id it already lists instead
+of appending a second one (the shape `pruneDevicePlaylists()` already uses for delete), and
+`SyncEngine::onPlaylistForgeDone` names the whole signal signature because a slot one argument
+short bound `ok` to the member count - `int` converts to `bool` silently and a queue that calls a
+failed forge verified is worse than one that never ran.  Both directions were read rather than
+assumed: to the player this driver carries tracks, videos, the album forge and playlists; back it
+carries tracks, videos and photos; photo *send*, the podcast and audiobook categories both ways,
+the spoken purge and the device name stay deliberate ZMDB/vendor refusals, and objects added to
+the player outside zuuned need a re-browse because no `IPortableDeviceEvents` sink is registered.
+Against a full `--clean-first` rebuild (352 steps): `tests\win-compat` 204 checks / 0 failures /
+0 skips.  **Nothing was listened to**, no Linux playlist evidence is carried in, and no object id,
+serial or personal path belongs in this file.

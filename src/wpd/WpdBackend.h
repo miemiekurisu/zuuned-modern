@@ -177,6 +177,17 @@ public:
     // the whole selection with it; `purged` gets the ids it really dropped.
     bool removeObjects(const QStringList &objectIds, QStringList *purged, QString *error);
 
+    // Rewrites the one thing a rename control actually asks for: the name the
+    // player shows for an object.  There is deliberately no general property
+    // setter here, because a client that can restamp anything can leave a player
+    // holding metadata its own database cannot represent, so this names
+    // WPD_OBJECT_NAME and nothing else.  `keptName` is what the player states
+    // afterwards rather than what was sent: upload() learned that an accepted
+    // request is not an obeyed one, and the same provider answers the same way
+    // to a rename.
+    bool setObjectName(const QString &objectId, const QString &newName,
+                       QString *keptName, QString *error);
+
     // Cancel an in-flight transfer. Safe from another thread: it only flips a
     // flag this class checks between stream chunks, and asks WPD to cancel.
     void requestAbort() { m_abort.store(true); }
