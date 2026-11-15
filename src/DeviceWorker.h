@@ -89,6 +89,15 @@ public slots:
     void doGrabArt(quint32 itemId, const QString &cachePath);
     // Photo thumbnail (representative sample → thumbnail → download+resize).
     void doGrabPhotoThumb(quint32 itemId, const QString &cachePath);
+    // The face of a device video: a decoded frame, asked for the same way and
+    // landing in the same kind of cache entry as the two above.
+    void doGrabVideoFrame(quint32 itemId, const QString &cachePath);
+    // What one object actually is: its container, codec and rate.  The scratch
+    // path belongs to the caller - it is the player's own cache folder, which
+    // DeviceService owns and this class only borrows - and it is always gone by
+    // the time this slot returns, because the bytes are read to answer one
+    // question and are not worth keeping.
+    void doProbeObject(quint32 itemId, const QString &scratchPath);
 
     // ── Sync (Phase 5) ──
     // Send one audio file (already MP3/WMA — transcode happens on the
@@ -167,6 +176,9 @@ signals:
                              int current, int total);
     void severDone();
     void artDone(quint32 itemId, const QString &path, bool ok);
+    // The answer to doProbeObject().  Emitted exactly once per call, including
+    // on the ways it can fail, so a sheet waiting on it cannot hang.
+    void objectProbed(quint32 itemId, const QVariantMap &details);
     // Staged connection progress ("MTPZ authentication…", 0.4) for the
     // panel's connection bar — mirrors mac connectionStage/Progress.
     void stage(const QString &label, double progress);
@@ -228,6 +240,19 @@ private:
     // touch the session, and because the answer needs a real read: see the
     // definition for what the player was asked and what it was found to keep.
     bool grabWpdPhotoThumb(quint32 itemId, const QString &cachePath);
+    // One album cover for an audio object this player serves over MTP.  There is
+    // no ALBUM_ART resource to ask for, so the cover is read out of the file the
+    // object already is - from its first bytes only, which is what the
+    // definition measures and justifies.
+    bool grabWpdAudioArt(quint32 itemId, const QString &cachePath);
+    // The same object question on the WPD road, where the player states its own
+    // properties and the codec has to come out of the bytes.
+    QVariantMap probeWpdObject(quint32 itemId, const QString &scratchPath);
+    // One frame for a video object this player serves over MTP, decoded out of
+    // the front of the file the object is.  There is no thumbnail resource and
+    // no picture attribute to ask for on this road; the definition says what
+    // was measured and why the slice is the size it is.
+    bool grabWpdVideoFrame(quint32 itemId, const QString &cachePath);
     // One file onto the player, into <artist>/<album>/ under the storage this
     // connection picked.  Emits sendDone itself because the failure text differs
     // from libzune's autopsy names: there is no vendor autopsy on this road.
@@ -235,6 +260,21 @@ private:
                       const QString &title, const QString &albumartist,
                       const QString &album, const QString &genre,
                       int trackNumber, int durationMs);
+    // One video onto the player over MTP, into the folder the player itself
+    // lists its videos from.  What this does is measured, on a Pavo Zune HD on
+    // Windows' own MTP driver: an ASF sent there comes back content-type VIDEO
+    // inside the player's own o2xxxxxx object range carrying the duration it was
+    // told, so it is a library entry, while the same source sent as MP4 comes
+    // back content-type UNSPECIFIED, format UNSPECIFIED and no duration - bytes
+    // on the volume, no entry.  What it cannot do is the reverse: the vendor
+    // metadata that files a video into a Zune category (metagenre, the
+    // series/season/episode triple) and the poster it shows are vendor
+    // operations with no MTP equivalent, so a video sent this way arrives
+    // unclassified and pictureless.  Emits sendVideoDone itself, as
+    // sendTrackWpd does, because there is no vendor autopsy on this road.
+    void sendVideoWpd(const QString &entryId, const QString &filepath,
+                      const QString &objectFilename, const QString &title,
+                      const QString &description);
     // Downloads one object and reports the path it really wrote.  A WPD object's
     // format property is the only place this player states the container it holds -
     // the name it displays is a title, and a bare name reaches us as `.mp3` - so the
@@ -255,9 +295,6 @@ private:
     // namespace, but it is the provider's own string, so the string that worked
     // is remembered rather than rebuilt from a rule.
     QHash<quint32, QString> m_wpdIds;
-    // One line per connection is enough to explain why the device page has no
-    // pictures on this road; a per-request line would be noise.
-    bool m_wpdArtReported = false;
     // Says out loud that a request needs a vendor operation this road does not
     // have.  Every caller of it still emits its failure signal: the app reports
     // "not possible over MTP" rather than pretending a ZMDB-only operation ran.

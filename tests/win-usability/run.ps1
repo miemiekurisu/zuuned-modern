@@ -88,6 +88,11 @@ $script:qaBlind = 0
 $script:qaWaitMax = 0.0
 $script:killed = 0
 $script:pids = New-Object System.Collections.Generic.List[int]
+# Launches the gate makes outside Invoke-Case, because a case cannot carry every
+# shape of launch: the console-less one has no streams to instrument.  They count
+# toward the reported launch total so that number is the number of apps this run
+# started and not the number of cases it wrote.
+$script:plainLaunches = 0
 
 # A harness that dies halfway must not leave an instrumented Zuuned holding a
 # profile folder and an instance lock that the next run intends to delete: one
@@ -942,6 +947,21 @@ if (Select-Phase 'pages') {
                 Check 'a music launch contacts no artwork provider' `
                     ($asked.Count -eq 0) ('' + ($asked | Select-Object -First 1))
             }
+            elseif ($p -eq 'videos') {
+                # The wall, not a shelf.  Every video the library holds has to
+                # be on the pivot the page opens on: before it a file the TMDB
+                # lookup never resolved existed on no shelf a user would think
+                # to open, and the page read as empty.  The equality is the
+                # rule, so it bites on a real library even where this fixture
+                # seeds none.
+                $vidFiles = Get-QaField $pageCase.QaLast 'vidFiles'
+                $vidAll = Get-QaField $pageCase.QaLast 'vidAll'
+                $vidTab = Get-QaField $pageCase.QaLast 'vidTab'
+                Check 'the videos page opens on the wall of every file, not a filed shelf' `
+                    ($vidTab -eq 'All') ('vidTab=' + $vidTab)
+                Check 'the videos wall carries one row for every file the library holds' `
+                    ($vidAll -eq $vidFiles) ('vidFiles=' + $vidFiles + ' vidAll=' + $vidAll)
+            }
         }
         # The device page is the case a user hits every time the cable is out, and
         # this harness attaches nothing.  It is not a claim about the cable: when a
@@ -1389,6 +1409,40 @@ if (Select-Phase 'encode') {
             if ($ProbeOut -match 'duration=(\d+\.\d+)') { return [double]$Matches[1] }
             return -1.0
         }
+        function Get-Digest {
+            param([string]$Path)
+            if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return '' }
+            return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+        }
+        function Get-ShortDigest {
+            param([string]$Path)
+            $digest = Get-Digest -Path $Path
+            if (-not $digest) { return 'none' }
+            return $digest.Substring(0, 12)
+        }
+
+        # An ASF attribute name is stored as UTF-16, so asking a file for one means
+        # decoding the leading bytes rather than searching them for ASCII: a byte
+        # search for WM/Picture matches nothing and reads back as a missing picture.
+        # Both parities get decoded because a name lands wherever the preceding
+        # fields left it - a device file measured here carries Title on an odd offset,
+        # so decoding one alignment alone reports a tag that is plainly present.
+        function Test-LeadAttribute {
+            param([string]$Path, [string]$Name, [int]$Count = 65536)
+            if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $false }
+            $bytes = [System.IO.File]::ReadAllBytes($Path)
+            $take = [Math]::Min($Count, $bytes.Length)
+            foreach ($shift in @(0, 1)) {
+                $room = $take - $shift
+                if ($room -lt 2) { continue }
+                $head = New-Object byte[] ($room - ($room % 2))
+                [Array]::Copy($bytes, $shift, $head, 0, $head.Length)
+                if ([System.Text.Encoding]::Unicode.GetString($head).Contains($Name)) {
+                    return $true
+                }
+            }
+            return $false
+        }
 
         # Profile 0 is wmv2 + wmav2 in an ASF container: what a Zune 30 plays, and the
         # profile the Classic video season was synced with.
@@ -1422,6 +1476,24 @@ if (Select-Phase 'encode') {
         Check 'profile 2 reached the 480x272 target with the same running time' `
             (($sec2 -gt 2.5) -and ($sec2 -lt 3.5) -and ($probe2.Out -match 'video=480x272')) `
             ('seconds=' + $sec2 + ' out=' + $probe2.Out.Trim().Replace([Environment]::NewLine, ' '))
+        # The frame grab is what a local video wears on the wall whenever TMDB
+        # has no poster for it, and a seed library with no videos means no QML
+        # check can ever reach that path, so the C entry point the service calls
+        # is proved here instead - on a file the encoder above made, at the
+        # 400-pixel width src/library/FrameThumbnailService.cpp asks for.
+        $still = Join-Path $out 'qa-frame.jpg'
+        $grab = Invoke-Proc -File $transcodeTool -Timeout 300 `
+            -Arguments @('frame', $path2, '1', $still)
+        Check 'the frame grab a video tile uses wrote a readable JPEG' `
+            (($grab.Code -eq 0) -and (Test-Path -LiteralPath $still) `
+             -and ((Get-LeadBytes -Path $still -Count 3) -eq 'ff d8 ff')) `
+            ('code=' + $grab.Code + ' out=' + $grab.Out.Trim())
+        $probeF = Invoke-Proc -File $transcodeTool -Timeout 120 `
+            -Arguments @('probe', $still)
+        Check 'the grabbed still came out at the width the service asks for' `
+            ($probeF.Out -match 'video=400x') `
+            ($probeF.Out.Trim().Replace([Environment]::NewLine, ' '))
+
 
         # The audio leg is what FLAC sync needs: decode, resample, LAME.  A truncated
         # superframe used to make LAME produce unusable files, and that is a Windows
@@ -1446,10 +1518,200 @@ if (Select-Phase 'encode') {
             Skip 'the audio encode checks' 'no fixture tone on disk'
         }
 
+        # WMA Lossless is the one transcode this repository writes itself instead of
+        # asking FFmpeg for, and until now the gate had never asked it for a picture -
+        # which is how the defect it now pins survived: the encoder wrote its eight
+        # text tags and left the attached cover behind, so a synced FLAC arrived as a
+        # tile with no picture on the player and gave up no picture when the same file
+        # was pulled back off it.  No other layer can do this leg.  FFmpeg's ASF muxer
+        # maps an attached picture to an ordinary video stream with attached_pic=0 and
+        # writes no WM/Picture at all, and IWMHeaderInfo3 takes the in-memory
+        # WM_PICTURE struct rather than the flat blob an ASF file stores, so the naive
+        # value does not even return an error - wmvcore reads the first bytes of a JPEG
+        # as a WCHAR pointer and takes the process down with 0xc0000005.  What is
+        # pinned here is bytes, not log lines: the attribute is there, the picture that
+        # comes back out is the picture that went in, and it sits in the header, which
+        # is the fact that makes a capped head read an honest way to fetch device art.
+        $picCover = Join-Path $out 'art-cover.jpg'
+        $picSrc = Join-Path $out 'art-src.flac'
+        $plainSrc = Join-Path $out 'art-plain.flac'
+        $madeCover = Invoke-Proc -File $ffmpeg -WorkDir $out -Timeout 300 -Arguments @(
+            '-hide_banner', '-loglevel', 'error', '-y',
+            '-f', 'lavfi', '-i', 'gradients=size=96x96:duration=1',
+            '-frames:v', '1', '-q:v', '4', $picCover)
+        # -ac 2 belongs on the output side.  Written in front of the input it is
+        # accepted and ignored, the fixture comes out mono, and the encoder then refuses
+        # it for the correct reason - no lossless format for 1 channel - which would be
+        # read as a broken encoder.  Six seconds rather than two keeps the product
+        # several times longer than the head slice below, so that check cannot pass by
+        # accidentally reading the whole file.
+        $madePic = Invoke-Proc -File $ffmpeg -WorkDir $out -Timeout 300 -Arguments @(
+            '-hide_banner', '-loglevel', 'error', '-y',
+            '-f', 'lavfi', '-i', 'sine=frequency=440:duration=6:sample_rate=44100',
+            '-i', $picCover, '-map', '0:a', '-map', '1:v', '-ac', '2',
+            '-c:a', 'flac', '-c:v', 'copy', '-disposition:v:0', 'attached_pic',
+            $picSrc)
+        $madePlain = Invoke-Proc -File $ffmpeg -WorkDir $out -Timeout 300 -Arguments @(
+            '-hide_banner', '-loglevel', 'error', '-y',
+            '-f', 'lavfi', '-i', 'sine=frequency=440:duration=6:sample_rate=44100',
+            '-ac', '2', '-c:a', 'flac', $plainSrc)
+        Check 'a stereo FLAC with an attached cover and one without exist to encode from' `
+            (($madeCover.Code -eq 0) -and ($madePic.Code -eq 0) -and ($madePlain.Code -eq 0) -and
+             (Test-Path -LiteralPath $picCover) -and (Test-Path -LiteralPath $picSrc) -and
+             (Test-Path -LiteralPath $plainSrc)) `
+            ('cover=' + $madeCover.Code + ' flac=' + $madePic.Code + ' plain=' + $madePlain.Code)
+
+        $pathL = ''
+        $pathN = ''
+        if (Test-Path -LiteralPath $picSrc) {
+            $encL = Invoke-Proc -File $transcodeTool -Timeout 900 `
+                -Arguments @('audio-wma-lossless', $picSrc)
+            $pathL = $encL.Out.Trim()
+            $saidL = $encL.Out + $encL.Err
+            Check 'the lossless encoder took the cover source and named the file it made' `
+                (($encL.Code -eq 0) -and $pathL -and (Test-Path -LiteralPath $pathL)) `
+                ('code=' + $encL.Code + ' said=' + ($saidL -replace '\s+', ' '))
+            Check 'the lossless encoder reported carrying the cover' `
+                ($saidL -match 'cover carried: image/jpeg') ('said=' + ($saidL -replace '\s+', ' '))
+            Check 'the lossless encoder declared a WM/Picture attribute' `
+                (Test-LeadAttribute -Path $pathL -Name 'WM/Picture') `
+                ('magic=' + (Get-LeadBytes -Path $pathL -Count 4))
+            # Extracting is the reading that matters.  A name in the header would still
+            # be satisfiable by a misframed or truncated value, and the device-art path
+            # in the application is this same extractor.
+            $artSource = Join-Path $out 'art-source.jpg'
+            $artEncode = Join-Path $out 'art-encoded.jpg'
+            $exSource = Invoke-Proc -File $transcodeTool -Timeout 300 `
+                -Arguments @('art', $picSrc, $artSource)
+            $exEncode = Invoke-Proc -File $transcodeTool -Timeout 300 `
+                -Arguments @('art', $pathL, $artEncode)
+            $hashSource = Get-Digest -Path $artSource
+            $hashEncode = Get-Digest -Path $artEncode
+            Check 'the picture that comes out of WM/Picture is the one that went in' `
+                (($hashSource -ne '') -and ($hashSource -eq $hashEncode)) `
+                ('source=' + $exSource.Code + ' encoded=' + $exEncode.Code + ' digest=' +
+                 (Get-ShortDigest -Path $artSource) + '/' + (Get-ShortDigest -Path $artEncode))
+            # Where the picture lives is a separate fact from it existing.  This player
+            # answers THUMBNAIL and ALBUM_ART for an audio object with 0x8007138E - it
+            # keeps no separate art - so the file is the only way home, and pulling a
+            # whole track per grid row is not a way home anybody can use.  The
+            # application reads a capped front slice; this proves the extractor finds
+            # the identical bytes that way, and that a short read loses audio rather
+            # than the cover.
+            $headPath = Join-Path $out 'art-head.wma'
+            $all = [System.IO.File]::ReadAllBytes($pathL)
+            $headBytes = [Math]::Min(16384, $all.Length)
+            $front = New-Object byte[] $headBytes
+            [Array]::Copy($all, 0, $front, 0, $headBytes)
+            [System.IO.File]::WriteAllBytes($headPath, $front)
+            $artHead = Join-Path $out 'art-head.jpg'
+            $exHead = Invoke-Proc -File $transcodeTool -Timeout 300 `
+                -Arguments @('art', $headPath, $artHead)
+            Check 'a head-sized front slice of the encoded file carries the same picture' `
+                (($all.Length -gt $headBytes) -and ($hashEncode -ne '') -and
+                 ((Get-Digest -Path $artHead) -eq $hashEncode)) `
+                ('file=' + $all.Length + ' head=' + $headBytes + ' code=' + $exHead.Code)
+        }
+        else {
+            Skip 'the lossless cover checks' 'no cover fixture FLAC on disk'
+        }
+
+        # Most of a real library has no cover at all, and that must stay the ordinary
+        # case rather than a refusal or a header holding an empty picture.
+        if (Test-Path -LiteralPath $plainSrc) {
+            $encN = Invoke-Proc -File $transcodeTool -Timeout 900 `
+                -Arguments @('audio-wma-lossless', $plainSrc)
+            $pathN = $encN.Out.Trim()
+            $saidN = $encN.Out + $encN.Err
+            Check 'a source with no picture still encodes losslessly' `
+                (($encN.Code -eq 0) -and $pathN -and (Test-Path -LiteralPath $pathN)) `
+                ('code=' + $encN.Code + ' said=' + ($saidN -replace '\s+', ' '))
+            Check 'a source with no picture writes no WM/Picture and complains of none' `
+                ((-not (Test-LeadAttribute -Path $pathN -Name 'WM/Picture')) -and
+                 (-not ($saidN -match 'WM/Picture'))) `
+                ('said=' + ($saidN -replace '\s+', ' '))
+        }
+        else {
+            Skip 'the coverless lossless checks' 'no coverless fixture FLAC on disk'
+        }
+
+        # The second rung of the device art read in src/DeviceWorker.cpp answers one
+        # measured situation, and that situation needs no player to reproduce.  An ASF
+        # header carries the picture inline, so a cover big enough to run past the
+        # 512 KB the application asks for leaves a slice that names WM/Picture and
+        # still yields no picture - measured here on a 679,188-byte cover inside a
+        # 778,304-byte file, whose front half declares the attribute and produces
+        # nothing while the whole file gives up the identical image.  Pinning the
+        # precondition is what keeps the deeper read honest: without it a truncated
+        # slice is indistinguishable from a song that has no cover, and the tempting
+        # fix for a blank tile would be to download the album over a cable.
+        $bigCover = Join-Path $out 'art-big.jpg'
+        $bigSrc = Join-Path $out 'art-big-src.flac'
+        $pathB = ''
+        $madeBigCover = Invoke-Proc -File $ffmpeg -WorkDir $out -Timeout 300 -Arguments @(
+            '-hide_banner', '-loglevel', 'error', '-y',
+            '-f', 'lavfi', '-i', 'mandelbrot=size=1920x1920:rate=1',
+            '-frames:v', '1', '-q:v', '1', $bigCover)
+        $madeBigSrc = Invoke-Proc -File $ffmpeg -WorkDir $out -Timeout 300 -Arguments @(
+            '-hide_banner', '-loglevel', 'error', '-y',
+            '-f', 'lavfi', '-i', 'sine=frequency=660:duration=6:sample_rate=44100',
+            '-i', $bigCover, '-map', '0:a', '-map', '1:v', '-ac', '2',
+            '-c:a', 'flac', '-c:v', 'copy', '-disposition:v:0', 'attached_pic', $bigSrc)
+        # Bigger than the cap is the whole point of this fixture, so the size is part
+        # of the check rather than an assumption about a generated frame.
+        $bigCoverBytes = 0
+        if (Test-Path -LiteralPath $bigCover) { $bigCoverBytes = (Get-Item -LiteralPath $bigCover).Length }
+        Check 'a cover larger than the head cap exists to encode from' `
+            ((($madeBigCover.Code -eq 0) -and ($madeBigSrc.Code -eq 0)) -and
+             (Test-Path -LiteralPath $bigSrc) -and ($bigCoverBytes -gt 524288)) `
+            ('cover=' + $madeBigCover.Code + '/' + $bigCoverBytes + ' flac=' + $madeBigSrc.Code)
+        if (Test-Path -LiteralPath $bigSrc) {
+            $encB = Invoke-Proc -File $transcodeTool -Timeout 900 `
+                -Arguments @('audio-wma-lossless', $bigSrc)
+            $pathB = $encB.Out.Trim()
+            $saidB = $encB.Out + $encB.Err
+            $artBigSource = Join-Path $out 'art-big-source.jpg'
+            $artBigFile = Join-Path $out 'art-big-file.jpg'
+            $exBigSource = Invoke-Proc -File $transcodeTool -Timeout 300 `
+                -Arguments @('art', $bigSrc, $artBigSource)
+            $exBigFile = Invoke-Proc -File $transcodeTool -Timeout 300 `
+                -Arguments @('art', $pathB, $artBigFile)
+            $hashBigSource = Get-Digest -Path $artBigSource
+            Check 'a cover past the cap still travels into the file and back out of it' `
+                ((($encB.Code -eq 0) -and $pathB -and (Test-Path -LiteralPath $pathB)) -and
+                 ($hashBigSource -ne '') -and ($hashBigSource -eq (Get-Digest -Path $artBigFile))) `
+                ('code=' + $encB.Code + ' said=' + ($saidB -replace '\s+', ' ') +
+                 ' digest=' + (Get-ShortDigest -Path $artBigSource) + '/' +
+                 (Get-ShortDigest -Path $artBigFile))
+            # Cut at exactly the cap DeviceWorker::grabWpdAudioArt asks the player for,
+            # and ask it the two questions that function branches on: the name is in
+            # the slice, the picture is not, and the extractor leaves no file behind.
+            $bigHead = Join-Path $out 'art-big-head.wma'
+            $allB = [System.IO.File]::ReadAllBytes($pathB)
+            $frontB = New-Object byte[] ([Math]::Min(524288, $allB.Length))
+            [Array]::Copy($allB, 0, $frontB, 0, $frontB.Length)
+            [System.IO.File]::WriteAllBytes($bigHead, $frontB)
+            $artBigHead = Join-Path $out 'art-big-head.jpg'
+            Invoke-Proc -File $transcodeTool -Timeout 300 `
+                -Arguments @('art', $bigHead, $artBigHead) | Out-Null
+            Check 'a head-sized slice of that file names the cover without holding it' `
+                (($allB.Length -gt 524288) -and ($hashBigSource -ne '') -and
+                 (Test-LeadAttribute -Path $bigHead -Name 'WM/Picture' -Count 524288) -and
+                 (-not (Test-Path -LiteralPath $artBigHead))) `
+                ('file=' + $allB.Length + ' head=' + $frontB.Length + ' leftoverArt=' +
+                 (Test-Path -LiteralPath $artBigHead))
+        }
+        else {
+            Skip 'the over-cap cover checks' 'no oversized cover fixture on disk'
+        }
+
         # The encode runs leave their products in the temporary directory.  Remove
         # them rather than teach the next run to tolerate strangers in %TEMP%.
         $leftovers = @($path0, $path2)
         if ($audioSec -gt 0) { $leftovers += $pathA }
+        foreach ($lossless in @($pathL, $pathN, $pathB)) {
+            if ($lossless) { $leftovers += $lossless }
+        }
         $kept = @()
         foreach ($tmp in $leftovers) {
             if (-not $tmp -or -not (Test-Path -LiteralPath $tmp)) { continue }
@@ -1776,6 +2038,97 @@ if (Select-Phase 'profile') {
     Write-Host ('  note real profile after the run:  ' + (Get-RealProfileFingerprint))
 }
 
+# ---------------------------------------------------------------------------
+# A double-click is the launch a bug report comes from, and zuuned.exe is a
+# GUI-subsystem image, so that launch has no standard handle at all: the
+# session log is the only record it makes.  It used to be 0 bytes, because with
+# no handle the CRT gives its own stderr stream no descriptor (measured:
+# _fileno(stderr) is -2), so there was no slot for the capture to stand behind
+# and start() reported the failure to the stream that was missing.  Three such
+# 0-byte logs sit in the real profile from before the fix.
+# ---------------------------------------------------------------------------
+Write-Host ''
+Write-Host '== diagnostics with no console'
+if (Select-Phase 'logcapture') {
+    # Start-Zuuned cannot carry this case: redirecting a stream is exactly what
+    # the case must not do.  Start-Process is the recipe measured here to hand the
+    # child NULL for GetStdHandle(STD_ERROR_HANDLE) even from a console parent -
+    # a standalone GUI-subsystem probe launched through it reports that NULL and
+    # _fileno(stderr) = -2, with and without -WindowStyle Hidden, so this launch
+    # leaves the window visible like a real double-click.  Start-Process takes no
+    # per-child environment, so the profile names go through this process and come
+    # back off before the phase ends: the rest of the gate must not inherit an
+    # isolated profile by accident.
+    $silentDir = Join-Path $profiles 'no-console'
+    New-Item -ItemType Directory -Force -Path $silentDir | Out-Null
+    $saved = @{}
+    foreach ($name in @('ZUUNED_PROFILE_DIR', 'ZUUNED_LOCK_SUFFIX', 'ZUUNED_MPV_AO')) {
+        $saved[$name] = [Environment]::GetEnvironmentVariable($name)
+    }
+    $silent = $null
+    $silentKilled = $false
+    try {
+        [Environment]::SetEnvironmentVariable('ZUUNED_PROFILE_DIR', $silentDir)
+        [Environment]::SetEnvironmentVariable('ZUUNED_LOCK_SUFFIX', 'wusnoconsole')
+        [Environment]::SetEnvironmentVariable('ZUUNED_MPV_AO', 'null')
+        $silent = Start-Process -FilePath $exe -PassThru
+        $script:plainLaunches++
+        $script:pids.Add($silent.Id)
+        # A launch with no stream to read has no [qa] report either, so the
+        # window is all the gate can ask of it; the log is what the phase measures.
+        $shown = Wait-ZuunedWindow -Handle ([pscustomobject]@{ Proc = $silent })
+        Check 'a launch with no console and no redirected stream still shows a window' `
+            ($shown.Handle -ne [IntPtr]::Zero) ('source=' + $shown.Source)
+        Start-Sleep -Seconds 3
+        # Close it the way a user does.  Stop-Zuuned is unusable here because it
+        # drains two streams this launch deliberately never had, so the polite
+        # close is spelled out - and a forced kill still counts against the run.
+        [void]$silent.CloseMainWindow()
+        if (-not $silent.WaitForExit(30000)) {
+            $silentKilled = $true
+            try { $silent.Kill($true) } catch { $silent.Kill() }
+            [void]$silent.WaitForExit(5000)
+        }
+        if ($silentKilled) { $script:killed++ }
+        Check 'the console-less launch closes politely' (-not $silentKilled) ('pid=' + $silent.Id)
+        $log = @(Get-ChildItem -LiteralPath (Join-Path $silentDir 'State\logs') -File -Force `
+            -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'zuuned-*.log' })
+        Check 'the console-less launch left exactly one session log' `
+            ($log.Count -eq 1) (($log | ForEach-Object { $_.Name + '=' + $_.Length }) -join ' ')
+        $bytes = 0
+        $body = ''
+        if ($log.Count) {
+            $bytes = $log[0].Length
+            $body = [IO.File]::ReadAllText($log[0].FullName)
+        }
+        # Size alone would pass on the single line this file used to hold, so the
+        # gate names the two things only a working capture can put there: the line
+        # the rescue path prints about itself, which also proves the phase reached
+        # the no-descriptor branch instead of the ordinary one, and a native
+        # fprintf written before the Qt message handler exists.
+        Check 'the console-less launch records that its error stream had no descriptor' `
+            ($body -match '\[diagnostics\] no console: ') ('bytes=' + $bytes)
+        Check 'the console-less log carries a native line written outside the Qt handler' `
+            (($body -match '\[network\] ') -or ($body -match '\[profile\] ')) ('bytes=' + $bytes)
+        Check 'the console-less log never admitted it could not write' `
+            (($body -notmatch 'Local logs unavailable') -and `
+             ($body -notmatch 'Could not reach the error stream')) ('bytes=' + $bytes)
+        $lines = @(($body -split "`r?`n") | Where-Object { $_ -ne '' })
+        Write-Host ('  note console-less log: bytes=' + $bytes + ' lines=' + $lines.Count)
+    }
+    finally {
+        foreach ($name in @($saved.Keys)) {
+            [Environment]::SetEnvironmentVariable($name, $saved[$name])
+        }
+        if ($silent -and -not $silent.HasExited) {
+            [void]$silent.CloseMainWindow()
+            if (-not $silent.WaitForExit(10000)) {
+                try { $silent.Kill($true) } catch { $silent.Kill() }
+            }
+        }
+    }
+}
+
 Write-Host ''
 Write-Host '== profile folder the ANSI code page cannot spell'
 if (Select-Phase 'cjkprofile') {
@@ -1913,7 +2266,7 @@ if ($script:killed -eq 0) {
 else {
     Check 'every launch this gate made closed on its own' $false ('killed=' + $script:killed)
 }
-Write-Host ('launches=' + $script:caseSeq + ' checks=' + $script:checks +
+Write-Host ('launches=' + ($script:caseSeq + $script:plainLaunches) + ' checks=' + $script:checks +
     ' failures=' + $script:failures + ' skips=' + $script:skips +
     ' killed=' + $script:killed + ' pid-scan-fallbacks=' + $script:pidScans +
     ' splash-waits=' + $script:qaWaits + ' splash-blind=' + $script:qaBlind +
@@ -1929,7 +2282,7 @@ if ($script:failures) {
 }
 # Truthful scope: the audio phase does open the real Windows output, but
 # only muted, so nothing in this gate is certified by anyone listening to it.
-Write-Host ('scope: ' + $script:caseSeq + ' instrumented launches, one real audio output opened muted and never heard')
+Write-Host ('scope: ' + ($script:caseSeq + $script:plainLaunches) + ' instrumented launches, one real audio output opened muted and never heard')
 Write-Host 'SCOPE: this harness opens no device handle; when a player is on the cable the app browses it on'
 Write-Host '       its own inside every isolated profile, so the Windows wire evidence stays the hand test in'
 Write-Host '       docs\WINDOWS_PORT.md'

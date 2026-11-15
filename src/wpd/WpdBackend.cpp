@@ -292,6 +292,8 @@ int kindFor(IPortableDeviceValues *values) {
             return Wpd::KindImage;
         if (IsEqualGUID(type, WPD_CONTENT_TYPE_VIDEO))
             return Wpd::KindVideo;
+        if (IsEqualGUID(type, WPD_CONTENT_TYPE_PLAYLIST))
+            return Wpd::KindPlaylist;
         if (IsEqualGUID(type, WPD_CONTENT_TYPE_FUNCTIONAL_OBJECT))
             return Wpd::KindFunctional;
     }
@@ -747,8 +749,1011 @@ bool Session::objectInfo(const QString &id, ObjectInfo *out, QString *error) {
     return true;
 }
 
+namespace {
+
+// Renders one property value as a person needs to read it.  PropVariantToString
+// already knows the types WPD puts on an object - strings, numbers, GUIDs, the
+// few key vectors - so this only handles what that call refuses, and says which
+// variant type it was rather than pretending to have decoded it.  The point of
+// this is to name what a player stored, not to be a serialiser.
+// A vector is how a player hands over a list of other objects, which is exactly
+// the question a playlist asks, so "vt=0x1048" is not an answer.  The element
+// types WPD actually puts on an object are named here; anything else says how
+// many there were and what it was called, which is still more than nothing.
+QString describeVector(const PROPVARIANT &value) {
+    const unsigned element = unsigned(value.vt & ~unsigned(VT_VECTOR));
+    QString rendered;
+    unsigned count = 0;
+    switch (element) {
+    case VT_CLSID:
+        count = unsigned(value.cauuid.cElems);
+        for (unsigned i = 0; i < count && i < 64; ++i)
+            rendered += (i ? QStringLiteral(" ") : QString())
+                        + QUuid(value.cauuid.pElems[i]).toString();
+        break;
+    case VT_LPWSTR:
+        count = unsigned(value.calpwstr.cElems);
+        for (unsigned i = 0; i < count && i < 64; ++i)
+            rendered += (i ? QStringLiteral(" ") : QString())
+                        + QString::fromWCharArray(value.calpwstr.pElems[i]
+                                                      ? value.calpwstr.pElems[i]
+                                                      : L"");
+        break;
+    case VT_UI4:
+        count = unsigned(value.caul.cElems);
+        for (unsigned i = 0; i < count && i < 64; ++i)
+            rendered += QString::asprintf(i ? " %u" : "%u", unsigned(value.caul.pElems[i]));
+        break;
+    case VT_I4:
+        count = unsigned(value.cal.cElems);
+        for (unsigned i = 0; i < count && i < 64; ++i)
+            rendered += QString::asprintf(i ? " %d" : "%d", int(value.cal.pElems[i]));
+        break;
+    case VT_UI2:
+        count = unsigned(value.caui.cElems);
+        for (unsigned i = 0; i < count && i < 64; ++i)
+            rendered += QString::asprintf(i ? " %u" : "%u", unsigned(value.caui.pElems[i]));
+        break;
+    case VT_BOOL:
+        count = unsigned(value.cabool.cElems);
+        for (unsigned i = 0; i < count && i < 64; ++i)
+            rendered += value.cabool.pElems[i] ? QStringLiteral(" true")
+                                               : QStringLiteral(" false");
+        break;
+    default:
+        return QString::asprintf("(unrendered vt=0x%04X vector)", unsigned(value.vt));
+    }
+    const QString tail = count > 64 ? QStringLiteral(" ...") : QString();
+    return QString::asprintf("[%u] %s%s", count, qPrintable(rendered), qPrintable(tail));
+}
+
+QString describeVariant(const PROPVARIANT &value) {
+    if (value.vt == VT_EMPTY)
+        return QStringLiteral("(empty)");
+    if (value.vt & VT_VECTOR)
+        return describeVector(value);
+    if (value.vt == VT_BLOB) {
+        // Membership of a library record hides in a blob, so the bytes are the
+        // answer and their length is not.  Both readings that matter go out: the
+        // hex, and the UTF-16 decoding WPD names themselves tend to be.
+        const unsigned char *bytes =
+            static_cast<const unsigned char *>(value.blob.pBlobData);
+        const unsigned n = unsigned(value.blob.cbSize);
+        const unsigned shown = n < 320u ? n : 320u;
+        QString hex;
+        QString wide;
+        for (unsigned i = 0; i < shown; ++i)
+            hex += QString::asprintf(i ? " %02X" : "%02X", bytes[i]);
+        for (unsigned i = 0; i + 1 < shown; i += 2) {
+            const ushort unit = ushort(bytes[i] | (unsigned(bytes[i + 1]) << 8));
+            wide += unit >= 0x20 && unit < 0xFFFD ? QChar(unit) : QChar('.');
+        }
+        return QString::asprintf("(%u byte blob) ", n) + hex
+               + (n > shown ? QStringLiteral(" ...") : QString())
+               + QStringLiteral("  utf16[%1]").arg(wide);
+    }
+    if (value.vt == VT_CLSID && value.puuid)
+        return QUuid(*value.puuid).toString();
+    if (value.vt == VT_ERROR)
+        // In a results collection WPD puts the per-property verdict here, so the
+        // scode IS the answer: "not set", "not supported", "access denied".
+        return QString::asprintf("(no value: 0x%08X %s)", unsigned(value.scode),
+                                 qPrintable(explain(value.scode)));
+    if (value.vt == VT_UNKNOWN && value.punkVal) {
+        // WPD promises WPD_OBJECT_REFERENCES is a CLSID array and this player
+        // answers with an interface instead.  Ask it what it actually is rather
+        // than guessing, and print the members if it is a collection - a
+        // playlist is exactly a member list, so this is the fact the whole
+        // feature turns on.
+        ComPtr<IPortableDevicePropVariantCollection> bag;
+        if (SUCCEEDED(value.punkVal->QueryInterface(IID_PPV_ARGS(&bag)))) {
+            DWORD count = 0;
+            bag->GetCount(&count);
+            QString items;
+            for (DWORD i = 0; i < count && i < 64; ++i) {
+                PROPVARIANT member{};
+                if (FAILED(bag->GetAt(i, &member)))
+                    continue;
+                items += (items.isEmpty() ? QString() : QStringLiteral(", "))
+                         + describeVariant(member);
+                PropVariantClear(&member);
+            }
+            return QStringLiteral("IPortableDevicePropVariantCollection[%1] {%2}%3")
+                .arg(count).arg(items, count > 64 ? QStringLiteral(" ...") : QString());
+        }
+        ComPtr<IPortableDeviceValues> table;
+        if (SUCCEEDED(value.punkVal->QueryInterface(IID_PPV_ARGS(&table)))) {
+            DWORD count = 0;
+            table->GetCount(&count);
+            return QStringLiteral("IPortableDeviceValues[%1]").arg(count);
+        }
+        ComPtr<IPortableDeviceKeyCollection> keys;
+        if (SUCCEEDED(value.punkVal->QueryInterface(IID_PPV_ARGS(&keys)))) {
+            DWORD count = 0;
+            keys->GetCount(&count);
+            return QStringLiteral("IPortableDeviceKeyCollection[%1]").arg(count);
+        }
+        ComPtr<IEnumUnknown> each;
+        if (SUCCEEDED(value.punkVal->QueryInterface(IID_PPV_ARGS(&each)))) {
+            DWORD count = 0;
+            ComPtr<IUnknown> item;
+            while (each->Next(1, &item, nullptr) == S_OK && count < 4096) {
+                ++count;
+                item.Reset();
+            }
+            return QStringLiteral("IEnumUnknown[%1+]").arg(count);
+        }
+        return QStringLiteral("(vt=0x000D interface, none of the WPD collections)");
+    }
+    WCHAR text[512] = {};
+    if (SUCCEEDED(PropVariantToString(value, text, ARRAYSIZE(text))))
+        return QString::fromWCharArray(text);
+    return QString::asprintf("(vt=0x%04X)", unsigned(value.vt));
+}
+
+// The properties worth reading when the question is "what did the player decide
+// this object is".  Not every property WPD names: the identity and type pair, the
+// flags by which a player says whether a file is its own library or only bytes on
+// the volume, and the audio, video and Zune metadata fields that decision gets
+// made out of.  A player is allowed to rewrite what it was sent, and this is the
+// only way to tell that from having announced it badly.
+struct NamedKey {
+    const char *name;
+    PROPERTYKEY key;
+};
+
+const NamedKey probeKeys[] = {
+    {"object.id", WPD_OBJECT_ID},
+    {"object.name", WPD_OBJECT_NAME},
+    {"object.original-file-name", WPD_OBJECT_ORIGINAL_FILE_NAME},
+    {"object.parent-id", WPD_OBJECT_PARENT_ID},
+    {"object.size", WPD_OBJECT_SIZE},
+    {"object.content-type", WPD_OBJECT_CONTENT_TYPE},
+    {"object.format", WPD_OBJECT_FORMAT},
+    {"object.can-delete", WPD_OBJECT_CAN_DELETE},
+    {"object.is-hidden", WPD_OBJECT_ISHIDDEN},
+    {"object.is-system", WPD_OBJECT_ISSYSTEM},
+    {"object.non-consumable", WPD_OBJECT_NON_CONSUMABLE},
+    {"object.drm-protected", WPD_OBJECT_IS_DRM_PROTECTED},
+    {"object.persistent-unique-id", WPD_OBJECT_PERSISTENT_UNIQUE_ID},
+    {"object.sync-id", WPD_OBJECT_SYNC_ID},
+    {"object.date-created", WPD_OBJECT_DATE_CREATED},
+    {"object.date-modified", WPD_OBJECT_DATE_MODIFIED},
+    {"object.hint-location-display-name", WPD_OBJECT_HINT_LOCATION_DISPLAY_NAME},
+    {"object.back-references", WPD_OBJECT_BACK_REFERENCES},
+    {"object.references", WPD_OBJECT_REFERENCES},
+    {"object.supported-units", WPD_OBJECT_SUPPORTED_UNITS},
+    {"media.title", WPD_MEDIA_TITLE},
+    {"media.artist", WPD_MEDIA_ARTIST},
+    {"media.album-artist", WPD_MEDIA_ALBUM_ARTIST},
+    {"music.album", WPD_MUSIC_ALBUM},
+    {"media.genre", WPD_MEDIA_GENRE},
+    {"music.track", WPD_MUSIC_TRACK},
+    {"media.duration", WPD_MEDIA_DURATION},
+    {"media.width", WPD_MEDIA_WIDTH},
+    {"media.height", WPD_MEDIA_HEIGHT},
+    {"media.description", WPD_MEDIA_DESCRIPTION},
+    {"media.sub-title", WPD_MEDIA_SUB_TITLE},
+    {"media.meta-genre", WPD_MEDIA_META_GENRE},
+    {"media.composer", WPD_MEDIA_COMPOSER},
+    {"media.byte-bookmark", WPD_MEDIA_BYTE_BOOKMARK},
+    {"media.time-bookmark", WPD_MEDIA_TIME_BOOKMARK},
+    {"media.parental-rating", WPD_MEDIA_PARENTAL_RATING},
+    {"media.star-rating", WPD_MEDIA_STAR_RATING},
+    {"media.use-count", WPD_MEDIA_USE_COUNT},
+    {"media.skip-count", WPD_MEDIA_SKIP_COUNT},
+    {"video.author", WPD_VIDEO_AUTHOR},
+    {"video.framerate", WPD_VIDEO_FRAMERATE},
+    {"video.fourcc-code", WPD_VIDEO_FOURCC_CODE},
+    {"video.bitrate", WPD_VIDEO_BITRATE},
+    {"video.scan-type", WPD_VIDEO_SCAN_TYPE},
+    {"video.quality-setting", WPD_VIDEO_QUALITY_SETTING},
+    {"image.bitdepth", WPD_IMAGE_BITDEPTH},
+    {"image.horizontal-resolution", WPD_IMAGE_HORIZONTAL_RESOLUTION},
+};
+
+} // namespace
+
+bool Session::describe(const QString &id, QVector<QString> *lines, QString *error) {
+    setReason(error, QString());
+    if (!lines) {
+        setReason(error, QStringLiteral("No place to put the answer."));
+        return false;
+    }
+    if (!m_content) {
+        setReason(error, QStringLiteral("Not connected."));
+        return false;
+    }
+    auto *content = static_cast<IPortableDeviceContent *>(m_content);
+    ComPtr<IPortableDeviceProperties> properties;
+    const HRESULT listed = content->Properties(&properties);
+    if (failed(listed)) {
+        setReason(error, explain(listed));
+        return false;
+    }
+    const std::wstring wide = toWide(id);
+    // One property per question.  A single GetValues for a long list lets one
+    // unsupported key be the player's excuse to answer nothing, and "this player
+    // has no such property" is precisely the fact worth keeping here.
+    for (const NamedKey &entry : probeKeys) {
+        const ComPtr<IPortableDeviceKeyCollection> one = newKeys();
+        if (!one)
+            break;
+        one->Add(entry.key);
+        ComPtr<IPortableDeviceValues> values;
+        const HRESULT asked = properties->GetValues(wide.c_str(), one.Get(), &values);
+        if (failed(asked)) {
+            lines->append(QStringLiteral("%1 = no answer (%2)")
+                              .arg(QString::fromLatin1(entry.name), explain(asked)));
+            continue;
+        }
+        PROPVARIANT value{};
+        const HRESULT got = values->GetValue(entry.key, &value);
+        if (failed(got)) {
+            PropVariantClear(&value);
+            lines->append(QStringLiteral("%1 = not stored (%2)")
+                              .arg(QString::fromLatin1(entry.name), explain(got)));
+            continue;
+        }
+        lines->append(QStringLiteral("%1 = %2")
+                          .arg(QString::fromLatin1(entry.name), describeVariant(value)));
+        PropVariantClear(&value);
+    }
+    return true;
+}
+// Everything this object has, named by the player rather than by this file.
+//
+// `describe` asks a list of keys this code thought of; a Zune keeps its library
+// records in properties nobody guessed, so when the question is "what makes a
+// playlist a playlist" the only honest ask is the player's own list.  Ask for
+// them in one batch - `GetAllProperties` has already named the supported ones,
+// so there is no unsupported key for the player to hide behind - and fall back
+// to one question at a time if the batch comes back empty.
+bool Session::describeAll(const QString &id, QVector<QString> *lines, QString *error) {
+    setReason(error, QString());
+    if (!lines) {
+        setReason(error, QStringLiteral("No place to put the answer."));
+        return false;
+    }
+    if (!m_content) {
+        setReason(error, QStringLiteral("Not connected."));
+        return false;
+    }
+    auto *content = static_cast<IPortableDeviceContent *>(m_content);
+    ComPtr<IPortableDeviceProperties> properties;
+    if (failed(content->Properties(&properties))) {
+        setReason(error, explain(E_FAIL));
+        return false;
+    }
+    const std::wstring wide = toWide(id);
+    ComPtr<IPortableDeviceKeyCollection> keys;
+    if (failed(properties->GetSupportedProperties(wide.c_str(), &keys)) || !keys) {
+        setReason(error, QStringLiteral("The player would not list the properties"
+                                        " it keeps for object %1.").arg(id));
+        return false;
+    }
+    DWORD count = 0;
+    keys->GetCount(&count);
+    for (DWORD i = 0; i < count; ++i) {
+        PROPERTYKEY key{};
+        if (failed(keys->GetAt(i, &key)))
+            continue;
+        const ComPtr<IPortableDeviceKeyCollection> one = newKeys();
+        if (!one)
+            break;
+        one->Add(key);
+        ComPtr<IPortableDeviceValues> values;
+        if (failed(properties->GetValues(wide.c_str(), one.Get(), &values)))
+            continue;
+        PROPVARIANT value{};
+        if (failed(values->GetValue(key, &value))) {
+            PropVariantClear(&value);
+            continue;
+        }
+        lines->append(QStringLiteral("%1/%2 = %3")
+                          .arg(QUuid(key.fmtid).toString().toUpper())
+                          .arg(key.pid)
+                          .arg(describeVariant(value)));
+        PropVariantClear(&value);
+    }
+    return true;
+}
+
+// What this player says about a format it has no name for, asked before anything
+// is written to it.
+//
+// WPD has no format codes, only format GUIDs, and for the vendor-extended range
+// the MTP code sits in the top half of the first field with the WPD format
+// namespace behind it - MTP 0xB001 is {B0010000-AE6C-4804-98BA-C57B46965FE7}.  A
+// Zune playlist is MTP 0xBA05, which the SDK does not name: it names the siblings
+// BA06, BA0B and BB81 and skips the one this port needs.  So the code becomes a
+// GUID here and the GUID gets asked about.  Three questions decide whether a
+// playlist can be built over WPD at all - does this player take the format, which
+// properties does it keep for it, and will it let a client write each one - and
+// every one of them is a capability call rather than a write.
+namespace {
+
+// The WPD format namespace, which is every format GUID except the part carrying
+// the code.  Microsoft's own legacy format ids share the tail (WMA is
+// {00021000-...}) and do not carry an MTP code up top, so this recognises "a
+// format in this namespace", never "this high word is a code".
+bool wpdFormatNamespace(const GUID &guid) {
+    return guid.Data2 == 0xAE6C && guid.Data3 == 0x4804 && guid.Data4[0] == 0x98
+        && guid.Data4[1] == 0xBA && guid.Data4[2] == 0xC5 && guid.Data4[3] == 0x7B
+        && guid.Data4[4] == 0x46 && guid.Data4[5] == 0x96 && guid.Data4[6] == 0x5F
+        && guid.Data4[7] == 0xE7;
+}
+
+GUID formatGuidFromCode(quint32 code) {
+    return GUID{DWORD((code & 0xFFFFu) << 16), 0xAE6C, 0x4804,
+                {0x98, 0xBA, 0xC5, 0x7B, 0x46, 0x96, 0x5F, 0xE7}};
+}
+
+// "BA05", "0xBA05" or a whole GUID: either way, the GUID the player is asked for.
+bool parseFormatText(const QString &text, GUID *guid, QString *why) {
+    const QString trimmed = text.trimmed();
+    if (trimmed.isEmpty()) {
+        setReason(why, QStringLiteral("No format to ask about."));
+        return false;
+    }
+    if (trimmed.startsWith(QLatin1Char('{')) || trimmed.size() >= 32) {
+        const QUuid uuid(trimmed);
+        if (uuid.isNull()) {
+            setReason(why, QStringLiteral("%1 is not a format GUID.").arg(text));
+            return false;
+        }
+        *guid = GUID{uuid.data1, uuid.data2, uuid.data3,
+                     {uchar(uuid.data4[0]), uchar(uuid.data4[1]), uchar(uuid.data4[2]),
+                      uchar(uuid.data4[3]), uchar(uuid.data4[4]), uchar(uuid.data4[5]),
+                      uchar(uuid.data4[6]), uchar(uuid.data4[7])}};
+        return true;
+    }
+    const QString digits = trimmed.startsWith(QLatin1String("0x")) ? trimmed.mid(2) : trimmed;
+    bool ok = false;
+    const quint64 code = digits.toULongLong(&ok, 16);
+    if (!ok || code > 0xFFFFu) {
+        setReason(why, QStringLiteral("%1 is neither an MTP format code nor a format GUID.")
+                           .arg(text));
+        return false;
+    }
+    *guid = formatGuidFromCode(quint32(code));
+    return true;
+}
+
+// One GUID out of a GUID collection, which is how WPD hands over categories,
+// content types and formats.
+bool guidAt(IPortableDevicePropVariantCollection *collection, DWORD index, GUID *guid) {
+    PROPVARIANT value{};
+    if (!collection || FAILED(collection->GetAt(index, &value))) {
+        PropVariantClear(&value);
+        return false;
+    }
+    const bool ok = value.vt == VT_CLSID && value.puuid != nullptr;
+    if (ok)
+        *guid = *value.puuid;
+    PropVariantClear(&value);
+    return ok;
+}
+
+// How many answers a collection holds, for the two kinds this probe walks.  A
+// collection the player declined to hand over counts as none.
+DWORD countOf(IPortableDevicePropVariantCollection *collection) {
+    DWORD count = 0;
+    if (collection)
+        collection->GetCount(&count);
+    return count;
+}
+
+DWORD countOf(IPortableDeviceKeyCollection *collection) {
+    DWORD count = 0;
+    if (collection)
+        collection->GetCount(&count);
+    return count;
+}
+
+DWORD countOf(IPortableDeviceValues *collection) {
+    DWORD count = 0;
+    if (collection)
+        collection->GetCount(&count);
+    return count;
+}
+
+// The MTP-extension verb set, spelled out rather than included.  The SDK header
+// for these carries no include guard and its keys are not in the guid library this
+// target links, so the numbers come from it by hand: one GUID for every key, the
+// verbs at pid 11 to 18 and the operands from 1001.
+constexpr GUID kMtpExtensions{0x4d545058, 0x1a2e, 0x4106,
+                              {0xa3, 0x57, 0x77, 0x1e, 0x08, 0x19, 0xfc, 0x56}};
+
+const char *mtpExtensionVerbName(unsigned long pid) {
+    switch (pid) {
+    case 11: return "get-supported-vendor-opcodes";
+    case 12: return "execute-without-data-phase";
+    case 13: return "execute-with-data-to-read";
+    case 14: return "execute-with-data-to-write";
+    case 15: return "read-data";
+    case 16: return "write-data";
+    case 17: return "end-data-transfer";
+    case 18: return "get-vendor-extension-description";
+    default: return nullptr;
+    }
+}
+
+// The four facts worth having about one property of one format, on one line: what
+// the player calls it, what type it wants, and whether a client may read, write
+// and delete it.  A fact the player declines to state is a question mark and not a
+// no: `SetValues` is refused per property on exactly this attribute, so "unstated"
+// and "refused" are different things to tell a user about.
+QString formatAttributeText(IPortableDeviceValues *attributes) {
+    if (!attributes)
+        return QStringLiteral("(no answer)");
+    bool stated = false;
+    QString text;
+    const QString name = textAt(attributes, WPD_PROPERTY_ATTRIBUTE_NAME);
+    if (!name.isEmpty())
+        text += QStringLiteral("name=%1 ").arg(name);
+    const quint32 varType = smallAt(attributes, WPD_PROPERTY_ATTRIBUTE_VARTYPE, &stated);
+    text += stated ? QString::asprintf("vartype=0x%04X ", varType)
+                   : QStringLiteral("vartype=? ");
+    struct Flag {
+        const char *label;
+        PROPERTYKEY key;
+    };
+    const Flag flags[] = {{"can_read", WPD_PROPERTY_ATTRIBUTE_CAN_READ},
+                          {"can_write", WPD_PROPERTY_ATTRIBUTE_CAN_WRITE},
+                          {"can_delete", WPD_PROPERTY_ATTRIBUTE_CAN_DELETE}};
+    for (const Flag &flag : flags) {
+        bool answered = false;
+        const bool value = flagAt(attributes, flag.key, &answered);
+        text += QStringLiteral("%1=%2 ")
+                    .arg(QString::fromLatin1(flag.label),
+                         !answered ? QStringLiteral("?")
+                                   : (value ? QStringLiteral("yes") : QStringLiteral("no")));
+    }
+    return text.trimmed();
+}
+
+} // namespace
+
+bool Session::probeFormat(const QString &formatText, QVector<QString> *lines,
+                          QString *error, const QString &objectId) {
+    setReason(error, QString());
+    if (!lines) {
+        setReason(error, QStringLiteral("No place to put the answer."));
+        return false;
+    }
+    if (!m_device) {
+        setReason(error, QStringLiteral("Not connected."));
+        return false;
+    }
+    GUID target{};
+    QString why;
+    if (!parseFormatText(formatText, &target, &why)) {
+        setReason(error, why);
+        return false;
+    }
+    auto *device = static_cast<IPortableDevice *>(m_device);
+    ComPtr<IPortableDeviceCapabilities> capabilities;
+    const HRESULT got = device->Capabilities(&capabilities);
+    if (failed(got) || !capabilities) {
+        setReason(error, explain(got));
+        return false;
+    }
+
+    lines->append(QStringLiteral("format.requested = %1").arg(formatText.trimmed()));
+    lines->append(QStringLiteral("format.guid = %1").arg(guidToText(target)));
+    if (wpdFormatNamespace(target)) {
+        lines->append(QString::asprintf("format.high_word = 0x%04X",
+                                        uint(target.Data1 >> 16)));
+    }
+
+    // Does the player take this format at all?  WPD answers that per content type,
+    // so the walk is categories, then each one's content types, then their
+    // formats.  What comes back is counted rather than dumped - a conformant
+    // player names dozens of formats per type - and the two things worth keeping
+    // are whether the target appears and which vendor-extended codes it does name.
+    bool advertised = false;
+    ComPtr<IPortableDevicePropVariantCollection> categories;
+    const HRESULT listed = capabilities->GetFunctionalCategories(&categories);
+    if (failed(listed) || !categories) {
+        lines->append(QStringLiteral("categories = no answer (%1)").arg(explain(listed)));
+    } else {
+        QSet<QString> vendorFormats;
+        const DWORD count = countOf(categories.Get());
+        quint32 total = 0;
+        for (DWORD c = 0; c < count; ++c) {
+            GUID category{};
+            if (!guidAt(categories.Get(), c, &category))
+                continue;
+            ComPtr<IPortableDevicePropVariantCollection> types;
+            capabilities->GetSupportedContentTypes(category, &types);
+            const DWORD typeCount = countOf(types.Get());
+            quint32 here = 0;
+            for (DWORD t = 0; t < typeCount; ++t) {
+                GUID type{};
+                if (!guidAt(types.Get(), t, &type))
+                    continue;
+                ComPtr<IPortableDevicePropVariantCollection> formats;
+                if (failed(capabilities->GetSupportedFormats(type, &formats)))
+                    continue;
+                const DWORD formatCount = countOf(formats.Get());
+                here += formatCount;
+                for (DWORD f = 0; f < formatCount; ++f) {
+                    GUID format{};
+                    if (!guidAt(formats.Get(), f, &format))
+                        continue;
+                    if (IsEqualGUID(format, target))
+                        advertised = true;
+                    if (!wpdFormatNamespace(format))
+                        continue;
+                    const uint code = uint(format.Data1 >> 16);
+                    // Below 0x8000 the high word is a Microsoft legacy id and not
+                    // an MTP code, so printing it as one would be a lie.
+                    if (code < 0x8000)
+                        continue;
+                    vendorFormats.insert(QString::asprintf("0x%04X ", code)
+                                         + guidToText(format));
+                }
+            }
+            total += here;
+            lines->append(QString::asprintf("category[%u] = %s contentTypes=%u formats=%u%s",
+                                            uint(c), qPrintable(guidToText(category)),
+                                            uint(typeCount), here,
+                                            IsEqualGUID(category, kMtpExtensions)
+                                                ? " (mtp-extensions)" : ""));
+        }
+        QVector<QString> sorted = vendorFormats.values();
+        std::sort(sorted.begin(), sorted.end());
+        for (int i = 0; i < sorted.size() && i < 160; ++i)
+            lines->append(QStringLiteral("format.vendor = %1").arg(sorted.at(i)));
+        lines->append(QString::asprintf("formats.total = %u", total));
+    }
+    lines->append(QStringLiteral("format.advertised = %1")
+                      .arg(advertised ? QStringLiteral("yes") : QStringLiteral("no")));
+
+    // The other door to a playlist: a player whose driver forwards MTP operations
+    // could be given the vendor recipe with no format GUID involved at all, so the
+    // verb list belongs to the same decision as the format list.
+    ComPtr<IPortableDeviceKeyCollection> verbs;
+    const HRESULT verbList = capabilities->GetSupportedCommands(&verbs);
+    if (failed(verbList) || !verbs) {
+        lines->append(QStringLiteral("commands = no answer (%1)").arg(explain(verbList)));
+    } else {
+        const DWORD verbCount = countOf(verbs.Get());
+        for (DWORD i = 0; i < verbCount; ++i) {
+            PROPERTYKEY key{};
+            if (failed(verbs->GetAt(i, &key)) || !IsEqualGUID(key.fmtid, kMtpExtensions))
+                continue;
+            const char *name = mtpExtensionVerbName(key.pid);
+            lines->append(QString::asprintf("command.mtp-ext = %u ", uint(key.pid))
+                          + QString::fromLatin1(name ? name : "unnamed"));
+        }
+        lines->append(QString::asprintf("commands.total = %u", uint(verbCount)));
+    }
+
+    // Which properties the player keeps for this format, and what it says about
+    // writing each one.  An unknown format answers this too, which is exactly why
+    // the answer is worth reading before a create is attempted.
+    ComPtr<IPortableDeviceKeyCollection> keys;
+    const HRESULT keyList = capabilities->GetSupportedFormatProperties(target, &keys);
+    if (failed(keyList) || !keys) {
+        lines->append(QStringLiteral("format.properties = no answer (%1)")
+                          .arg(explain(keyList)));
+    } else {
+        const DWORD keyCount = countOf(keys.Get());
+        lines->append(QString::asprintf("format.properties = %u", uint(keyCount)));
+        for (DWORD i = 0; i < keyCount; ++i) {
+            PROPERTYKEY key{};
+            if (failed(keys->GetAt(i, &key)))
+                continue;
+            ComPtr<IPortableDeviceValues> attributes;
+            const HRESULT fixedAttributes =
+                capabilities->GetFixedPropertyAttributes(target, key, &attributes);
+            lines->append(QStringLiteral("format.property[%1] = %2/%3 %4")
+                              .arg(i)
+                              .arg(QUuid(key.fmtid).toString().toUpper())
+                              .arg(key.pid)
+                              .arg(failed(fixedAttributes)
+                                       ? explain(fixedAttributes)
+                                       : formatAttributeText(attributes.Get())));
+        }
+    }
+
+    // The reference list is the whole feature, so it gets asked about whether or
+    // not the player chose to list it among the format's properties.
+    struct Asked {
+        const char *name;
+        PROPERTYKEY key;
+    };
+    const Asked wanted[] = {{"object.references", WPD_OBJECT_REFERENCES},
+                            {"object.back-references", WPD_OBJECT_BACK_REFERENCES},
+                            {"object.name", WPD_OBJECT_NAME},
+                            {"object.original-file-name", WPD_OBJECT_ORIGINAL_FILE_NAME},
+                            {"object.size", WPD_OBJECT_SIZE},
+                            {"object.content-type", WPD_OBJECT_CONTENT_TYPE},
+                            {"object.parent-id", WPD_OBJECT_PARENT_ID}};
+    for (const Asked &entry : wanted) {
+        ComPtr<IPortableDeviceValues> attributes;
+        const HRESULT fixedAttributes =
+            capabilities->GetFixedPropertyAttributes(target, entry.key, &attributes);
+        lines->append(QStringLiteral("fixed.%1 = %2")
+                          .arg(QString::fromLatin1(entry.name),
+                               failed(fixedAttributes) ? explain(fixedAttributes)
+                                                       : formatAttributeText(attributes.Get())));
+    }
+
+    // "This format accepts references" and "this object's references may be
+    // rewritten" are two answers a player is free to give separately, so when an
+    // object is named the same keys are asked about it as well.  The format-wide
+    // answers say what the player allows; these say what it kept for one object.
+    if (!objectId.isEmpty()) {
+        if (!m_content) {
+            lines->append(QStringLiteral("object.attributes = no content interface"));
+            return true;
+        }
+        auto *content = static_cast<IPortableDeviceContent *>(m_content);
+        ComPtr<IPortableDeviceProperties> properties;
+        const HRESULT haveProperties = content->Properties(&properties);
+        if (failed(haveProperties) || !properties) {
+            lines->append(QStringLiteral("object.attributes = no answer (%1)")
+                              .arg(explain(haveProperties)));
+            return true;
+        }
+        const std::wstring wide = toWide(objectId);
+        for (const Asked &entry : wanted) {
+            ComPtr<IPortableDeviceValues> attributes;
+            const HRESULT stated = properties->GetPropertyAttributes(wide.c_str(), entry.key,
+                                                                     &attributes);
+            lines->append(QStringLiteral("object.%1 = %2")
+                              .arg(QString::fromLatin1(entry.name),
+                                   failed(stated) ? explain(stated)
+                                                  : formatAttributeText(attributes.Get())));
+        }
+    }
+    return true;
+}
+// Who a playlist object says it contains, read back off the player.
+//
+// WPD documents WPD_OBJECT_REFERENCES as an interface holding a collection of
+// object id strings, so that is the shape asked for.  The collection is then read
+// one element at a time rather than trusted, because "the player answered with a
+// vector of strings" or "element 3 was a number" are answers to a related question
+// and not to this one, and the difference is what a playlist-with-no-songs gets
+// blamed for.  A shape this client cannot read is reported as such.
+bool Session::objectReferences(const QString &objectId, QStringList *memberIds,
+                               QString *error) {
+    setReason(error, QString());
+    if (memberIds)
+        memberIds->clear();
+    if (!memberIds) {
+        setReason(error, QStringLiteral("No place to put the answer."));
+        return false;
+    }
+    if (!m_content) {
+        setReason(error, QStringLiteral("Not connected."));
+        return false;
+    }
+    auto *content = static_cast<IPortableDeviceContent *>(m_content);
+    ComPtr<IPortableDeviceProperties> properties;
+    HRESULT hr = content->Properties(&properties);
+    if (failed(hr) || !properties) {
+        setReason(error, explain(hr));
+        return false;
+    }
+    const ComPtr<IPortableDeviceKeyCollection> one = newKeys();
+    if (!one) {
+        setReason(error, QStringLiteral("Could not build the request."));
+        return false;
+    }
+    one->Add(WPD_OBJECT_REFERENCES);
+    ComPtr<IPortableDeviceValues> values;
+    const std::wstring wide = toWide(objectId);
+    hr = properties->GetValues(wide.c_str(), one.Get(), &values);
+    if (failed(hr) || !values) {
+        setReason(error, explain(hr));
+        return false;
+    }
+    PROPVARIANT value{};
+    hr = values->GetValue(WPD_OBJECT_REFERENCES, &value);
+    if (failed(hr)) {
+        PropVariantClear(&value);
+        setReason(error, QStringLiteral("The player keeps no member list for object %1 (%2)")
+                             .arg(objectId, explain(hr)));
+        return false;
+    }
+    QStringList ids;
+    QString note;
+    if (value.vt == VT_UNKNOWN && value.punkVal) {
+        ComPtr<IPortableDevicePropVariantCollection> collection;
+        if (SUCCEEDED(value.punkVal->QueryInterface(IID_PPV_ARGS(&collection))) && collection) {
+            DWORD count = 0;
+            collection->GetCount(&count);
+            for (DWORD i = 0; i < count; ++i) {
+                PROPVARIANT item{};
+                if (FAILED(collection->GetAt(i, &item)))
+                    continue;
+                if (item.vt == VT_LPWSTR && item.pwszVal)
+                    ids.append(QString::fromWCharArray(item.pwszVal));
+                else
+                    note = QString::asprintf("element %u came back as vt=0x%04X",
+                                             uint(i), uint(item.vt));
+                PropVariantClear(&item);
+            }
+        } else {
+            note = QStringLiteral("the answer is an interface that is not a property collection");
+        }
+    } else if (value.vt == USHORT(VT_VECTOR | VT_LPWSTR)) {
+        for (ULONG i = 0; i < value.calpwstr.cElems; ++i)
+            ids.append(QString::fromWCharArray(value.calpwstr.pElems[i]
+                                                   ? value.calpwstr.pElems[i]
+                                                   : L""));
+        note = QStringLiteral("answered as a string vector and not a collection");
+    } else {
+        note = QString::asprintf("vt=0x%04X", uint(value.vt));
+    }
+    PropVariantClear(&value);
+    if (ids.isEmpty() && !note.isEmpty()) {
+        setReason(error, QStringLiteral("Object %1 answered the member list in a shape this"
+                                        " client does not read: %2")
+                             .arg(objectId, note));
+        return false;
+    }
+    *memberIds = ids;
+    if (!note.isEmpty()) {
+        fprintf(stderr, "[wpd] %s member list: %s\n", qUtf8Printable(objectId),
+                qPrintable(note));
+    }
+    return true;
+}
+
+// Creates a playlist: an object with no payload whose entire content is a list of
+// other objects.
+//
+// The recipe the Zune is known to take comes from the libusb line, where it is
+// measured on two players: an object in MTP format 0xBA05, named `<name>.zpl`,
+// declaring a size it does not have, with its members attached afterwards.  Over
+// WPD none of that is written down - the format has no SDK name, and whether a
+// reference list may be sent in the create or only after it is a fact about this
+// driver.  So the shapes are tried in the order a conformant playlist is described
+// and the first one the player takes is recorded as the answer, in the same idiom
+// this file already uses to send a file.  Two independent things can go wrong - the
+// create can be refused, and the create can be taken and the member list dropped,
+// which is a fault this player has already been measured committing with media
+// properties - so the members are read back and, if the create kept none of them,
+// sent once on their own.
+bool Session::makePlaylist(const QString &parentId, const QString &name,
+                          const QStringList &memberIds, QString *objectId,
+                          QString *error) {
+    setReason(error, QString());
+    if (objectId)
+        objectId->clear();
+    if (!m_content) {
+        setReason(error, QStringLiteral("Not connected."));
+        return false;
+    }
+    if (name.trimmed().isEmpty()) {
+        setReason(error, QStringLiteral("A playlist needs a name."));
+        return false;
+    }
+    if (memberIds.isEmpty()) {
+        setReason(error, QStringLiteral("'%1' has no tracks in it, which is not a playlist"
+                                        " worth making.").arg(name));
+        return false;
+    }
+    auto *content = static_cast<IPortableDeviceContent *>(m_content);
+    const QString parent = parentId.isEmpty() ? deviceRoot() : parentId;
+    const std::wstring parentWide = toWide(parent);
+    const std::wstring nameWide = toWide(name);
+    // The name the player shows and the name the object is filed under are two
+    // fields, and the suffix is the only thing a player that has never met this
+    // format has to go on.
+    const QString fileName = name.endsWith(QLatin1String(".zpl"), Qt::CaseInsensitive)
+                                 ? name
+                                 : name + QStringLiteral(".zpl");
+    const std::wstring fileWide = toWide(fileName);
+
+    const ComPtr<IPortableDevicePropVariantCollection> references = newPropVariantCollection();
+    if (!references) {
+        setReason(error, QStringLiteral("Could not build the member list."));
+        return false;
+    }
+    for (const QString &member : memberIds) {
+        const std::wstring memberWide = toWide(member);
+        PROPVARIANT item{};
+        if (FAILED(InitPropVariantFromString(memberWide.c_str(), &item)))
+            continue;
+        if (FAILED(references->Add(&item)))
+            PropVariantClear(&item);
+    }
+    DWORD memberCount = 0;
+    references->GetCount(&memberCount);
+    if (memberCount == 0) {
+        setReason(error, QStringLiteral("None of the %1 requested members could be put in"
+                                        " the member list.").arg(memberIds.size()));
+        return false;
+    }
+
+    struct Shape {
+        GUID contentType;
+        bool withContentType;
+        bool withFormat;
+        bool withSize;
+        bool withFileName;
+        bool withReferences;
+        const char *label;
+    };
+    // References in the create leads: a playlist whose members are attached in a
+    // second call spends a moment on the player holding an empty playlist, and if
+    // that second call is refused the player keeps a playlist with no songs in it.
+    // The album content type is last because it is a different kind of object that
+    // would be filed somewhere else, and is here only so that a player which takes
+    // nothing else still gets an answer recorded.
+    const Shape shapes[] = {
+        {WPD_CONTENT_TYPE_PLAYLIST, true, true, true, true, true,
+         "playlist/format/size/file name/references"},
+        {WPD_CONTENT_TYPE_PLAYLIST, true, true, true, true, false,
+         "playlist/format/size/file name"},
+        {WPD_CONTENT_TYPE_PLAYLIST, true, true, false, true, false,
+         "playlist/format/file name"},
+        {WPD_CONTENT_TYPE_PLAYLIST, true, false, false, true, false,
+         "playlist/file name"},
+        {WPD_CONTENT_TYPE_GENERIC_FILE, true, true, true, true, true,
+         "generic file/format/size/file name/references"},
+        {WPD_CONTENT_TYPE_GENERIC_FILE, true, true, true, true, false,
+         "generic file/format/size/file name"},
+        {WPD_CONTENT_TYPE_MIXED_CONTENT_ALBUM, true, true, true, true, false,
+         "album/format/size/file name"},
+    };
+    QString id;
+    QString taken;
+    bool membersAtCreate = false;
+    QString firstFailure;
+    for (const Shape &shape : shapes) {
+        const ComPtr<IPortableDeviceValues> values = newValues();
+        if (!values)
+            break;
+        values->SetStringValue(WPD_OBJECT_PARENT_ID, parentWide.c_str());
+        values->SetStringValue(WPD_OBJECT_NAME, nameWide.c_str());
+        if (shape.withFileName)
+            values->SetStringValue(WPD_OBJECT_ORIGINAL_FILE_NAME, fileWide.c_str());
+        if (shape.withContentType)
+            values->SetGuidValue(WPD_OBJECT_CONTENT_TYPE, shape.contentType);
+        if (shape.withFormat)
+            values->SetGuidValue(WPD_OBJECT_FORMAT, formatGuidFromCode(0xBA05u));
+        if (shape.withSize)
+            values->SetUnsignedLargeIntegerValue(WPD_OBJECT_SIZE, 0);
+        if (shape.withReferences)
+            values->SetIPortableDevicePropVariantCollectionValue(WPD_OBJECT_REFERENCES,
+                                                                 references.Get());
+        LPWSTR created = nullptr;
+        const HRESULT hr = content->CreateObjectWithPropertiesOnly(values.Get(), &created);
+        const QString made = adopted(created);
+        if (SUCCEEDED(hr) && !made.isEmpty()) {
+            id = made;
+            taken = QString::fromLatin1(shape.label);
+            membersAtCreate = shape.withReferences;
+            break;
+        }
+        if (firstFailure.isEmpty())
+            firstFailure = QStringLiteral("%1: %2")
+                               .arg(QString::fromLatin1(shape.label), explain(hr));
+        fprintf(stderr, "[wpd] playlist shape '%s' was refused: %s\n", shape.label,
+                qPrintable(explain(hr)));
+    }
+    if (id.isEmpty()) {
+        setReason(error, QStringLiteral("The player refused to create the playlist '%1' in"
+                                        " every shape tried.  First answer was %2")
+                             .arg(name, firstFailure));
+        return false;
+    }
+    if (objectId)
+        *objectId = id;
+    fprintf(stderr, "[wpd] playlist '%s' under %s is object %s (shape: %s)\n",
+            qUtf8Printable(name), qUtf8Printable(parent), qUtf8Printable(id),
+            qPrintable(taken));
+
+    // A create that lands and then fails leaves the player holding an object named
+    // like a playlist with nothing in it, which is worse than no playlist: it shows
+    // up in the browser, it plays nothing, and the next attempt makes a second one.
+    // So every way out that is not a success takes the object back off the player
+    // and takes the id back off the caller, measured this session when a create that
+    // took no members was left behind by a failure and then deleted again.
+    struct ReapUnfinished {
+        Session *self;
+        QString *out;
+        QStringList one;
+        QString label;
+        bool keep = false;
+        ~ReapUnfinished() {
+            if (keep || one.isEmpty())
+                return;
+            if (out)
+                out->clear();
+            QString why;
+            QStringList purged;
+            if (self->removeObjects(one, &purged, &why))
+                fprintf(stderr, "[wpd] playlist '%s' failed after it was created, so the"
+                                " unfinished object %s was taken back off the player\n",
+                        qUtf8Printable(label), qUtf8Printable(one.first()));
+            else
+                fprintf(stderr, "[wpd] playlist '%s' failed after it was created and the"
+                                " unfinished object %s stayed on the player: %s\n",
+                        qUtf8Printable(label), qUtf8Printable(one.first()),
+                        qPrintable(why));
+        }
+    } reap{this, objectId, QStringList{id}, name};
+
+    // Whether the members landed is a separate question from whether the object
+    // did, so it is asked separately.
+    QStringList kept;
+    QString why;
+    if (!objectReferences(id, &kept, &why)) {
+        kept.clear();
+        fprintf(stderr, "[wpd] the new playlist has no readable member list: %s\n",
+                qPrintable(why));
+    }
+    if (kept.size() == memberIds.size()) {
+        fprintf(stderr, "[wpd] playlist %s holds all %d members\n", qUtf8Printable(id),
+                int(memberIds.size()));
+        reap.keep = true;
+        return true;
+    }
+    fprintf(stderr, "[wpd] playlist %s kept %lld of %d members%s - sending the list on its"
+                    " own\n", qUtf8Printable(id), qlonglong(kept.size()),
+            int(memberIds.size()),
+            membersAtCreate ? " even though the create was given them" : "");
+
+    ComPtr<IPortableDeviceProperties> properties;
+    HRESULT hr = content->Properties(&properties);
+    if (failed(hr) || !properties) {
+        setReason(error, QStringLiteral("'%1' was created as object %2 but the player would"
+                                        " not let its members be read or written: %3")
+                             .arg(name, id, explain(hr)));
+        return false;
+    }
+    const ComPtr<IPortableDeviceValues> again = newValues();
+    if (!again) {
+        setReason(error, QStringLiteral("Could not build the member list for object %1.")
+                             .arg(id));
+        return false;
+    }
+    again->SetIPortableDevicePropVariantCollectionValue(WPD_OBJECT_REFERENCES,
+                                                        references.Get());
+    const std::wstring idWide = toWide(id);
+    ComPtr<IPortableDeviceValues> refused;
+    hr = properties->SetValues(idWide.c_str(), again.Get(), &refused);
+    if (refused)
+        fprintf(stderr, "[wpd] the player refused %lu of the playlist properties\n",
+                countOf(refused.Get()));
+    else if (FAILED(hr))
+        fprintf(stderr, "[wpd] playlist member list answer: %s\n",
+                qPrintable(explain(hr)));
+    if (failed(hr)) {
+        setReason(error, QStringLiteral("'%1' was created as object %2 but the player"
+                                        " refused its member list: %3")
+                             .arg(name, id, explain(hr)));
+        return false;
+    }
+    if (!objectReferences(id, &kept, &why)) {
+        setReason(error, QStringLiteral("'%1' was created as object %2, its member list was"
+                                        " accepted, and then the player would not read it"
+                                        " back: %3")
+                             .arg(name, id, why));
+        return false;
+    }
+    if (kept.size() != memberIds.size()) {
+        setReason(error, QStringLiteral("'%1' was created as object %2 and the player keeps"
+                                        " %3 of its %4 tracks.")
+                             .arg(name, id).arg(kept.size()).arg(memberIds.size()));
+        return false;
+    }
+    fprintf(stderr, "[wpd] playlist %s holds all %d members after SetValues\n",
+            qUtf8Printable(id), int(memberIds.size()));
+    reap.keep = true;
+    return true;
+}
 bool Session::download(const QString &objectId, const QString &destPath, ProgressFn fn,
-                       void *userdata, QString *error) {
+                       void *userdata, QString *error, quint64 limitBytes) {
     setReason(error, QString());
     if (!m_content) {
         setReason(error, QStringLiteral("Not connected."));
@@ -796,6 +1801,11 @@ bool Session::download(const QString &objectId, const QString &destPath, Progres
     ObjectInfo declared;
     const quint64 total = objectInfo(objectId, &declared, nullptr) ? declared.size : 0;
 
+    // A cap is measured against the object's declared size so that asking for
+    // the front of a small object still reads all of it, and so that the
+    // readback check below judges the bytes that were actually asked for.
+    const quint64 cap = limitBytes && (total == 0 || limitBytes < total) ? limitBytes : 0;
+
     QByteArray chunk(1 << 18, Qt::Uninitialized);
     quint64 written = 0;
     bool ok = true;
@@ -806,8 +1816,13 @@ bool Session::download(const QString &objectId, const QString &destPath, Progres
             why = QStringLiteral("Cancelled.");
             break;
         }
+        ULONG want = ULONG(chunk.size());
+        if (cap && written + want > cap)
+            want = ULONG(cap - written);
+        if (want == 0)
+            break;
         ULONG got = 0;
-        hr = stream->Read(chunk.data(), ULONG(chunk.size()), &got);
+        hr = stream->Read(chunk.data(), want, &got);
         if (failed(hr)) {
             ok = false;
             why = explain(hr);
@@ -821,7 +1836,9 @@ bool Session::download(const QString &objectId, const QString &destPath, Progres
             break;
         }
         written += got;
-        if (fn && total)
+        if (cap && written >= cap)
+            break;
+        if (fn && total && !cap)
             fn(double(written) / double(total), userdata);
     }
     out.close();
@@ -833,7 +1850,7 @@ bool Session::download(const QString &objectId, const QString &destPath, Progres
         setReason(error, why);
         return false;
     }
-    if (total && written != total) {
+    if (!cap && total && written != total) {
         out.remove();
         setReason(error, QStringLiteral("Short transfer: %1 of %2 bytes.")
                              .arg(written)
@@ -848,8 +1865,10 @@ bool Session::download(const QString &objectId, const QString &destPath, Progres
     }
     if (fn)
         fn(1.0, userdata);
-    fprintf(stderr, "[wpd] downloaded %s -> %s (%llu bytes)\n", qUtf8Printable(objectId),
-            qUtf8Printable(destPath), quint64(written));
+    fprintf(stderr, "[wpd] %s %s -> %s (%llu bytes%s)\n",
+            cap ? "head-read" : "downloaded", qUtf8Printable(objectId),
+            qUtf8Printable(destPath), quint64(written),
+            cap ? ", capped" : "");
     return true;
 }
 
@@ -1087,14 +2106,18 @@ bool Session::upload(const QString &parentId, const QString &srcPath, const Obje
     // and title, the one we copied without them carried none - and the library on
     // the player is the product a user actually sees.
     const bool hasMedia = hasMediaProperties(meta);
+    const int announced = formatForExtension(srcPath);
     GUID format = WPD_OBJECT_FORMAT_UNSPECIFIED;
-    switch (formatForExtension(srcPath)) {
+    switch (announced) {
     case 1: format = WPD_OBJECT_FORMAT_WMA; break;
     case 2: format = WPD_OBJECT_FORMAT_MP3; break;
     case 3: format = WPD_OBJECT_FORMAT_FLAC; break;
     case 4: format = WPD_OBJECT_FORMAT_WAVE; break;
+    case 5: format = WPD_OBJECT_FORMAT_MP4; break;
+    case 6: format = WPD_OBJECT_FORMAT_ASF; break;
     default: break;
     }
+    const bool video = isVideoFormat(announced);
 
     // What a player will take for a new file is a fact about the player, and the
     // only honest way to learn it is to ask in order.  Measured on the Zune at
@@ -1123,7 +2146,7 @@ bool Session::upload(const QString &parentId, const QString &srcPath, const Obje
     // is not a fallback for laziness, it is the shape measured to work on PID
     // 0710 before any media property was ever sent, so a player that chokes on
     // WPD_MEDIA_* still receives its music.
-    const Shape shapes[] = {
+    const Shape audioShapes[] = {
         {WPD_CONTENT_TYPE_AUDIO, true, true, true, true, true,
          "audio/format/size/file name/media"},
         {WPD_CONTENT_TYPE_AUDIO, true, true, true, true, false, "audio/format/size/file name"},
@@ -1139,7 +2162,36 @@ bool Session::upload(const QString &parentId, const QString &srcPath, const Obje
         {WPD_CONTENT_TYPE_AUDIO, true, false, false, true, true, "audio/file name/media"},
         {noContentType, false, true, true, true, true, "format/size/file name/media"},
     };
-    const int shapeCount = int(sizeof(shapes) / sizeof(shapes[0]));
+    // A video is the same transfer with one different word in it.  WPD tells a
+    // player what an object *is* through WPD_OBJECT_CONTENT_TYPE, so an .mp4
+    // announced as audio is filed as music however well it decodes.  The rungs are
+    // the same because what a given player needs in the create is a fact about the
+    // player, not about the kind of file.  Whether this player then files a video
+    // it was given this way in its own video library is a separate question, and
+    // this table makes no claim about its answer.
+    const Shape videoShapes[] = {
+        {WPD_CONTENT_TYPE_VIDEO, true, true, true, true, true,
+         "video/format/size/file name/media"},
+        {WPD_CONTENT_TYPE_VIDEO, true, true, true, true, false,
+         "video/format/size/file name"},
+        {WPD_CONTENT_TYPE_GENERIC_FILE, true, true, true, true, true,
+         "generic file/format/size/name/media"},
+        {WPD_CONTENT_TYPE_GENERIC_FILE, true, true, true, true, false,
+         "generic file/format/size/name"},
+        {WPD_CONTENT_TYPE_VIDEO, true, true, true, false, false, "video/format/size"},
+        {WPD_CONTENT_TYPE_VIDEO, true, false, true, true, true,
+         "video/size/file name/media"},
+        {WPD_CONTENT_TYPE_VIDEO, true, true, false, true, true,
+         "video/format/file name/media"},
+        {noContentType, false, true, true, true, true, "format/size/file name/media"},
+    };
+    const Shape *shapes = audioShapes;
+    int shapeCount = int(sizeof(audioShapes) / sizeof(audioShapes[0]));
+    if (video) {
+        shapes = videoShapes;
+        shapeCount = int(sizeof(videoShapes) / sizeof(videoShapes[0]));
+    }
+    int &whichShape = video ? m_uploadVideoShape : m_uploadShape;
 
     // Snapshot the destination once, before anything is created; see
     // settleCreatedId().  A transfer abandoned with Revert makes nothing, so
@@ -1153,7 +2205,7 @@ bool Session::upload(const QString &parentId, const QString &srcPath, const Obje
     bool settled = false;
     QVector<QPair<QString, QString>> refused;
     for (int index = 0; index < shapeCount; ++index) {
-        if (m_uploadShape >= 0 && index != m_uploadShape)
+        if (whichShape >= 0 && index != whichShape)
             continue;
         const Shape &shape = shapes[index];
         if (shape.withMedia && !hasMedia)
@@ -1247,7 +2299,7 @@ bool Session::upload(const QString &parentId, const QString &srcPath, const Obje
         }
         if (ok) {
             taken = shape.label;
-            m_uploadShape = index;
+            whichShape = index;
             settled = true;
             break;
         }
@@ -1258,7 +2310,7 @@ bool Session::upload(const QString &parentId, const QString &srcPath, const Obje
         // exactly this, and its own failure is not worth a second complaint.
         stream->Revert();
         stream.Reset();
-        if (m_uploadShape >= 0)
+        if (whichShape >= 0)
             break;   // the shape this player already took just failed: say so once
         if (aborted())
             break;
@@ -1397,6 +2449,7 @@ QString Session::kindName(int kind) {
     case KindVideo: return QStringLiteral("video");
     case KindFunctional: return QStringLiteral("functional");
     case KindOther: return QStringLiteral("other");
+    case KindPlaylist: return QStringLiteral("playlist");
     default: return QStringLiteral("unknown");
     }
 }
@@ -1411,7 +2464,21 @@ int Session::formatForExtension(const QString &path) {
         return 3;
     if (suffix == QLatin1String("wav"))
         return 4;
+    // The two containers this application produces video into: H.264/AAC in
+    // MP4 for a player that takes that shape, Windows Media in ASF for one that
+    // takes that instead.  This says only what we announce; whether a given
+    // player plays what it accepted is answered by playback, not here.
+    if (suffix == QLatin1String("mp4") || suffix == QLatin1String("m4v"))
+        return 5;
+    if (suffix == QLatin1String("wmv") || suffix == QLatin1String("asf"))
+        return 6;
     return 0;
+}
+
+// 5 and 6, spelled once so the shape table and the caller of the shape cache
+// cannot drift apart about which uploads are video uploads.
+bool Session::isVideoFormat(int format) {
+    return format == 5 || format == 6;
 }
 
 QString Session::extensionForFormat(const QString &formatGuidText) {

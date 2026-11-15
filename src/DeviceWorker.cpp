@@ -23,12 +23,37 @@
 // and what this one cannot do.
 #include "wpd/WpdBackend.h"
 #include "library/LibraryPaths.h"
+#include "MediaDescription.h"
 // A photo preview on this road is decoded from the player's own bytes, which is
 // a pixel job the rest of this file never does - hence QtGui here and nowhere
 // else.  The app's own target links QtGui on every platform already.
 #include <QImage>
 #include <QImageReader>
 #endif
+
+// An album cover on this road is a tag inside the audio file, so reading it is
+// a media job: see grabWpdAudioArt() for how little of the file that needs.
+// One declaration rather than transcode/libav_transcode.h, because that header
+// forward-declares `struct ZuneMetadata` and zune.h above typedefs the same
+// spelling from a differently-named tag - C++ calls that a redefinition with
+// different basic types (C2371), and the extractor is one function.
+extern "C" int zuuned_extract_art(const char *filepath,
+                                  const char *output_jpeg_path,
+                                  int max_dimension);
+// The same reason for the same header: a finished video's duration is announced
+// to the player, and asking for it needs one function, not the conflict.
+extern "C" int zuuned_probe_video_info(const char *filepath, double *duration_out,
+                                       int *width_out, int *height_out);
+// And the frame decoder, for the same reason that header stays out: a video on
+// this road has no picture resource at all, so the face a video tile wears is
+// decoded here from the bytes the player hands over.
+extern "C" int zuuned_extract_frame(const char *filepath, double at_seconds,
+                                    const char *output_jpeg_path, int max_width);
+// And the file describer, for the details sheet: what the bytes in front of a
+// track actually are.  It answers as key=value text precisely so this file does
+// not need the struct - see the comment on it in the transcode header.
+extern "C" int zuuned_describe_audio_file(const char *path, char *out,
+                                          int out_size);
 
 extern "C" {
 #include "zune.h"
@@ -767,7 +792,6 @@ bool DeviceWorker::breachWpd(BreachData *result) {
     m_wpdIds.clear();
     m_wpdFolders.clear();
     m_wpdStorage.clear();
-    m_wpdArtReported = false;
 
     emit stage(UiText::tr("Reading device info…"), 0.45);
     Wpd::DeviceInfo info;
@@ -792,7 +816,7 @@ bool DeviceWorker::breachWpd(BreachData *result) {
         QString folder;   // breadcrumb of the parent, e.g. "/Music/Artist/Album"
         quint32 handle = 0;
     };
-    QVector<Found> audio, video, photo;
+    QVector<Found> audio, video, photo, playlist;
     QHash<quint32, QString> folderNames;
     QString firstFailure;
     int walked = 0;
@@ -841,7 +865,8 @@ bool DeviceWorker::breachWpd(BreachData *result) {
                 folderNames.insert(handle, kid.name);
                 descend(kid.id, depth + 1, childPath);
             } else if (kid.kind == Wpd::KindAudio || kid.kind == Wpd::KindVideo
-                       || kid.kind == Wpd::KindImage) {
+                       || kid.kind == Wpd::KindImage
+                       || kid.kind == Wpd::KindPlaylist) {
                 Found found;
                 found.object = kid;
                 found.folder = path;
@@ -850,6 +875,8 @@ bool DeviceWorker::breachWpd(BreachData *result) {
                     audio.append(found);
                 else if (kid.kind == Wpd::KindVideo)
                     video.append(found);
+                else if (kid.kind == Wpd::KindPlaylist)
+                    playlist.append(found);
                 else
                     photo.append(found);
             }
@@ -1018,13 +1045,48 @@ bool DeviceWorker::breachWpd(BreachData *result) {
             {"itemId", parent},
             {"name", name.isEmpty() ? QStringLiteral("photos") : name}});
     }
-    // No playlists.  A Zune keeps them in its own metadata and MTP gives a
-    // generic client no way to read or build them, so the page stays empty
-    // rather than showing something that is not the player's list.
+    // Playlists over MTP are ordinary objects after all: the player keeps them
+    // in a folder of their own and each one is an object with no payload whose
+    // content is the list of objects it points at.  That is the same shape the
+    // ZMDB road reports, so both roads agree on what a playlist is - and this
+    // answer is read off the player rather than decoded out of a vendor
+    // database, which is why it is available to a client with no credentials.
+    // A member that is not an audio object this walk saw is counted and left
+    // out: the page can only offer a row it could also open.
+    QHash<QString, quint32> handleOfObjectId;
+    for (const Found &found : std::as_const(audio))
+        handleOfObjectId.insert(found.object.id, found.handle);
+    int droppedMembers = 0;
+    for (const Found &found : std::as_const(playlist)) {
+        QStringList members;
+        QString why;
+        if (!wpd.objectReferences(found.object.id, &members, &why)) {
+            fprintf(stderr, "[wpd] playlist %s ('%s') has no readable member list:"
+                            " %s\n", qUtf8Printable(found.object.id),
+                    qUtf8Printable(found.object.name), qPrintable(why));
+            members.clear();
+        }
+        QVariantList ids;
+        for (const QString &member : std::as_const(members)) {
+            const auto hit = handleOfObjectId.constFind(member);
+            if (hit == handleOfObjectId.constEnd()) {
+                ++droppedMembers;
+                continue;
+            }
+            ids.append(hit.value());
+        }
+        r.playlists.append(QVariantMap{
+            {"itemId", found.handle},
+            {"name", found.object.name},
+            {"count", int(ids.size())},
+            {"trackIds", ids}});
+    }
     fprintf(stderr, "[wpd] library: %d tracks, %d albums, %d artists,"
-            " %d videos, %d photos, %d photo folders, 0 playlists\n",
+            " %d videos, %d photos, %d photo folders, %d playlists"
+            " (%d members named a track this walk did not see)\n",
             int(r.tracks.size()), int(r.albums.size()), int(r.artists.size()),
-            int(r.videos.size()), int(r.photos.size()), int(r.photoAlbums.size()));
+            int(r.videos.size()), int(r.photos.size()), int(r.photoAlbums.size()),
+            int(r.playlists.size()), droppedMembers);
 
     *result = r;
     return true;
@@ -1159,6 +1221,86 @@ void DeviceWorker::sendTrackWpd(const QString &entryId, const QString &filepath,
     if (handle)
         m_wpdIds.insert(handle, objectId);
     emit sendDone(entryId, true, handle, QString());
+}
+
+void DeviceWorker::sendVideoWpd(const QString &entryId, const QString &filepath,
+                                const QString &objectFilename, const QString &title,
+                                const QString &description) {
+    if (!m_wpd) {
+        emit sendVideoDone(entryId, false, 0, QStringLiteral("NotConnected"));
+        return;
+    }
+    Wpd::Session &wpd = *m_wpd;
+    wpd.clearAbort();
+    if (m_wpdStorage.isEmpty()) {
+        // The same two property reads sendTrackWpd makes, repeated rather than
+        // shared because the music send is the one Windows transfer with hand
+        // evidence on it and this file has learned to leave those alone.
+        Wpd::DeviceInfo info;
+        QString why;
+        if (wpd.readDevice(&info, &why) && !info.storageIds.isEmpty())
+            m_wpdStorage = info.storageIds.first();
+        else
+            fprintf(stderr, "[wpd] no storage to write to: %s\n", qUtf8Printable(why));
+    }
+    if (m_wpdStorage.isEmpty()) {
+        emit sendVideoDone(entryId, false, 0, QStringLiteral("NoStorage"));
+        return;
+    }
+
+    // The player lists the videos it filed itself out of one folder of the
+    // volume, so that folder IS the video library: writing to the storage root,
+    // or to a folder of ours, is how you get bytes the video hub never shows.
+    // "Video" is the name this player's own format gave it; ensureWpdFolder
+    // matches case-insensitively and only creates a folder the listing says is
+    // missing, so a player that spells it differently still lands in one place.
+    QString parent;
+    QString error;
+    if (!ensureWpdFolder(m_wpdStorage, QStringLiteral("Video"), &parent, &error)) {
+        emit sendVideoDone(entryId, false, 0, QStringLiteral("Wpd: ") + error);
+        return;
+    }
+
+    Wpd::ObjectInfo meta;
+    meta.title = title;
+    // The name on the volume is the readable one the sync chose, but the
+    // announced format comes from the suffix of the file actually in hand, so
+    // the suffix always comes from that file and never from the name.
+    const QString stem = QFileInfo(objectFilename).completeBaseName();
+    const QString suffix = QFileInfo(filepath).suffix();
+    if (!stem.isEmpty() && !suffix.isEmpty())
+        meta.name = stem + QLatin1Char('.') + suffix;
+    // Duration is the one library fact this road carries that a Zune is measured
+    // to keep for a video, and the transcoder knows it exactly, so the finished
+    // file is asked rather than the source.  Width and height the probe finds are
+    // deliberately not announced: the player reports 0 and nonsense for its own
+    // videos, so there is nothing here for a client to add.
+    double seconds = 0;
+    int width = 0;
+    int height = 0;
+    if (zuuned_probe_video_info(filepath.toUtf8().constData(), &seconds, &width,
+                                &height) == 0 && seconds > 0)
+        meta.durationMs = quint32(seconds * 1000.0 + 0.5);
+    else
+        fprintf(stderr, "[wpd] video \"%s\": no duration to announce\n",
+                qUtf8Printable(title));
+    if (!description.isEmpty())
+        fprintf(stderr, "[wpd] video \"%s\": MTP has nowhere to put a description\n",
+                qUtf8Printable(title));
+
+    QString objectId;
+    WpdSendProgress ctx{this, &entryId, 0.0};
+    if (!wpd.upload(parent, filepath, meta, wpdSendProgressThunk, &ctx, &objectId,
+                    &error)) {
+        emit sendVideoDone(entryId, false, 0, QStringLiteral("Wpd: ") + error);
+        return;
+    }
+    quint32 handle = 0;
+    if (!wpdHandleOf(objectId, &handle))
+        handle = 0;
+    if (handle)
+        m_wpdIds.insert(handle, objectId);
+    emit sendVideoDone(entryId, true, handle, QString());
 }
 
 bool DeviceWorker::downloadWpd(quint32 itemId, const QString &destPath,
@@ -1460,14 +1602,13 @@ void DeviceWorker::doSendVideo(const QString &entryId, const QString &filepath,
                                const QString &series, int season, int episode) {
 #if defined(Q_OS_WIN)
     if (!m_dev && m_wpdShared.load() && m_wpd) {
-        // A Zune files a video by vendor metadata (metagenre, and 0xDA9A/0xDAB5/
-        // 0xDAB6 for a series episode) and takes its poster as a representative
-        // sample.  Plain MTP can put bytes in a folder; it cannot make the
-        // player's video library understand them, and a file the browser does
-        // not list is a sync that lied.
-        noteWpdUnsupported("video transfer");
-        emit sendVideoDone(entryId, false, 0,
-                           UiText::tr("This player is on Windows' MTP driver, which cannot add videos to the Zune's video library. Connect it to WinUSB for video sync."));
+        // Measured: the bytes DO reach the player's video library over MTP when
+        // they arrive as an ASF in the folder the player files videos in.  What
+        // stays out of reach is the vendor half - metagenre, the 0xDA9A/0xDAB5/
+        // 0xDAB6 series triple, the poster as a representative sample - so an MTP
+        // video arrives with no category and no picture.  That is a partial sync,
+        // not a false one, which is why it goes ahead.  See sendVideoWpd.
+        sendVideoWpd(entryId, filepath, objectFilename, title, description);
         return;
     }
 #endif
@@ -1519,8 +1660,52 @@ void DeviceWorker::doForgePlaylist(const QString &name,
                                    const QVariantList &trackIds) {
 #if defined(Q_OS_WIN)
     if (!m_dev && m_wpdShared.load() && m_wpd) {
-        noteWpdUnsupported("playlist creation");
-        emit forgePlaylistDone(name, 0, false);
+        // A Zune makes a playlist out of the objects it already holds: an object
+        // with no payload whose content is a list of handles.  So every member
+        // has to be an object this listing actually saw - a handle that is not in
+        // the map would become a guessed id, and a playlist naming a track the
+        // player does not have is worse than a playlist never attempted.
+        QStringList members;
+        int unknown = 0;
+        for (const QVariant &v : trackIds) {
+            const auto hit = m_wpdIds.constFind(v.toUInt());
+            if (hit == m_wpdIds.constEnd()) {
+                ++unknown;
+                continue;
+            }
+            members.append(hit.value());
+        }
+        if (unknown)
+            fprintf(stderr, "[wpd] %d of %d playlist members were not objects this"
+                            " listing knows; they are left out\n", unknown,
+                    int(trackIds.size()));
+        QString done;
+        QString why;
+        Wpd::Session &wpd = *m_wpd;
+        QString parent;
+        if (members.isEmpty())
+            why = QStringLiteral("none of the requested members was a player object");
+        else if (!ensureWpdFolder(m_wpdStorage, QStringLiteral("Playlists"), &parent,
+                                  &why))
+            why = QStringLiteral("no Playlists folder to put it in: ") + why;
+        else if (!wpd.makePlaylist(parent, name, members, &done, &why))
+            why = QStringLiteral("the player refused it: ") + why;
+        quint32 handle = 0;
+        if (done.isEmpty() || !wpdHandleOf(done, &handle) || handle == 0) {
+            if (done.isEmpty())
+                fprintf(stderr, "[wpd] playlist '%s' was not made: %s\n",
+                        qUtf8Printable(name), qPrintable(why));
+            else
+                fprintf(stderr, "[wpd] playlist %s has no handle zuuned can use\n",
+                        qUtf8Printable(done));
+            emit forgePlaylistDone(name, 0, false);
+            return;
+        }
+        m_wpdIds.insert(handle, done);
+        fprintf(stderr, "[wpd] forged playlist '%s' as %s under %s with %d of %d"
+                        " members\n", qUtf8Printable(name), qUtf8Printable(done),
+                qUtf8Printable(parent), int(members.size()), int(trackIds.size()));
+        emit forgePlaylistDone(name, handle, true);
         return;
     }
 #endif
@@ -1986,6 +2171,330 @@ bool DeviceWorker::grabWpdPhotoThumb(quint32 itemId, const QString &cachePath) {
             " DEFAULT stream\n", itemId, image.width(), image.height());
     return true;
 }
+
+// Does this slice of an ASF file name the picture attribute at all?  The name
+// sits in the header's content-description record, ahead of the audio payload,
+// so any slice holding the header holds the name - while the picture bytes it
+// describes can run far past a half-megabyte.  That gap is why the question is
+// worth asking: a slice that names WM/Picture and still yields no picture was
+// cut short, and a slice that does not name it has no cover at all, however
+// much more of the song is pulled over the cable.
+//
+// ASF is byte-aligned, not word-aligned, so the two-byte name can start on an
+// odd offset - a file pulled off this player carries Title at one - and a
+// single-parity scan false-negatives.  Scanning every byte offset costs a
+// memchr over a slice this size and is the end of that trap.
+namespace {
+bool namesPictureAttribute(const QString &path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    const QByteArray bytes = file.read(4 * 1024 * 1024);
+    const QByteArray wide(reinterpret_cast<const char *>(
+                              QStringLiteral("WM/Picture").utf16()),
+                          10 * int(sizeof(char16_t)));
+    return bytes.indexOf(wide) >= 0;
+}
+}  // namespace
+
+// An album's cover is on this player, and the player is right to say it has no
+// ALBUM_ART resource: the picture is not a stream, it is a tag inside the audio
+// file - ASF's WM/Picture attribute, which is where Windows Media Player and the
+// Zune's own UI read it from.  Asking the player for art and taking "no" for an
+// answer was the mistake; asking it for the front of the file is the question
+// that has an answer.
+//
+// A head read, not a download.  Measured on files pulled off this player, the
+// ASF header that carries the picture is 11,184 to 24,597 bytes and the largest
+// cover in it is 240,462 bytes, so the whole picture sits inside the first
+// half-megabyte of a 24-34 MB file.  Truncating one of those files to 32 KB kept
+// producing its identical cover through the same extractor, which is the direct
+// evidence that the rest of the file is audio nobody needs for a tile.  So this
+// asks WPD for the first kHeadBytes - `download()` stops at the cap on purpose
+// rather than calling a short transfer a failure - and never pulls a song into
+// the cache folder to find out what its sleeve looks like.
+//
+// The bytes go to a scratch name beside the cache entry and only the extracted
+// JPEG is allowed to keep the cache path, so a file with no picture leaves
+// nothing behind.  Nothing here reaches a network, and nothing here writes to a
+// music folder: DeviceService pointed this call at the thumbnail cache.
+bool DeviceWorker::grabWpdAudioArt(quint32 itemId, const QString &cachePath) {
+    Wpd::Session &wpd = *m_wpd;
+    const QString id = wpdObjectIdFor(itemId);
+    QString why;
+    Wpd::ObjectInfo info;
+    if (!wpd.objectInfo(id, &info, &why)) {
+        fprintf(stderr, "[wpd] album art %u: the player would not describe the"
+                " object: %s\n", itemId, qUtf8Printable(why));
+        QFile::remove(cachePath);
+        return false;
+    }
+    if (info.size == 0) {
+        fprintf(stderr, "[wpd] album art %u: the player calls this object"
+                " empty\n", itemId);
+        return false;
+    }
+
+    // Two orders of magnitude above the largest cover measured in a header on
+    // this player, and still 1/48th of the smallest song it holds.  An object
+    // smaller than the cap is read whole, which is the same read for a short
+    // clip and costs nothing extra.
+    constexpr quint64 kHeadBytes = 512ULL * 1024;
+    // The second rung exists because the first one has a ceiling the encoder
+    // this application uses does not share: transcode/wma_lossless_enc.cpp
+    // will carry a picture up to 8 MB, so a synced file can legitimately hold
+    // a cover no half-megabyte slice contains.  Reading that ceiling is still
+    // under a third of the smallest song on this player, not the whole of it.
+    constexpr quint64 kPictureBytes = 8ULL * 1024 * 1024;
+
+    const QString headPath = cachePath + QStringLiteral(".head");
+    QString failure;
+    if (!wpd.download(id, headPath, nullptr, nullptr, &failure, kHeadBytes)) {
+        QFile::remove(headPath);
+        fprintf(stderr, "[wpd] album art %u: reading the first %llu bytes failed:"
+                " %s\n", itemId,
+                static_cast<unsigned long long>(qMin(kHeadBytes, info.size)),
+                qUtf8Printable(failure));
+        return false;
+    }
+
+    // FFmpeg names are UTF-8 on Windows, per the copy-fingerprint lesson in
+    // AGENTS.md: QFile::encodeName() here is GBK on this machine and would ask
+    // the demuxer for a file that is not the one that was just written.
+    QByteArray head = headPath.toUtf8();
+    const QByteArray out = cachePath.toUtf8();
+    int rc = zuuned_extract_art(head.constData(), out.constData(), 400);
+    quint64 readBytes = qMin(kHeadBytes, info.size);
+    if ((rc != 0 || !QFile::exists(cachePath)) && namesPictureAttribute(headPath)
+        && info.size > readBytes && kPictureBytes > readBytes) {
+        // The file says it has a cover and the slice was too short to hold it.
+        // One longer read, judged the same way, is the whole of the escalation;
+        // a second miss is answered exactly as a file with no art is.
+        QFile::remove(cachePath);
+        const quint64 deeper = qMin(kPictureBytes, info.size);
+        fprintf(stderr, "[wpd] album art %u: the header names a cover that does"
+                " not fit in the first %llu bytes; reading %llu\n", itemId,
+                static_cast<unsigned long long>(readBytes),
+                static_cast<unsigned long long>(deeper));
+        if (wpd.download(id, headPath, nullptr, nullptr, &failure, deeper)) {
+            readBytes = deeper;
+            rc = zuuned_extract_art(head.constData(), out.constData(), 400);
+        } else {
+            fprintf(stderr, "[wpd] album art %u: the deeper read failed: %s\n",
+                    itemId, qUtf8Printable(failure));
+            rc = -1;
+        }
+    }
+    QFile::remove(headPath);
+    if (rc != 0 || !QFile::exists(cachePath)) {
+        QFile::remove(cachePath);
+        fprintf(stderr, "[wpd] album art %u: no picture inside the first %llu"
+                " bytes of a %llu-byte object\n", itemId,
+                static_cast<unsigned long long>(readBytes),
+                static_cast<unsigned long long>(info.size));
+        return false;
+    }
+    fprintf(stderr, "[wpd] album art %u: cover came out of the object's own"
+            " first %llu bytes (%llu of %llu)\n", itemId,
+            static_cast<unsigned long long>(readBytes),
+            static_cast<unsigned long long>(QFileInfo(cachePath).size()),
+            static_cast<unsigned long long>(info.size));
+    return true;
+}
+// What one object IS, as distinct from what the player was told it is.  The
+// player states its own properties here and they are the first half of the
+// answer, but a Zune will happily carry an object announced as WMA that came in
+// as an MP3 - a pulled track with an .mp3 name whose first four bytes were the
+// ASF GUID is on record in AGENTS.md - so the second half has to come off the
+// bytes.  512 KiB is enough for both halves: a container header names its codec
+// and rate inside the first few kilobytes, and that slice is the same one the
+// album-cover read above already proved this player will give up willingly.
+QVariantMap DeviceWorker::probeWpdObject(quint32 itemId,
+                                         const QString &scratchPath) {
+    Wpd::Session &wpd = *m_wpd;
+    const QString id = wpdObjectIdFor(itemId);
+    QString why;
+    Wpd::ObjectInfo info;
+    if (!wpd.objectInfo(id, &info, &why)) {
+        QVariantMap out;
+        out[QStringLiteral("ok")] = false;
+        out[QStringLiteral("error")] =
+            UiText::tr("The player would not describe this object.");
+        fprintf(stderr, "[wpd] details %u: the player would not describe the"
+                " object: %s\n", itemId, qUtf8Printable(why));
+        return out;
+    }
+
+    QVariantMap out;
+    out[QStringLiteral("objectId")] = id;
+    out[QStringLiteral("objectName")] = info.name;
+    out[QStringLiteral("size")] = double(info.size);
+    if (info.durationMs)
+        out[QStringLiteral("playerDurationMs")] = double(info.durationMs);
+    if (!info.format.isEmpty())
+        out[QStringLiteral("playerFormat")] = info.format;
+    // What the player's property sheet says, verbatim.  It is not summarised
+    // because the whole point of this sheet is that two sources disagree, and a
+    // reader who cannot see the claim cannot see the disagreement.
+    QVector<QString> properties;
+    if (wpd.describe(id, &properties, &why)) {
+        QVariantList lines;
+        for (const QString &line : std::as_const(properties))
+            lines.append(line);
+        out[QStringLiteral("properties")] = lines;
+    } else {
+        fprintf(stderr, "[wpd] details %u: the property sheet is not readable:"
+                " %s\n", itemId, qUtf8Printable(why));
+    }
+
+    if (info.size == 0) {
+        out[QStringLiteral("ok")] = false;
+        out[QStringLiteral("error")] = UiText::tr("The player calls this object empty.");
+        return out;
+    }
+
+    constexpr quint64 kHeadBytes = 512ULL * 1024;
+    QString failure;
+    const quint64 want = qMin(kHeadBytes, info.size);
+    if (!wpd.download(id, scratchPath, nullptr, nullptr, &failure, want)) {
+        QFile::remove(scratchPath);
+        fprintf(stderr, "[wpd] details %u: reading the first %llu bytes failed:"
+                " %s\n", itemId, static_cast<unsigned long long>(want),
+                qUtf8Printable(failure));
+        out[QStringLiteral("ok")] = false;
+        out[QStringLiteral("error")] =
+            UiText::tr("The player would not give up the first bytes of this object.");
+        return out;
+    }
+    out[QStringLiteral("readBytes")] = double(want);
+    out[QStringLiteral("partial")] = want < info.size;
+
+    char lines[512] = {0};
+    // UTF-8 for the reason recorded in grabWpdAudioArt() just above.
+    const QByteArray head = scratchPath.toUtf8();
+    const int rc = zuuned_describe_audio_file(head.constData(), lines,
+                                              int(sizeof(lines)));
+    QFile::remove(scratchPath);
+    if (rc < 0) {
+        // Not a failure of the read: the bytes arrived and no demuxer recognised
+        // them, which is an answer about the file and the likeliest sign that
+        // this object is not audio at all.
+        fprintf(stderr, "[wpd] details %u: %llu bytes read and nothing in them"
+                " was a recognisable media file\n", itemId,
+                static_cast<unsigned long long>(want));
+        out[QStringLiteral("ok")] = false;
+        out[QStringLiteral("error")] =
+            UiText::tr("These bytes are not an audio file this build can read.");
+        return out;
+    }
+    const QVariantMap described = MediaDescription::parse(QString::fromUtf8(lines));
+    for (auto it = described.constBegin(); it != described.constEnd(); ++it)
+        out[it.key()] = it.value();
+    out[QStringLiteral("ok")] = true;
+    fprintf(stderr, "[wpd] details %u: %s / %s from the first %llu of %llu"
+            " bytes\n", itemId, qUtf8Printable(out.value(QStringLiteral("format")).toString()),
+            qUtf8Printable(out.value(QStringLiteral("codec")).toString()),
+            static_cast<unsigned long long>(want),
+            static_cast<unsigned long long>(info.size));
+    return out;
+}
+
+// What a video on this player looks like is not on the player as a picture.
+// Measured on a Pavo Zune HD: the resource list for one of its video objects
+// answers THUMBNAIL and ALBUM_ART with 0x8007138E, and the vendor operation
+// that stores a video's poster is a ZMDB call this road does not have.  The
+// face is inside the file, though, so the question is the one grabWpdAudioArt()
+// already asks an audio object - and the answer is a decoded frame instead of a
+// tag.
+//
+// A head read again, at a size measured rather than guessed.  Five of this
+// player's own videos, cut to their first 512 KB, all still decoded: an ASF
+// header sits at the front, so the demuxer gets its stream tables and the
+// decoder gets its first keyframe, and each one gave the identical JPEG whether
+// the frame was asked for at 0, 1 or 10 seconds - the seek cannot reach past
+// the slice, and zuuned_extract_frame() then decodes from the start.  An MP4 on
+// the same player answered at 1 second and not at 10, because its sample table
+// can sit past anything a head read reaches, which is why the timestamp asked
+// for here is a small one.  1 MB was measured too: about 600 ms to reach, and
+// it changed no answer, so the deeper slice is kept for the miss instead of
+// being paid by every tile on the page.
+bool DeviceWorker::grabWpdVideoFrame(quint32 itemId, const QString &cachePath) {
+    Wpd::Session &wpd = *m_wpd;
+    const QString id = wpdObjectIdFor(itemId);
+    QString why;
+    Wpd::ObjectInfo info;
+    if (!wpd.objectInfo(id, &info, &why)) {
+        fprintf(stderr, "[wpd] video frame %u: the player would not describe"
+                " the object: %s\n", itemId, qUtf8Printable(why));
+        QFile::remove(cachePath);
+        return false;
+    }
+    if (info.size == 0) {
+        fprintf(stderr, "[wpd] video frame %u: the player calls this object"
+                " empty\n", itemId);
+        return false;
+    }
+
+    constexpr quint64 kHeadBytes = 512ULL * 1024;
+    // One escalation, for the container that keeps its index at the back.  A
+    // slice that decoded nothing at all is the only case that pays for it.
+    constexpr quint64 kDeeperBytes = 2ULL * 1024 * 1024;
+    constexpr double kAtSeconds = 1.0;
+
+    const QString headPath = cachePath + QStringLiteral(".head");
+    QString failure;
+    quint64 readBytes = qMin(kHeadBytes, info.size);
+    if (!wpd.download(id, headPath, nullptr, nullptr, &failure, kHeadBytes)) {
+        QFile::remove(headPath);
+        fprintf(stderr, "[wpd] video frame %u: reading the first %llu bytes"
+                " failed: %s\n", itemId,
+                static_cast<unsigned long long>(readBytes),
+                qUtf8Printable(failure));
+        return false;
+    }
+
+    // UTF-8 bytes, for the reason recorded in grabWpdAudioArt(): FFmpeg names
+    // are UTF-8 on Windows while QFile::encodeName() here answers in the local
+    // code page.
+    const QByteArray head = headPath.toUtf8();
+    const QByteArray out = cachePath.toUtf8();
+    int rc = zuuned_extract_frame(head.constData(), kAtSeconds,
+                                  out.constData(), 400);
+    if ((rc != 0 || !QFile::exists(cachePath)) && info.size > readBytes
+        && kDeeperBytes > readBytes) {
+        QFile::remove(cachePath);
+        const quint64 deeper = qMin(kDeeperBytes, info.size);
+        fprintf(stderr, "[wpd] video frame %u: nothing decoded out of the first"
+                " %llu bytes; reading %llu\n", itemId,
+                static_cast<unsigned long long>(readBytes),
+                static_cast<unsigned long long>(deeper));
+        if (wpd.download(id, headPath, nullptr, nullptr, &failure, deeper)) {
+            readBytes = deeper;
+            rc = zuuned_extract_frame(head.constData(), kAtSeconds,
+                                      out.constData(), 400);
+        } else {
+            fprintf(stderr, "[wpd] video frame %u: the deeper read failed:"
+                    " %s\n", itemId, qUtf8Printable(failure));
+            rc = -1;
+        }
+    }
+    QFile::remove(headPath);
+    if (rc != 0 || !QFile::exists(cachePath)) {
+        QFile::remove(cachePath);
+        fprintf(stderr, "[wpd] video frame %u: no frame decoded out of the"
+                " first %llu bytes of a %llu-byte object\n", itemId,
+                static_cast<unsigned long long>(readBytes),
+                static_cast<unsigned long long>(info.size));
+        return false;
+    }
+    fprintf(stderr, "[wpd] video frame %u: face came off the object's own first"
+            " %llu bytes (%llu of %llu)\n", itemId,
+            static_cast<unsigned long long>(readBytes),
+            static_cast<unsigned long long>(QFileInfo(cachePath).size()),
+            static_cast<unsigned long long>(info.size));
+    return true;
+}
+
 #endif
 
 void DeviceWorker::doGrabPhotoThumb(quint32 itemId, const QString &cachePath) {
@@ -2016,19 +2525,13 @@ void DeviceWorker::doGrabArt(quint32 itemId, const QString &cachePath) {
     }
 #if defined(Q_OS_WIN)
     if (!m_dev && m_wpdShared.load() && m_wpd) {
-        // Asked of the player and answered: an audio object names DEFAULT and
-        // nothing else, so there is no THUMBNAIL or ALBUM_ART stream here at
-        // all - unlike a photo, whose preview is its own bytes two functions up.
-        // An album's picture lives inside the audio file, and reading that tag
-        // would mean pulling the whole song over the cable for one thumbnail,
-        // so the tile shows the cover the local library already holds for the
-        // same record instead (AlbumArt.qml), or nothing.
-        if (!m_wpdArtReported) {
-            m_wpdArtReported = true;
-            fprintf(stderr, "[wpd] no album art over MTP on this player: an"
-                    " audio object offers DEFAULT only\n");
-        }
-        emit artDone(itemId, cachePath, false);
+        // An audio object on this player names DEFAULT and nothing else, so
+        // there is no ALBUM_ART stream to ask for - but the cover is in the
+        // file, and grabWpdAudioArt() reads it out of the first bytes rather
+        // than giving up on the resource list.  If that finds nothing the tile
+        // still shows whatever the local library holds for the same record
+        // (AlbumArt.qml), or nothing.
+        emit artDone(itemId, cachePath, grabWpdAudioArt(itemId, cachePath));
         return;
     }
 #endif
@@ -2037,6 +2540,62 @@ void DeviceWorker::doGrabArt(quint32 itemId, const QString &cachePath) {
         return;
     }
     int rc = zune_grab_thumb(m_dev, itemId, cachePath.toUtf8().constData());
+    emit artDone(itemId, cachePath, rc == 0 && QFile::exists(cachePath));
+}
+
+// What a file actually is does not live in the player's property sheet, it lives
+// in the bytes, so this is a read.  Windows' own MTP driver lets a caller take
+// just the head of an object, which is all a container header needs; the vendor
+// road this app uses on Linux has no such call (libzune offers only a whole
+// zune_extract_track/video/photo), and downloading a 40 MB track to answer
+// "what codec is this" behind a browsing worker is not a trade worth making
+// silently.  So that road says so, and says it exactly once per ask.
+void DeviceWorker::doProbeObject(quint32 itemId, const QString &scratchPath) {
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        emit objectProbed(itemId, probeWpdObject(itemId, scratchPath));
+        return;
+    }
+#endif
+    if (!m_dev) {
+        QVariantMap out;
+        out[QStringLiteral("ok")] = false;
+        out[QStringLiteral("error")] =
+            UiText::tr("The player is no longer connected.");
+        emit objectProbed(itemId, out);
+        return;
+    }
+    QVariantMap out;
+    out[QStringLiteral("ok")] = false;
+    out[QStringLiteral("error")] =
+        UiText::tr("This connection cannot read part of a file, so the codec "
+                   "behind this object stays unknown without downloading all of it.");
+    fprintf(stderr, "[details] object %u: the vendor road has no partial read; "
+            "the codec of this object is not answerable here\n", itemId);
+    emit objectProbed(itemId, out);
+}
+
+void DeviceWorker::doGrabVideoFrame(quint32 itemId, const QString &cachePath) {
+    if (QFile::exists(cachePath)) {
+        emit artDone(itemId, cachePath, true);
+        return;
+    }
+#if defined(Q_OS_WIN)
+    if (!m_dev && m_wpdShared.load() && m_wpd) {
+        // Neither a thumbnail resource nor a picture attribute answers for a
+        // video on this road, so the face comes off the frames themselves.
+        emit artDone(itemId, cachePath, grabWpdVideoFrame(itemId, cachePath));
+        return;
+    }
+#endif
+    if (!m_dev) {
+        emit artDone(itemId, cachePath, false);
+        return;
+    }
+    // The vendor road does keep a representative sample per video object, and
+    // zune_grab_thumb() is how this page has always asked for it.
+    const int rc = zune_grab_thumb(m_dev, itemId,
+                                   cachePath.toUtf8().constData());
     emit artDone(itemId, cachePath, rc == 0 && QFile::exists(cachePath));
 }
 

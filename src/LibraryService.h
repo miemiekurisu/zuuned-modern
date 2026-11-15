@@ -114,6 +114,11 @@ public:
     QVariantMap albumArtworkStatus() const { return m_albumArtworkStatus; }
     QVariantMap artistArtworkStatus() const { return m_artistArtworkStatus; }
     Q_INVOKABLE void retryArtwork(const QString &kind, const QVariantMap &context);
+    // What one library track really is on disk: container, codec, rate, depth.
+    // The library row answers the name questions and the file answers the
+    // format questions, because those are two different measurements and the
+    // UI is asking about the file.  Answers once through trackDetailsReady.
+    Q_INVOKABLE void requestTrackDetails(double libraryId);
     QVariantMap artistImages() const { return m_artistImages; }
     quint64 localTrackIdentityRevision() const { return m_localTrackIdentityRevision; }
     bool scanning() const { return m_scanning; }
@@ -389,6 +394,10 @@ signals:
                            const QString &error);
     void customizeIdentityReady(const QString &requestId,
                                 const QVariantList &results, const QString &error);
+    // The answer to requestTrackDetails(), and the only place a sheet learns
+    // that a probe failed.  Carries ok/error so a row that vanished or a file
+    // that moved reports that instead of hanging a dialog open.
+    void trackDetailsReady(const QVariantMap &details);
     void libraryChanged();
     void playlistsChanged();
     void foldersChanged();

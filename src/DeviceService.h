@@ -263,6 +263,14 @@ public:
     Q_INVOKABLE void requestArt(quint32 itemId);
     // Request a photo thumbnail; lands in artPaths like album art.
     Q_INVOKABLE void requestPhotoThumb(quint32 itemId);
+    // Request the face of a device video.  It lands in artPaths under the same
+    // itemId, because to the browse page a decoded frame and a fetched poster
+    // are one thing: whatever the card wears.
+    Q_INVOKABLE void requestVideoPreview(quint32 itemId);
+    // Ask what one object actually is: container, codec, rate, plus whatever
+    // the player itself claims about it.  Answers through objectDetailsReady,
+    // always, so a sheet cannot sit open waiting for a reply that never comes.
+    Q_INVOKABLE void requestObjectDetails(quint32 itemId);
     // Delete objects from the device (tracks by itemId); models update
     // locally on completion — full truth returns at next breach.
     Q_INVOKABLE void purgeItems(const QVariantList &itemIds);
@@ -341,6 +349,10 @@ public:
     // sync mode and into its restart/re-index cycle — leaving the
     // session open parks its screen at 100% forever.
     void finalizeAndRelease();
+    // A player on Windows' own MTP driver is the measured exception to that
+    // paragraph: nothing of ours holds its interface and no vendor re-index is
+    // waiting on this session, so there it keeps the connection.  See
+    // onWindowsMtpDriver().
 
     bool awaitingDisconnect() const { return m_awaitingDisconnect; }
     void setAwaitingDisconnect(bool v);
@@ -378,6 +390,10 @@ signals:
     // (mac disconnectDevice: forceStop + clearQueue + finalize).
     void ejectStarted();
     void artChanged();
+    // The answer to requestObjectDetails().  itemId comes back with it because
+    // a sheet can be moved to another row while its first question is still in
+    // flight, and an answer for the old row must be recognisable as one.
+    void objectDetailsReady(quint32 itemId, const QVariantMap &details);
 
     // Internal → worker (queued). Not for QML.
     void workerFinalize();
@@ -407,6 +423,8 @@ signals:
     void videoSaved(const QString &filename, bool ok);
     void renameFinished(quint32 itemId, const QString &newName, bool ok);
     void workerGrabPhotoThumb(quint32 itemId, const QString &cachePath);
+    void workerGrabVideoFrame(quint32 itemId, const QString &cachePath);
+    void workerProbeObject(quint32 itemId, const QString &scratchPath);
     void udevRuleChanged();
     void udevRuleInstalled(bool ok, const QString &message);
     void usbAccessChanged();
@@ -430,6 +448,17 @@ private:
     void onZuneBlocked(const QString &detail);
     void onZuneUnblocked();
     void clearDeviceState();
+    // Which driver owns the player this session answered.  DeviceWorker::breachWpd()
+    // reports "wpd" for a Zune left on Windows' own MTP driver; opening one over
+    // WinUSB or libusb reports "libzune".  On the MTP road a file sits in its
+    // folder the moment its transfer closes and no session of ours has to be
+    // handed back for the player to list it, which is the one difference allowed
+    // to skip the finalize -> sever -> re-index chain.  Asks m_backend directly
+    // because deviceBackend() answers empty once m_connected is false, and that
+    // would quietly route a WPD player down the other road.
+    bool onWindowsMtpDriver() const {
+        return m_connected && m_backend == QLatin1String("wpd");
+    }
     void requestImportedAlbumArt(quint32 itemId, const QString &artist,
                                  const QString &album);
 
@@ -483,6 +512,9 @@ private:
     QSet<quint32> m_photoFullPending;
     QVariantMap m_artPaths;
     QSet<quint32> m_artRequested;
+    // Objects whose codec question is already in flight, so a row that repaints
+    // cannot start the same read twice.
+    QSet<quint32> m_detailsRequested;
     QString m_artCacheDir;
     QVariantMap m_onDeviceKeys;
     MusicIdentity::Index m_deviceMusicIndex;

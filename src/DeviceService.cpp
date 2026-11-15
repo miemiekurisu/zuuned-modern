@@ -45,6 +45,15 @@ DeviceService::DeviceService(QObject *parent, bool watchDevice) : QObject(parent
     connect(this, &DeviceService::workerSever, m_worker, &DeviceWorker::doSever);
     connect(this, &DeviceService::workerGrabArt, m_worker, &DeviceWorker::doGrabArt);
     connect(this, &DeviceService::workerGrabPhotoThumb, m_worker, &DeviceWorker::doGrabPhotoThumb);
+    connect(this, &DeviceService::workerGrabVideoFrame, m_worker, &DeviceWorker::doGrabVideoFrame);
+    connect(this, &DeviceService::workerProbeObject, m_worker, &DeviceWorker::doProbeObject);
+    // Every probe answers, including the ones that find nothing, because the
+    // sheet that asked is the only thing that can stop showing "reading".
+    connect(m_worker, &DeviceWorker::objectProbed, this,
+            [this](quint32 itemId, const QVariantMap &details) {
+        m_detailsRequested.remove(itemId);
+        emit objectDetailsReady(itemId, details);
+    });
     connect(this, &DeviceService::workerReadSpokenMedia, m_worker, &DeviceWorker::doReadSpokenMedia);
     connect(this, &DeviceService::workerPurgeSpokenItems, m_worker, &DeviceWorker::doPurgeSpokenItems);
     connect(m_worker, &DeviceWorker::spokenPurgeProgress, this,
@@ -380,6 +389,7 @@ void DeviceService::clearDeviceState() {
     m_photoAlbumsList.clear();
     m_photoFullPending.clear();
     m_artRequested.clear();
+    m_detailsRequested.clear();
     m_artAliases.clear();
     m_importedAlbumArtTargets.clear();
     m_trackToAlbumArt.clear();
@@ -565,6 +575,14 @@ void DeviceService::onSeverDone() {
 void DeviceService::setAwaitingDisconnect(bool v) {
     if (m_awaitingDisconnect == v)
         return;
+    // The flag means "changes are sitting on the player that only its own restart
+    // will apply", and it parks the panel on an eject button until the user
+    // obliges.  On Windows' own MTP driver nothing is sitting there: the worker
+    // says so at the end of every sync, "MTP has no vendor re-index to wait for",
+    // and the interface never left the driver that owns it.  The unplug this asks
+    // for would apply nothing that is not already on the player.
+    if (v && onWindowsMtpDriver())
+        return;
     m_awaitingDisconnect = v;
     if (v)
         m_status = UiText::tr("Sync complete — eject to apply changes");
@@ -627,6 +645,21 @@ void DeviceService::eject() {
 void DeviceService::finalizeAndRelease() {
     if (!m_connected || m_ejecting)
         return;
+    // Two premises sit under the chain below: this session holds the player's
+    // interface, and closing it is what starts the library rebuild.  Neither is
+    // true on Windows' own MTP driver, and the session log of every sync here
+    // measures what assuming them costs - sever, then three
+    // `claim_interface failed: Access denied`, then `device not found`, then the
+    // ladder's seconds of "re-indexing" before breachWpd() reopened the very
+    // session this had just closed.  So keep the connection.  The view is not
+    // left behind either: SyncEngine queues refreshStorage() ahead of this call,
+    // and every track that went out is already a row through noteSyncedTrack().
+    if (onWindowsMtpDriver()) {
+        fprintf(stderr, "[device] sync done over Windows' MTP driver - keeping the "
+                        "session open, nothing to finalize and no re-index to "
+                        "wait for\n");
+        return;
+    }
     // Fresh sync, fresh reconnect budget.
     m_reprobeTimer.stop();
     m_reprobeAttempt = 0;
@@ -1398,6 +1431,40 @@ void DeviceService::requestPhotoThumb(quint32 itemId) {
     m_artRequested.insert(itemId);
     const QString path = m_artCacheDir + QStringLiteral("/photo_%1.jpg").arg(itemId);
     emit workerGrabPhotoThumb(itemId, path);
+}
+
+void DeviceService::requestVideoPreview(quint32 itemId) {
+    if (itemId == 0 || !m_connected || m_artRequested.contains(itemId))
+        return;
+    m_artRequested.insert(itemId);
+    if (m_artPaths.contains(QString::number(itemId)))
+        return; // the card already has a face
+    const QString path = m_artCacheDir + QStringLiteral("/video_%1.jpg").arg(itemId);
+    emit workerGrabVideoFrame(itemId, path);
+}
+
+void DeviceService::requestObjectDetails(quint32 itemId) {
+    // An ask already in flight is not a second ask; it has an answer coming.
+    if (m_detailsRequested.contains(itemId))
+        return;
+    if (itemId == 0 || !m_connected) {
+        // Refusing silently here would leave the sheet saying "reading" for a
+        // question that was never asked, so this answers on the spot.
+        QVariantMap refused;
+        refused[QStringLiteral("ok")] = false;
+        refused[QStringLiteral("error")] =
+            UiText::tr("The player is no longer connected.");
+        emit objectDetailsReady(itemId, refused);
+        return;
+    }
+    m_detailsRequested.insert(itemId);
+    // The scratch file lives with the art cache because that folder is the one
+    // place this connection owns, is on a writable local disk, and is already
+    // out of every watch folder, so a head read that outlives a crash cannot
+    // turn up as a phantom track.  The worker deletes it on every path.
+    const QString scratch =
+        m_artCacheDir + QStringLiteral("/details_%1.head").arg(itemId);
+    emit workerProbeObject(itemId, scratch);
 }
 
 void DeviceService::onArtDone(quint32 itemId, const QString &path, bool ok) {

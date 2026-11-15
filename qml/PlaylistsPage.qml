@@ -319,12 +319,17 @@ Item {
                 saveable: true
                 deletable: true
                 onSaveRequested: root.saveMember(modelData)
+                onDetailsRequested: plDetailsSheet.openFor(root.memberTrack(modelData))
                 onDeleteRequested: {
                     if (DeviceService.connected) DeviceService.purgeItems([modelData])
                 }
             }
         }
     }
+
+    // The member rows of an open device playlist ask the same question as any
+    // other device row, and the player answers it the same way.
+    TrackDetailsSheet { id: plDetailsSheet }
 
     // ── Context menu ──
     ZuneMenu {

@@ -79,6 +79,40 @@ bool makePipe(int fds[2], bool nonBlock)
     return ::pipe2(fds, O_CLOEXEC | (nonBlock ? O_NONBLOCK : 0)) == 0;
 #endif
 }
+
+#if defined(Q_OS_WIN)
+// Take the descriptor the stderr stream actually writes through, plus a copy of
+// it for stop() to restore.  That descriptor is 2 nearly always, which is why
+// this returns a number instead of the code simply using STDERR_FILENO.  A
+// GUI-subsystem launch from Explorer is the exception this tree used to fail:
+// with no standard handle the CRT gives its stderr stream no descriptor at all
+// (measured here: fileno(stderr) is -2), so there is no slot to stand in for and
+// F_DUPFD answers EBADF - which is where start() used to give up, with the log
+// file already created, leaving a 0-byte file for the one launch that needs a
+// log (a double-click, the launch a bug report comes from) and writing the
+// warning about it to the stream that was missing.  Reopening stderr on the null
+// device is the step that matters, because a stream the CRT marked not-open drops
+// every fprintf however the descriptor behind it is dressed; a first attempt that
+// only created descriptor 2 proved it by capturing one line - this session's own
+// heartbeat, written straight to the file - and a standalone probe proved the
+// rest: freopen_s succeeds, and parks the stream on whatever descriptor it opened
+// NUL with (measured: 7), not on 2.  So the capture goes behind the number the
+// stream uses, and descriptor 2 stays absent, exactly as it arrived.
+bool stealStderr(int &descriptor, int &restore)
+{
+    descriptor = STDERR_FILENO;
+    restore = ::fcntl(STDERR_FILENO, F_DUPFD_CLOEXEC, 3);
+    if (restore >= 0) return true;
+    FILE *stream = nullptr;
+    if (::freopen_s(&stream, "NUL", "wb", stderr) != 0 || !stream) return false;
+    // freopen_s replaced the stream, so undo the buffering that
+    // zuuned_win_runtime_init() removed for exactly this reason.
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+    descriptor = ::_fileno(stderr);
+    restore = descriptor >= 0 ? ::fcntl(descriptor, F_DUPFD_CLOEXEC, 3) : -1;
+    return descriptor >= 0 && restore >= 0;
+}
+#endif
 }
 
 struct SessionLog::Impl {
@@ -90,6 +124,9 @@ struct SessionLog::Impl {
     Limits limits;
     QString folder, failure, session, filename;
     int directoryFd = -1, fileFd = -1, originalStderr = -1, consoleFd = -1;
+    // The descriptor the stderr stream writes through; 2 except on a
+    // console-less Windows launch, where the stream owns another one.
+    int stderrFd = STDERR_FILENO;
     int captureRead = -1, controlRead = -1, controlWrite = -1;
     qint64 fileSize = 0;
     int part = 0;
@@ -357,7 +394,16 @@ bool SessionLog::start(const QString &directory, Limits limits)
     ::fcntl(d->captureRead, F_SETFL, O_NONBLOCK);
     d->controlRead = control[0]; d->controlWrite = control[1];
     std::fflush(stderr);
+#if defined(Q_OS_WIN)
+    if (!stealStderr(d->stderrFd, d->originalStderr)) {
+        d->failure = systemError(QStringLiteral("Could not reach the error stream"));
+        closeFd(capture[1]);
+        return failed();
+    }
+#else
+    d->stderrFd = STDERR_FILENO;
     d->originalStderr = ::fcntl(STDERR_FILENO, F_DUPFD_CLOEXEC, 3);
+#endif
     // Reopening avoids changing O_NONBLOCK on the caller's shared descriptor.
     if (limits.mirrorConsole) {
 #if defined(Q_OS_WIN)
@@ -380,7 +426,7 @@ bool SessionLog::start(const QString &directory, Limits limits)
         d->consoleFd = ::open("/proc/self/fd/2", O_WRONLY | O_NONBLOCK | O_CLOEXEC | O_APPEND);
 #endif
     }
-    if (d->originalStderr < 0 || ::dup2(capture[1], STDERR_FILENO) < 0) {
+    if (d->originalStderr < 0 || ::dup2(capture[1], d->stderrFd) < 0) {
         d->failure = systemError(QStringLiteral("Could not redirect diagnostic output"));
         closeFd(capture[1]);
         return failed();
@@ -393,10 +439,21 @@ bool SessionLog::start(const QString &directory, Limits limits)
     try {
         d->reader = std::thread([state = d.get()] { state->loop(); });
     } catch (...) {
-        ::dup2(d->originalStderr, STDERR_FILENO);
+        ::dup2(d->originalStderr, d->stderrFd);
         d->running = false;
         d->failure = QStringLiteral("Could not start diagnostic reader thread");
         return failed();
+    }
+    // Say so when the capture had to rescue the stream.  A launch from a
+    // console and a launch from Explorer are otherwise indistinguishable in a
+    // session log, and they are not the same case: only the second one leaves
+    // the error stream with no descriptor at all, which is the case that used
+    // to log nothing.  One line names which launch produced this file, and it
+    // is the line the Windows usability gate reads to prove it exercised that
+    // path rather than the ordinary one.
+    if (d->stderrFd != STDERR_FILENO) {
+        std::fprintf(stderr, "[diagnostics] no console: stderr was reopened on the "
+            "null device as descriptor %d for capture\n", d->stderrFd);
     }
     d->previousHandler = qInstallMessageHandler(Impl::qtMessage);
     return true;
@@ -411,9 +468,10 @@ void SessionLog::stop()
     }
     qInstallMessageHandler(d->previousHandler);
     std::fflush(stderr);
-    // Restore fd2 before asking the reader to stop: concurrent late writers
-    // continue to the original destination instead of receiving SIGPIPE.
-    ::dup2(d->originalStderr, STDERR_FILENO);
+    // Restore the stream's own descriptor before asking the reader to stop:
+    // concurrent late writers continue to the original destination instead of
+    // receiving SIGPIPE.
+    ::dup2(d->originalStderr, d->stderrFd);
     {
         std::lock_guard guard(d->mutex);
         d->stopping = true;

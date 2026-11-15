@@ -15,6 +15,11 @@ class LibraryService;
 // port. Recomputes ONCE per actual library change (300ms throttle), off
 // the UI thread; QML only ever reads the published lists.
 //
+// ALL (2026-11-14): the landing pivot is every file in the library,
+// flat, no gate at all — before it a file whose lookup never resolved
+// existed on no shelf a user would think to open, which read as "the
+// videos page shows nothing".
+//
 // FOLDER-TRUTH: every TV episode belongs to a series the user defined
 // with a directory — series tiles show immediately, not only after a
 // TMDB match lands a poster (unmatched tiles get frame-grab faces via
@@ -39,6 +44,8 @@ class VideoBrowserModel : public QObject {
     // without the list — and its scroll/stills — resetting.
     Q_PROPERTY(QVariantMap rowOverrides READ rowOverrides
                    NOTIFY rowOverridesChanged)
+    // Every local file, one flat row each, sorted by display title.
+    Q_PROPERTY(QVariantList allVideos READ allVideos NOTIFY groupsChanged)
     Q_PROPERTY(QVariantList movieGroups READ movieGroups NOTIFY groupsChanged)
     Q_PROPERTY(QVariantList seriesList READ seriesList NOTIFY groupsChanged)
     Q_PROPERTY(QVariantList animeList READ animeList NOTIFY groupsChanged)
@@ -66,6 +73,7 @@ public:
     void setDeviceConnected(bool c);
 
     QVariantMap rowOverrides() const { return m_rowOverrides; }
+    QVariantList allVideos() const { return m_allVideos; }
     QVariantList movieGroups() const { return m_movieGroups; }
     QVariantList seriesList() const { return m_seriesList; }
     QVariantList animeList() const { return m_animeList; }
@@ -114,6 +122,7 @@ private:
     QTimer m_throttle;
 
     QVariantMap m_rowOverrides;   // id-string → fresh videoMap
+    QVariantList m_allVideos;     // the All wall — every row, flat
     QVariantList m_movieGroups, m_seriesList, m_animeList;
     QVariantList m_musicVideos, m_others;
     QVariantList m_unmatchedSeriesGroups, m_unmatchedLoose;

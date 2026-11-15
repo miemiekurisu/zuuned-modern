@@ -76,6 +76,7 @@ $sources = (
     "qml/SyncCompleteSheet.qml",
     "qml/TmdbLookupSheet.qml",
     "qml/ToastHost.qml",
+    "qml/TrackDetailsSheet.qml",
     "qml/TrackListRow.qml",
     "qml/VideoMovieDetail.qml",
     "qml/VideoPlayerView.qml",

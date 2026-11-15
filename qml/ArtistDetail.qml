@@ -30,6 +30,7 @@ Item {
     signal albumContextRequested(var album)
     signal contextRequested()
     signal trackEditRequested(var track)   // UX-2 Edit Info bubble-up
+    signal trackDetailsRequested(var track)
     property bool deviceSource: false
 
     readonly property bool narrow: width < 700
@@ -413,6 +414,7 @@ Item {
                             modelData.itemId, modelData.title,
                             modelData.artist, modelData.album)
                         onEditRequested: page.trackEditRequested(modelData)
+                        onDetailsRequested: page.trackDetailsRequested(modelData)
                         onAlbumTapped: page.albumSelected(MusicIdentity.fromTrack(modelData))
                     }
                 }

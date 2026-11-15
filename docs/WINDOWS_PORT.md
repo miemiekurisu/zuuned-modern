@@ -3050,3 +3050,438 @@ deletion over MTP, playlists, rename, the video poster (`qml/DeviceVideosPage.qm
 uses `requestArt` and stays empty by choice), every model but the ones already named and
 anything anyone has listened to all stay exactly as open as they were.  The Linux line is
 untouched by construction and unverified on this machine.
+
+
+## 2026-11-13 (still later) - the cover was inside the file the whole time: `WM/Picture`
+
+The report came in as a suspicion and the suspicion was right: **Windows Media Player shows
+the cover, some other players do not, and that is the container deciding, not the player
+being broken.**  A `.wma` carries its sleeve as the ASF attribute `WM/Picture` - a UTF-16
+attribute name in the file-level header, whose value is a picture-type byte, an image length,
+a mime type, a description and then the image - and *not* as an ID3 `APIC` frame.  A reader
+that only knows ID3 shows nothing and is behaving correctly; Windows Media Player and the
+Zune's own UI read the attribute.  One file, two reputations, and the difference is which
+tag the program was written against.
+
+**The encoder this repository writes itself was one of the things dropping the cover.**  A
+WMA Lossless track whose art stayed behind in the source arrives on the player as a tile with
+no picture, and gives no picture back when somebody pulls it off again - which is what it was
+doing: the encoder wrote `Title`, `Author`, `AlbumTitle`, `Genre`, `Composer`, `TrackNumber`,
+`Year` and `PartOfSet`, and no `WM/Picture` anywhere in the first 400 KB of a file whose FLAC
+parent had one.  No other layer can do this leg.  FFmpeg's ASF muxer maps an attached picture
+to an ordinary video stream with `attached_pic=0` and writes no `WM/Picture` at all, so
+`addPictureTag()` in `transcode/wma_lossless_enc.cpp` writes it through the same
+`IWMHeaderInfo3` the text tags already go by: type `3` (`WMPI_TypeFrontCover`, the value an
+ID3 APIC frame numbers 3), the mime the source actually carries - JPEG, PNG, BMP, GIF, TIFF,
+and anything else stays behind rather than going in under a mime type that would be a lie -
+and an 8 MB ceiling.
+
+**The trap in the middle of that does not return an error, it crashes.**  The bytes an ASF
+file *stores* are a flat blob, `ASF_FLAT_PICTURE` in `mfidl.h`; what `AddAttribute` wants for
+this one name is the in-memory `WM_PICTURE` from `wmsdkidl.h`, whose first three fields are
+pointers on x64 under `#pragma pack(1)`.  Handing the flat blob to the SDK does not fail -
+wmvcore reads the first bytes of a JPEG as a `WCHAR*` and takes the process down with
+`0xc0000005` inside `wmvcore.dll`.  Measured while finding it: the same call under a different
+attribute name answers `S_OK` with exactly those bytes, so the overload, the IID and
+`WMT_TYPE_BINARY` were never the question, only the interpretation of that one name's value.
+
+**The round trip, judged by digests rather than by optimism.**  A generated 118,577-byte
+cover went into a 60-second FLAC, the encoder produced a 7,658,239-byte `.wma` that names
+`WM/Picture` at byte 257, and the *same* 17,492-byte JPEG came out of four different reads:
+
+```
+the source FLAC                 -> 17,492 bytes, SHA1 34E1D1A2...67DF
+the whole encoded .wma          -> 17,492 bytes, SHA1 34E1D1A2...67DF
+a 512 KB front slice read locally -> 17,492 bytes, SHA1 34E1D1A2...67DF
+a 512 KB front slice read back off the player -> same digest
+```
+
+The last line is the wire: `wpdtool put` wrote the file to the player, `wpdtool head` read its
+first half-megabyte back, and the extractor named the identical picture.  The scratch track and
+the scratch album folder were then deleted through the same tool - both `rm` calls answered
+`VERDICT=ok` and a following walk showed no leftover - which is also the first deletion this
+sitting performed over MTP, done by hand and by tool: the application's own delete control is
+still not exercised by any harness here.
+
+**An audio object has no art *stream*, and that was never a reason to stop.**  The player
+answers `GetSupportedResources` for a track with `DEFAULT` only, and `THUMBNAIL` /
+`ALBUM_ART` with `0x8007138E`; the previous section drew the right conclusion about photos and
+the wrong one about albums, concluding that a cover would have to mean downloading a whole
+song.  It does not.  `DeviceWorker::grabWpdAudioArt()` asks for the **front** of the object
+and reads the tag out of it: measured on files pulled off this player the ASF header carrying
+a picture runs 11,184 to 24,597 bytes and the largest cover inside one is 240,462 bytes, and
+one of those files truncated to 32 KB still produced its identical cover through the same
+extractor - so the rest of the file is audio nobody needs for a tile.  The cap is 512 KB.
+`Wpd::Session::download()` grew an explicit `limitBytes` for it, which is not a buffer size
+and not a progress hint: WPD has no `GetPartialObject`, so a cap means "read less and judge
+the transfer by what was asked for", and the short-transfer check that used to call that a
+failure now stands aside only when a cap was asked for.  `wpdtool head <object> <bytes>
+<file>` is that call as one command.
+
+**What it costs, measured on the player rather than argued.**  Six timed 524,288-byte reads
+came back in 580, 582, 590, 598, 602 and 617 ms - about 0.6 s per tile, of objects the player
+calls 28 to 35 MB, so between a fifty-fourth and a sixty-seventh of the file.  Inside the real
+application, in one instrumented launch against the attached player:
+
+```
+[wpd] library: 585 tracks, 68 albums, 40 artists, 7 videos, 5 photos, ...
+[wpd] album art <n>: cover came out of the object's own first 524288 bytes (12517 of 28223720)
+[wpd] album art <n>: cover came out of the object's own first 524288 bytes (31587 of 28316881)
+[wpd] album art <n>: no picture inside the first 524288 bytes of a 30018232-byte object
+```
+
+Forty-one head reads, three covers (12,517 and 31,587-byte JPEGs), thirty-eight misses, and no
+`.head` scratch file left in the profile afterwards - the bytes go to a scratch name beside the
+cache entry and only the extracted JPEG is allowed to keep the cache path.  **Read the
+thirty-eight as the answer, not as a failure**: most of this library has no embedded cover, and
+the picture those rows show on the player's own screen comes from the player's internal
+database, which is exactly the thing WPD refuses with `0x8007138E`.  A blank tile on this line
+now means the file has no sleeve.  The one-line refusal that used to answer every request is
+gone from the log, and the tile still falls back to whatever this machine holds locally
+(`qml/components/AlbumArt.qml`, `local: !root.deviceSource` unchanged).
+
+**A cover can be bigger than the cap, and that is a different question with a different
+answer.**  This encoder will carry a picture up to 8 MB, so a slice can legitimately name the
+attribute and not hold it.  Reproduced without a player: a 679,188-byte cover inside a
+778,304-byte `.wma` - the first 512 KB name `WM/Picture` and the extractor produces nothing at
+all (exit 1, no file left behind), while the whole file gives up the identical 16,799-byte
+extraction.  So `namesPictureAttribute()` asks the slice the one question that separates "no
+cover" from "cut short", and one deeper read of at most 8 MB follows a miss; a second miss is
+answered exactly as a file with no art is.  The name is UTF-16 and ASF is byte-aligned rather
+than word-aligned - a file pulled off this player carries `Title` at an odd offset - so the
+scan tries both parities, because a single-parity search false-negatives on real files.  Three
+gate checks pin the fixture sizes and that precondition, so the deeper read is not justified by
+one song on one person's player.
+
+**`audio-wma` still loses the picture, and that gap is now measured rather than assumed.**
+`transcodetool audio-wma` is FFmpeg's ASF muxer, and for the same source that probes
+`video=1920x1920` its output names no `WM/Picture` anywhere in its first 256 KB and
+`transcodetool art` finds nothing in it.  A cover therefore survives a FLAC to WMA Lossless
+sync and not a WMA Standard one; closing it means the same `IWMHeaderInfo3` leg on that path,
+and it is recorded here as deliberately not done in this sitting.
+
+**Counters.**  A 350-step `--clean-first` rebuild and then a relink after the last helper moved
+into an anonymous namespace; `tests\\win-usability` **launches=18 checks=147 failures=0
+skips=0 killed=0 pid-scan-fallbacks=3** - three checks more than the section above, all three
+in the `encode` phase, and the paint checks passed this run, so on the caveat the last section
+records this is one of the trustworthy counters - and `tests\\win-compat`, which photographs
+nothing, **204 checks / 0 failures / 0 skips** on the same binaries.
+
+**What this sitting does not claim.**  Whether the Zune's own screen paints a cover that this
+encoder wrote is the user's eye, not a measurement made here; the three hits and thirty-eight
+misses are one library on one player, and no file was pulled off the player *because* a tile
+looked wrong, only because a rule had to be sized.  Device-side playback and anything anyone
+has listened to, the spoken categories, photo and video **add**, deletion through the
+application's control, playlists, rename, WMA Standard art, the video poster and every model
+but the ones already named stay open.  The Linux line is untouched by construction and
+unverified on this machine.
+
+## 2026-11-14 - a video over MTP, and the container that decides whether the player counts it
+
+The WPD line answered every video with a refusal written from reasoning: a Zune files a
+video by vendor metadata (metagenre, the series triple, the poster as a representative
+sample), MTP has no such call, therefore MTP cannot add a video.  The reasoning about the
+metadata holds.  The conclusion did not.
+
+**The folder is the library.**  Listing the volume through Windows' own driver shows one
+child of the storage named for the category, and the three short clips the player recorded
+itself sit inside it, each read back as content-type VIDEO carrying a duration.  So the
+question was never whether MTP can forge a Zune video object; it was whether the player
+files what MTP hands it into that folder's library.  Two uploads of one source answered
+that, and they are the only two objects this sitting added to the player.
+
+**H.264 in MP4 does not arrive.**  A 20,575,375-byte H.264/AAC file at 480x272 - exactly
+what profile 2, the automatic choice for a Pavo, produces - was sent with
+`WPD_CONTENT_TYPE_VIDEO` and the MP4 format announced, on the first try, shape label
+`video/format/size/file name/media`.  Read back, the player kept none of it:
+content-type UNSPECIFIED, format UNSPECIFIED, and all forty-seven probed properties empty,
+including duration.  In the listing it reads as `unknown` with no duration beside three
+`video` entries that have one.  Its object id sits in a different range from the player's
+own videos, in the same range as the volume's own metadata file.  The bytes are not the
+problem: it came back at the same size with the same SHA-1.  That is a file on the volume,
+not a video, and a sync that reported it as a success would have been exactly the lie the
+refusal was written to avoid.
+
+**Windows Media in ASF does arrive.**  The same source through profile 0 - `wmv2` plus
+`wmav2` in ASF at 320x240, 800 kbps and 128 kbps, 7,341,945 bytes - was accepted the same
+way and came back differently: content-type VIDEO, an ASF format, a duration of 60,325 ms,
+and an object id in the same range as the three clips the player made itself.  It pulled
+back byte for byte (same size, same SHA-1) and the first four bytes of the copy the player
+served are the ASF GUID, so the library entry is the file rather than a stub beside it.
+Whether that duration is the player reading the ASF or keeping the property it was handed
+is not settled here, and it does not matter to the sender, which now announces the duration
+it probed from the finished file.
+
+**Two properties are not worth announcing.**  The player reports width 0 and height
+7,209,057 for the video that arrived and width 0, height 6 for one of its own, so a client
+cannot improve those numbers and does not try; `sendVideoWpd()` announces title, name,
+duration and nothing else.  The description a sync carries has no MTP property this player
+reads, which is logged rather than dropped silently.
+
+**What the code changed.**  `DeviceWorker::sendVideoWpd()` mirrors `sendTrackWpd()`: resolve
+the storage, resolve the category folder through `ensureWpdFolder()` (case-insensitive, and
+it creates the folder only when the listing says it is missing), take the name's readable
+stem but the suffix from the file actually in hand because the announced format comes from
+that suffix, probe the finished file's duration with `zuuned_probe_video_info()`, upload.
+The refusal in `doSendVideo()` is gone.  `SyncEngine::resolveVideoProfile()` now answers
+profile 0 before it reads the setting whenever the connection came up on this backend: an
+explicit profile the player cannot file would be a user choosing the silent failure, and the
+log says when it overrides one.  `wpdtool` gained `props <obj>`, which asks 47 property keys
+one at a time because a long list lets one unsupported key take the whole answer with it,
+and `head <obj> <bytes> <file>`, which is how a cover's first bytes got read last sitting.
+
+**What this does not close.**  Whether the player's own screen lists and plays that video is
+the user's eye and had not been looked at when this was written; nothing here claims it.
+What MTP still cannot do is exactly what the refusal got right: no metagenre, no
+series/season/episode, no poster, so a video sent this way arrives with no category and no
+picture, and `audio-wma` art from the section above is still unwritten.  The send path is
+measured through the same `upload()` the app calls, but this sitting did not drive a video
+sync from the application's own controls, so that remains open beside deletion of a video,
+the spoken categories, photo **add**, playlists, rename, and every model but the ones already
+named.  One more suspicion worth writing down rather than acting on: if this player files
+what it can decode, then profile 2 as the automatic video shape for a Pavo is questionable on
+the WinUSB line too, where no video has ever been sent.
+
+**Counters.**  A 350-step `--clean-first` rebuild carrying this change, no new warning out of
+`DeviceWorker.cpp` or `SyncEngine.cpp`; `tests\\win-compat` **204 checks / 0 failures / 0
+skips** and `tests\\win-usability` **launches=18 checks=147 failures=0 skips=0 killed=0** with
+`OVERALL=ok`, both unchanged from the section above, which is the point - the album-cover work
+is what those counters were set on and nothing in it moved.  The usability run logged
+`claim_interface failed: Access denied` for its own launches with the player attached, which
+is this backend behaving as designed: libusb is not allowed the interface Windows is using.
+The paragraph above leaves "photo and video **add**" open; this one closes the video half of
+that sentence and the photo half stays open.  The Linux line is untouched by construction and
+unverified on this machine.
+
+## 2026-11-14 - the session log a double-click never wrote
+
+Chasing what the application had recorded about the video test turned up three
+`zuuned-*.log` files of **0 bytes** in the real profile beside the several kilobytes this
+sitting was writing.  Nothing was wrong with the log writer.  What was empty was every
+launch a bug report would ever come from, and the support report is the thing that needs
+the log: it carries the session log and prints `No saved session logs are available.` when
+it has nothing to carry (`src/diagnostics/SupportReport.cpp`).
+
+`zuuned.exe` is a GUI-subsystem image, so a launch from Explorer arrives with no standard
+handle at all, and the diagnostics layer reads the *error stream* rather than the log file:
+the Qt message handler forwards to `stderr`, and libzune, libusb, mpv and the transcode C
+layer write to it directly.  Measured with a standalone probe built the same way
+(`/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup`) and launched the way Explorer launches it,
+`GetStdHandle(STD_ERROR_HANDLE)` is **NULL**, the `stderr` `FILE *` is non-null, and
+**`_fileno(stderr)` is -2**: the stream exists and owns no descriptor.  So the
+`fcntl(2, F_DUPFD_CLOEXEC, 3)` that the capture opens with answered `EBADF`, `start()`
+reported that it could not redirect diagnostic output, and sent that report to the stream
+that was not there.  The log file had already been created, which is the whole signature.  A
+0-byte log is a console-less launch, and no launch can make one any more.
+
+Two wrong fixes are the part worth keeping.  Creating descriptor 2, with `_open("NUL", ...)`,
+left the log holding exactly **one** line - the `[diagnostics] session started` heartbeat the
+writer puts into the file itself.  Everything else travels through the stream, and a stream
+the CRT has marked not-open drops every `fprintf` however the descriptor behind it is
+dressed.  Adding `freopen_s(stderr, "NUL", "wb")` and then putting the capture on 2 produced
+**0 bytes**, because `freopen_s` parks the stream on the descriptor it opened NUL with
+(measured, 7) and not on 2.  The same probe retires a belief this tree carried: `_dup2`
+against a closed slot returns 0, so the UCRT will happily create a descriptor that does not
+exist.  The thing that never worked was the stream, not the call.
+
+`stealStderr()` in `src/diagnostics/SessionLog.cpp` therefore asks the stream which
+descriptor it uses instead of assuming 2.  The ordinary `F_DUPFD_CLOEXEC` fast path stays,
+because that is a console launch and the common case; when it fails the stream is reopened on
+the null device, the buffering the runtime init removed is undone, `_fileno(stderr)` is read
+back (7 in the measurement, whatever the CRT hands out in the field), and the capture goes
+behind that number.  Descriptor 2 stays absent, exactly as it arrived, and `stop()` restores
+the number it redirected rather than a literal 2.  All of it sits behind `Q_OS_WIN`; the
+Linux and macOS path is the two lines it was, unchanged by construction.
+
+One line was added deliberately, because a log from a double-click and a log from a terminal
+are not the same case and a reader had no way to tell them apart:
+`[diagnostics] no console: stderr was reopened on the null device as descriptor N for
+capture`.  It is written once the capture is live, so it lands in the file it describes, and
+it is what the new `logcapture` phase of `tests\win-usability\run.ps1` reads.  Without it a
+future harness change that quietly handed the child a stream again would keep passing while
+testing nothing.  That phase launches the built app with no redirected stream at all,
+through `Start-Process`, which the probe measures as leaving `GetStdHandle(STD_ERROR_HANDLE)`
+NULL with or without `-WindowStyle Hidden`, so the window comes up visible like a real
+double-click.  The phase requires that the log exist, that it name that line, that it carry a
+native `fprintf` written before the Qt message handler exists (`[network]` or `[profile]`, so
+a handler-only write cannot pass), and that it never say `Local logs unavailable`.  Measured,
+the 0-byte file became **5,135 bytes over 51 lines** on a standalone launch, naming `[mpv]`,
+`[mtpz]`, `[libusb]`, `[i18n]` and `[profile]` - the native C path, not only Qt - and
+**2,778 bytes over 30 lines** inside the gate.  Six checks, and the run now reports the
+launches a phase makes outside `Invoke-Case`, so `launches=` is the number of applications a
+run started rather than the number of cases it wrote.
+**Counters.**  The whole gate on this binary reports `launches=19 checks=153 failures=0
+skips=0 killed=0` with `OVERALL=ok`, one launch and six checks above the section above, which is
+this phase.  `tests\win-compat` was not re-run for it: the only source change since its
+204 / 0 / 0 sits inside `#ifdef Q_OS_WIN`, which that gate never compiles.  No device handle was
+opened for any of it.  The fix was then confirmed where it matters: a console-less launch into
+the real profile logged `no console: stderr was reopened on the null device as descriptor 9 for
+capture` and filled 10,808 bytes, and the number the runtime handed out in the field was 9 where
+the probe measured 7, which is the reason the code reads the number back instead of assuming it.
+
+## Local video preview and the `All` wall (2026-11-14)
+
+**What was wrong.**  The videos page opened on `Movies`, a filed shelf, and a Movies tile is the
+one tile that asks for no face (`qml/LibraryVideosView.qml` refuses `FrameThumbnailService` for a
+movie).  Neither file in the test library was on a shelf that grabs one either: one was
+TMDB-`pending`, which appears on no shelf at all, and the other was `Needs Match`, a plain text
+list.  The combination read as "videos have no preview" and "the page opens already filtered".
+
+**What answers it.**  `VideoBrowserModel::allVideos` collects every file before any pivot logic,
+one flat row each in the row shape the gallery already renders as a plain card, and the page
+lands on it as `All`.  A tile's face is the TMDB episode still when there is one and
+`FrameThumbnailService`'s own grab otherwise, so a file no lookup resolved still wears a picture
+of itself.
+
+**Measured.**  On the real profile the `--qa-probe` line reads `vidFiles=2 vidAll=2
+vidTab=All`, and a `winshot` capture of the page shows a real decoded frame on both tiles, one of
+them named in Han.  That second half matters: it is the application naming the file, so it walks
+the `toUtf8()` handoff to the decoder, which a command-line probe of the same file could not
+prove because the runtime hands argv in CP936 there.
+
+**Counters.**  `tests\win-compat` 204 checks / 0 failures / 0 skips.
+`tests\win-usability` `launches=19 checks=157 failures=0 skips=0 killed=0` with `OVERALL=ok`,
+four checks above the previous paragraph: the page case now pins that the landing pivot is `All`
+and that it carries one row per file the library holds, and the `encode` phase proves the C entry
+point a tile calls - `transcodetool frame` on the clip that phase just encoded must write JPEG
+magic and probe back at the 400-pixel width `src/library/FrameThumbnailService.cpp` asks for.
+Both counters are on the relinked build with the QML change compiled in.
+
+**Not closed by any of it.**  The preview is local.  A video on the player still has no picture
+here: over Windows' MTP driver only the DEFAULT object property answers, while `THUMBNAIL` and
+`ALBUM_ART` fail `0x8007138E`, and deletion remains unmeasured on that driver.  **Nothing was
+listened to**, and the WinUSB/libzune line is untouched by this change.
+
+## First deletion over the WPD driver (2026-11-14)
+
+**Why now.**  The user wanted to remove personal videos from the player, and deletion was the one
+write this driver had never been measured on. A backup came first, then a delete on a test object.
+
+**The backup.**  Every video the WPD tree reports was pulled to a folder that is **not** a watch
+folder, because a watch folder would let the running instance sync the file straight back to the
+player. Ten objects, 145,927,271 bytes; each local file is exactly the byte count the device
+reported and each one decodes at the duration the device reported. The container comes from the
+file's own magic, not from its name - two objects answer `ftyp` where the player's own label says
+otherwise, and one carries no extension at all.
+
+**The delete.**  Taken on an object this project uploaded during the earlier video-transfer tests,
+never on user content: `IPortableDeviceContent::Delete` (one id per call, `S_FALSE` read as the
+player declining) answered success, and re-walking the parent folder no longer lists the object.
+`wpdtool info` re-reads capacity and free space afterwards, and a `wpdtool get` of a *different*
+video taken immediately after returns exactly its reported size with ASF magic - **a delete does
+not wedge this player on this driver**, unlike the 2026-10-21 WinUSB wedge where
+`libusb_reset_device()` reported success and recovered nothing.
+
+**What this closes and what it does not.**  Closed: deletion of a device object through
+`DeviceService.purgeItems` on this driver and this model, the same code path the right-click
+`Delete from Device` item uses. Still open: device-side playback (**nothing has been listened
+to**), a preview for a video that lives on the player (`THUMBNAIL`/`ALBUM_ART` `0x8007138E`),
+photo and spoken categories over MTP, and every model but this Pavo.
+
+## A face for a device video (2026-11-14)
+
+**Why now.**  The library videos page got a preview pipeline first, and the same question came
+back for the player: can a video that lives on the Zune be previewed while it is being browsed?
+The player has no answer to give - `IPortableDeviceContent::GetProperties` lists `THUMBNAIL` and
+`ALBUM_ART` for a video object and both fail `0x8007138E` - and the vendor operation that stores a
+Zune video's poster is a ZMDB call the WPD road does not have. The frames themselves are on the
+player, though, inside the object.
+
+**The read.**  `DeviceWorker::grabWpdVideoFrame()` asks `Wpd::Session::download()` with a
+`limitBytes` cap. The cap is not a progress hint and not a buffer size: it stops on purpose and
+the transfer is judged by what it asked for, which is what makes a head read a legal operation
+here rather than a covert download; WPD exposes no `GetPartialObject`, so a cap always means read
+less. The first 512 KB goes to `zuuned_extract_frame()` at one second, 400 pixels wide, into
+`<cache>/art/video_<itemId>.jpg` - the same shape as the album-art and photo-thumb caches, so the
+browse page treats a decoded frame and a fetched poster as one thing.
+
+**Measured on this Pavo, over Windows' own MTP driver.**  The device walk reported 7 video objects
+and **all 7 gave a face out of their own first 512 KB**, each in about 450 ms including the read,
+JPEGs of 532, 652, 652, 1 294, 8 201, 8 935 and 9 034 bytes. **Zero escalations to the deeper
+slice, zero failures.** Four cards read near-black because the first second of those clips really
+is dark; that is the cost of a head read, stated rather than smoothed over. An earlier sitting
+measured nine objects on the same player, 9 of 9, 652 to 14 076 bytes. Object ids renumber after a
+delete, so a cache entry belongs to a sighting, and a cache hit logs nothing.
+
+**Where 512 KB and 1 second came from.**  Cut to their first 512 KB, five of this player's own
+videos still decoded. An ASF header sits at the front, so the demuxer gets its stream tables and
+the decoder its first keyframe, and the identical JPEG came out whether the frame was asked for at
+0, 1 or 10 seconds - the seek cannot reach past the slice, so extraction starts at the beginning.
+An MP4 on the same player answered at 1 second and **not** at 10, because its sample table can sit
+past anything a head read reaches; hence the small timestamp. One megabyte was timed too - about
+600 ms, no different answer - so the deeper 2 MB slice is reserved for a slice that decoded
+nothing at all, and is not paid by every tile on the page.
+
+**The `All` pivot.**  `qml/DeviceVideosPage.qml` lands on `All`: one card per video object on the
+volume whatever its metagenre came back as, for the same reason the library page has one. Its
+breadcrumb now prints the tab's label rather than its token.
+
+**A catalogue shadow, found because of one tab.**  After that build the page showed five Chinese
+tabs and one raw `all`. The translation pipeline was innocent - `lconvert -of ts` on the fresh
+`.qm` found the entry for context `DeviceVideosPage`, source `All`. `src/main.cpp` prefers an
+external `build/i18n/zuuned_zh_CN.qm` over the compiled-in catalogue, and that copy was a stale
+drop taken before the string existed, so the lookup returned null and `PivotBar` fell back to the
+raw id. `i18n\build_qm.ps1 -NextToExe` fixed it without a rebuild. Read
+`[i18n] UI language zh_CN; catalogue <dir>` in the session log: a directory means the external
+copy won, `compiled in` means the resource.
+
+**Gates.**  `tests\win-compat` 204 checks / 0 failures / 0 skips and `tests\win-usability`
+`launches=19 checks=157 failures=0 skips=0 killed=0` `OVERALL=ok`, both against the relinked
+executable with the player attached. The usability log records `libusb claim_interface failed:
+Access denied` inside its music-page launch - the WinUSB road declining while WPD holds the
+player, which is the expected answer on this driver and not a regression.
+
+**What this closes and what it does not.**  Closed: a preview for a video that lives on the
+player, on this driver and this model, reached through `DeviceService.requestVideoPreview`. Not
+closed, and not claimed: it is **not** the poster the player itself shows, which stays a vendor
+operation with no MTP equivalent; device-side playback; deletion of user content; the photo and
+spoken categories over MTP; every model but this Pavo. **Nothing was listened to**, the
+WinUSB/libzune line is untouched, and no Linux evidence is carried across.
+## MTP playlists, both directions on the wire (2026-11-15)
+
+**The defect.**  A local playlist queued for sync failed with the queue text "playlist forge
+failed", twice, and the session log said why: the WPD road carried a stub that refused the
+operation outright - "playlist creation needs a ZMDB/vendor operation" - while every member had
+already resolved ("40 members resolved").  So the failure was ours, at the last step, and not a
+player refusal, a path problem or an identity problem.
+
+**What was built.**  `Wpd::Session::makePlaylist` creates the object the player itself uses for a
+playlist - an MTP object in format `0xBA05`, named `<name>.zpl`, declaring no payload, whose entire
+content is a reference list - and `DeviceWorker::doForgePlaylist` now puts it in the player's own
+`Playlists` folder through `ensureWpdFolder`, which reuses that folder case-insensitively and
+creates one only if the player has none.  Members that this listing never saw are dropped and
+counted rather than guessed at.  Shapes are still tried in order and the first accepted one is
+logged, because whether references may travel in the create or only after it is a fact about a
+driver and not about the spec.
+
+**Measured on the player.**  The first shape (`playlist/format/size/file name/references`) is
+accepted, and the member list is kept: a create with forty members reads back forty of forty, and a
+three-member create reads back three of three, so the size of the list is not the limit.  The read
+direction agrees: the device walk now reports real playlist counts with resolved members and no
+dropped ones, where it reported none before, and it names a playlist object as a playlist rather
+than as an unknown kind.
+
+**A failure now cleans up after itself.**  A create that lands and then loses its member list used
+to leave the player holding an object named like a playlist with nothing in it, and the next attempt
+made a second one.  Measured directly: such an object appeared, and after the guard the same
+sequence logs that the unfinished object was taken back off the player and the playlist listing is
+unchanged.  The id is taken back from the caller too, so a failed forge cannot be mistaken for an
+object id.
+
+**Settings, not a bug.**  Asked whether a synced album really arrived as WMA Lossless: the profile
+in use asks for MP3 at an explicit bitrate, and a copy pulled off the player probes as lossy MPEG
+layer III at that bitrate carrying its album, title, artist, disc, track and year tags.  The conversion did what it was told; Lossless requires the setting to ask for it.
+
+**Found, not fixed.**  Objects this application uploads report an empty album property on the
+player while objects the user added themselves report their album, and the pulled file shows the
+album tag is present inside it - so the album survives the payload and is lost somewhere in how the
+property is offered.  Related and smaller: an uploaded object keeps the temporary working file name
+instead of a clean name derived from the title.  Both are open.
+
+**What this closes and what it does not.**  Closed: forging a forty-member playlist over Windows'
+own MTP driver on this Pavo, read back member for member, and reading playlists back off the player.
+Not closed and not claimed: the player's own on-screen playlist view, playing a forged playlist on
+the device, deleting content the user put there themselves, and every model but this Pavo.  Deleting
+a playlist this application made has been exercised; deleting a user object has not.  **Nothing was
+listened to**, the WinUSB/libzune line is untouched by this, and no Linux playlist evidence - which
+comes from a different transport and a different recipe - is carried into any of it.

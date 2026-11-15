@@ -495,6 +495,7 @@ qt_add_qml_module(zuuned
         qml/PhotoAlbumTray.qml
         qml/AddToPlaylistMenu.qml
         qml/EditTrackSheet.qml
+        qml/TrackDetailsSheet.qml
         qml/DragGhost.qml
         qml/AlphabetRail.qml
         qml/NowPlayingIsland.qml

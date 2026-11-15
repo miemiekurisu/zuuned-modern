@@ -21,6 +21,7 @@ Item {
 
     signal artistSelected(string artist)
     signal trackEditRequested(var track)   // UX-2 Edit Info bubble-up
+    signal trackDetailsRequested(var track)
     signal contextRequested()
 
     // Playback (local library only — mac parity for device rows)
@@ -581,6 +582,7 @@ Item {
                     modelData.itemId, modelData.title,
                     modelData.artist, modelData.album)
                 onEditRequested: page.trackEditRequested(modelData)
+                onDetailsRequested: page.trackDetailsRequested(modelData)
                 onArtistTapped: page.artistSelected(modelData.artist)
             }
         }

@@ -388,6 +388,130 @@ void addYearTag(IWMHeaderInfo3 *header, const char *date)
                          (const BYTE *)&value, sizeof(value));
 }
 
+/* The one picture type both a Zune and Windows Media Player read as "the
+ * cover": WMPI_TypeFrontCover, the same value an ID3 APIC frame numbers 3. */
+const BYTE kFrontCover = 3;
+
+/* WM/Picture names the image formats it will carry, and an attached picture in
+ * anything else is not a cover anybody can read, so it stays out rather than
+ * going in under a mime type that would be a lie. */
+const char *pictureMime(const AVCodecParameters *par)
+{
+    if (!par)
+        return NULL;
+    switch (par->codec_id) {
+    case AV_CODEC_ID_MJPEG: return "image/jpeg";
+    case AV_CODEC_ID_PNG:   return "image/png";
+    case AV_CODEC_ID_BMP:   return "image/bmp";
+    case AV_CODEC_ID_GIF:   return "image/gif";
+    case AV_CODEC_ID_TIFF:  return "image/tiff";
+    default:                return NULL;
+    }
+}
+
+/* The cover has to travel with the file.
+
+ * A WMA Lossless track whose art stayed behind in the source is a song tile
+ * with no picture on the player and no picture in the library once somebody
+ * pulls it back off, which is what this was measured doing: the encoder wrote
+ * Title/Author/AlbumTitle/Genre/Composer/TrackNumber/Year/PartOfSet and dropped
+ * the attached picture the source had, so `ffprobe` found no video stream and
+ * no WM/Picture marker anywhere in the first 400 KB of a file whose FLAC parent
+ * had one.  FFmpeg cannot do this leg either - its ASF muxer maps the picture
+ * as an ordinary mjpeg video stream with attached_pic=0 and writes no
+ * WM/Picture at all - so the attribute is written here, through the same
+ * IWMHeaderInfo3 the text tags already go by.
+ *
+ * What the value has to be was worth getting wrong twice, so it is recorded.
+ * The bytes that sit in an ASF file are not what `AddAttribute` accepts: the
+ * file holds a flat blob (type byte, DWORD image length, wide mime, wide
+ * description, image) and that layout is `ASF_FLAT_PICTURE` in mfidl.h, which
+ * is what describes the storage.  The SDK API takes the *in-memory* form,
+ * `WM_PICTURE` from wmsdkidl.h - four fields whose first three are pointers on
+ * this x64 build, declared under `#pragma pack(1)` - and wmvcore reads the
+ * pointer fields as pointers.  Handing it the flat blob therefore does not
+ * return an error, it dereferences the first bytes of a JPEG as a WCHAR pointer
+ * and takes the process down with a 0xc0000005 inside wmvcore.dll.  Measured:
+ * the identical call under a different attribute name returns S_OK with the same
+ * bytes, so the overload, the IID and the WMT_TYPE_BINARY type were never the
+ * problem - only the interpretation of that one name's value.  The "Using
+ * Complex Metadata Attributes" note that complex attributes are BINARY values
+ * cast to a byte pointer is about exactly this struct.
+ *
+ * So the struct goes in with live strings, before BeginWriting like every other
+ * tag here, and the player's own files are the reference for what comes out: an
+ * album pulled off this Zune and read back to the byte declares type 3, the
+ * image length alone (240,462 for the largest cover measured here), "image/jpeg",
+ * a description, then FF D8 FF - which is the same five fields, re-serialised by
+ * wmvcore on the way out.  IWMHeaderInfo3 takes a DWORD length, so unlike the
+ * older IWMHeaderInfo there is no 64 KB ceiling to work around.
+ *
+ * 8 MB is a long way above the largest file this player was measured holding, so
+ * the refusal past it protects the header, not a library. */
+void addPictureTag(IWMHeaderInfo3 *header, AVFormatContext *fmt)
+{
+    const AVStream *cover = NULL;
+    for (unsigned i = 0; i < fmt->nb_streams; i++) {
+        const AVStream *st = fmt->streams[i];
+        if (st && (st->disposition & AV_DISPOSITION_ATTACHED_PIC) &&
+            st->attached_pic.data && st->attached_pic.size > 0) {
+            cover = st;
+            break;
+        }
+    }
+    if (!cover)
+        return;   /* most sources have no picture, which is not a failure */
+
+    const char *mime = pictureMime(cover->codecpar);
+    if (!mime) {
+        const AVCodecDescriptor *desc =
+            avcodec_descriptor_get(cover->codecpar->codec_id);
+        fprintf(stderr, WL_LOG " attached picture is %s, which WM/Picture does"
+                " not name; the cover stays behind\n",
+                desc ? desc->name : "unknown");
+        return;
+    }
+    if (cover->attached_pic.size > 8ULL * 1024 * 1024) {
+        fprintf(stderr, WL_LOG " attached picture is %llu bytes, too big for a"
+                " header; the cover stays behind\n",
+                (unsigned long long)cover->attached_pic.size);
+        return;
+    }
+
+    const int mimeChars = MultiByteToWideChar(CP_UTF8, 0, mime, -1, NULL, 0);
+    if (mimeChars <= 1)
+        return;
+    wchar_t *mimeWide = (wchar_t *)calloc((size_t)mimeChars + 1, sizeof(wchar_t));
+    if (!mimeWide)
+        return;
+    MultiByteToWideChar(CP_UTF8, 0, mime, -1, mimeWide, mimeChars);
+    /* An unnamed cover is legal and is what most sources carry; the field is a
+     * pointer the SDK reads with lstrlenW, so it points at a terminator rather
+     * than at NULL. */
+    static const wchar_t kNoDescription[1] = { 0 };
+
+    WM_PICTURE value;
+    memset(&value, 0, sizeof(value));
+    value.pwszMIMEType = mimeWide;
+    value.bPictureType = kFrontCover;
+    value.pwszDescription = (LPWSTR)kNoDescription;
+    value.dwDataLen = (DWORD)cover->attached_pic.size;
+    value.pbData = cover->attached_pic.data;
+
+    WORD index = 0;
+    const HRESULT hr = header->AddAttribute(0, L"WM/Picture", &index,
+                                           WMT_TYPE_BINARY, 0,
+                                           (const BYTE *)&value,
+                                           (DWORD)sizeof(value));
+    if (FAILED(hr))
+        fprintf(stderr, WL_LOG " WM/Picture hr=0x%08X, the cover stays"
+                " behind\n", (unsigned)hr);
+    else
+        fprintf(stderr, WL_LOG " cover carried: %s, %lu bytes\n", mime,
+                (unsigned long)value.dwDataLen);
+    free(mimeWide);
+}
+
 const char *tagOf(AVFormatContext *fmt, AVStream *stream, const char *key)
 {
     const AVDictionaryEntry *entry = av_dict_get(fmt->metadata, key, NULL, 0);
@@ -428,6 +552,7 @@ void writeTags(Writer &writer, AVFormatContext *fmt, AVStream *stream,
     } else {
         addStringTag(header, L"PartOfSet", tagOf(fmt, stream, "disc"));
     }
+    addPictureTag(header, fmt);
     header->Release();
 }
 

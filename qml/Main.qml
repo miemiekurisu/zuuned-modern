@@ -272,6 +272,12 @@ ApplicationWindow {
                  keyDecoy: asked !== LibraryService.artKey("ZUUNED-QA-DECOY",
                                                            "ZUUNED-QA-ALBUM") ? 1 : 0 }
     }
+    // QA harness: the videos wall.  Which pivot the page actually landed
+    // on, and whether that pivot holds one row per file the library has.
+    // The page used to open on a filed shelf, so a file the artwork lookup
+    // never resolved sat on no shelf anyone would think to open, which read
+    // as a videos page with nothing in it; and the wall is only honest if it
+    // counts every file, so the two numbers travel together.
     function reportQaState(when) {
         if (!qaProbe)
             return
@@ -286,6 +292,9 @@ ApplicationWindow {
             + " size=" + Math.round(width) + "x" + Math.round(height)
             + " tracks=" + LibraryService.trackCount
             + " photos=" + LibraryService.photoCount
+            + " vidFiles=" + LibraryService.videoCount
+            + " vidAll=" + (videosView ? videosView.shownAll.length : -1)
+            + " vidTab=" + (videosView ? videosView.currentTab : "")
             + " queue=" + PlayerService.queue.length
             + " playing=" + PlayerService.playing
             + " pos=" + Math.round(PlayerService.positionMs)
@@ -1144,6 +1153,7 @@ ApplicationWindow {
                         visible: window.currentPage === "music"
                     }
                     LibraryVideosView {
+                        id: videosView
                         anchors.fill: parent
                         visible: window.currentPage === "videos"
                     }

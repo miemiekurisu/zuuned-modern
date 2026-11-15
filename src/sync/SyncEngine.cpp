@@ -2372,6 +2372,22 @@ void SyncEngine::onPhotoSendDone(const QString &entryId, bool ok, quint32 itemId
 // ════════════════════════════════════════════════════════════════════
 
 int SyncEngine::resolveVideoProfile() const {
+    // Windows' own MTP driver answers the shape question, so it comes before the
+    // setting.  Measured on a Pavo Zune HD: the same source encoded through
+    // profile 2 (H.264 in MP4) arrives as content-type UNSPECIFIED, format
+    // UNSPECIFIED, duration absent - a file in the Video folder the hub does not
+    // list - while profile 0 (wmv2 + wmav2 in ASF) arrives as content-type VIDEO
+    // inside the player's own object range with its duration kept.  Honouring a
+    // profile the player cannot file would be a sync that reports a success the
+    // player never made, so on this road the answer is the shape that arrives.
+    if (m_device && m_device->deviceBackend() == QLatin1String("wpd")) {
+        const int setting = QSettings().value(QStringLiteral("videoProfile"), -1).toInt();
+        fprintf(stderr,
+                "[sync] device is on Windows' MTP driver - video profile 0 (ASF), "
+                "the one shape measured to reach its video library%s\n",
+                setting > 0 ? " (profile override)" : "");
+        return 0;
+    }
     const int setting = QSettings().value(QStringLiteral("videoProfile"), -1).toInt();
     if (setting >= 0 && setting <= 3)
         return setting;

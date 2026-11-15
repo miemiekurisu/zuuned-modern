@@ -1,5 +1,6 @@
 #include "LibraryService.h"
 #include "ThreadDrain.h"
+#include "MediaDescription.h"
 #include "PathText.h"
 #include "ProfilePaths.h"
 
@@ -300,6 +301,87 @@ LibraryService::LibraryService(QObject *parent) : QObject(parent) {
             rescan();
     });
     m_periodicSweep->start();
+}
+
+void LibraryService::requestTrackDetails(double libraryId) {
+    const qint64 id = qint64(libraryId);
+    if (id < 0)
+        return;
+
+    // The row is already in the model this class keeps; the file is the part
+    // that is missing, so only the read leaves the main thread.
+    LibTrack row;
+    bool found = false;
+    for (const LibTrack &t : m_tracks->rows()) {
+        if (t.id == id) {
+            row = t;
+            found = true;
+            break;
+        }
+    }
+
+    const QVariantMap identity {
+        {QStringLiteral("libraryId"), double(id)},
+        {QStringLiteral("source"), QStringLiteral("local")},
+        {QStringLiteral("title"), row.title},
+        {QStringLiteral("artist"), row.artist},
+        {QStringLiteral("album"), row.album},
+        {QStringLiteral("filepath"), row.filepath},
+        {QStringLiteral("size"), double(row.filesize)},
+        {QStringLiteral("durationMs"), double(row.durationMs)},
+    };
+    if (!found) {
+        QVariantMap failed = identity;
+        failed[QStringLiteral("ok")] = false;
+        failed[QStringLiteral("error")] =
+            UiText::tr("This track is no longer in the library.");
+        emit trackDetailsReady(failed);
+        return;
+    }
+    if (row.filepath.isEmpty()) {
+        QVariantMap failed = identity;
+        failed[QStringLiteral("ok")] = false;
+        failed[QStringLiteral("error")] = UiText::tr("This track has no file path.");
+        emit trackDetailsReady(failed);
+        return;
+    }
+
+    const QString path = row.filepath;
+    auto *watcher = new QFutureWatcher<QVariantMap>(this);
+    connect(watcher, &QFutureWatcher<QVariantMap>::finished, this,
+            [this, watcher, identity] {
+        QVariantMap details = watcher->result();
+        watcher->deleteLater();
+        for (auto it = identity.constBegin(); it != identity.constEnd(); ++it) {
+            // The library's own numbers answer first and the file corrects them,
+            // because the two are separate measurements: an index that has a
+            // size and a file that states a duration are both facts, and a
+            // duration the file read wins because the file is the thing playing.
+            if (it.key() == QStringLiteral("size") || it.key() == QStringLiteral("durationMs")) {
+                if (!details.contains(it.key()))
+                    details[it.key()] = it.value();
+                continue;
+            }
+            details[it.key()] = it.value();
+        }
+        emit trackDetailsReady(details);
+    });
+    watcher->setFuture(QtConcurrent::run([path] {
+        QVariantMap out;
+        char lines[512] = {0};
+        // UTF-8, not QFile::encodeName(): FFmpeg names are UTF-8 on Windows
+        // while this locale's 8-bit codec is GBK (AGENTS.md, copy-fingerprint).
+        if (zuuned_describe_audio_file(path.toUtf8().constData(), lines,
+                                       int(sizeof(lines))) < 0) {
+            out[QStringLiteral("ok")] = false;
+            out[QStringLiteral("error")] =
+                UiText::tr("Could not read this file. It may have been moved.");
+            return out;
+        }
+        out = MediaDescription::parse(QString::fromUtf8(lines));
+        out[QStringLiteral("ok")] = true;
+        return out;
+    }));
 }
 
 void LibraryService::rearmFolderWatcher() {

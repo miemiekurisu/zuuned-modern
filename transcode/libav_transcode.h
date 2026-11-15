@@ -199,10 +199,40 @@ typedef struct zuuned_audio_container {
     int sample_rate;
     int bits_per_sample;
     int64_t duration_ms;
+    int bit_rate;           /* bits per second the file asks for, 0 when it says
+                             * nothing.  The first audio stream answers first and
+                             * the whole-file header is the fallback, which is the
+                             * order that survives a capped head-read of a bigger
+                             * object: an MP3 names its rate per frame, an ASF in
+                             * its header. */
+    char format_name[32];   /* what this FFmpeg calls the demuxer - "mp3", "asf" -
+                             * the container a user reads as the format. */
 } zuuned_audio_container;
 
 /* 0 when the probe ran, negative when the file could not be read at all. */
 int zuuned_probe_audio_container(const char *path, zuuned_audio_container *out);
+
+/* The same probe as one flat string, for a caller that cannot include this
+ * header.  src/DeviceWorker.cpp is that caller: zune.h and this file spell
+ * struct ZuneMetadata differently, which C++ refuses as C2371, so that file
+ * already reaches in through single extern "C" declarations rather than the
+ * struct - and a struct here would need this header shared after all.  So
+ * every answer goes out as a key=value line the caller splits itself, which
+ * leaves nothing to escape: the value of a key runs to the end of the line and
+ * never holds a newline.  FFmpeg's codec names are prose - avcodec_get_name()
+ * calls AV_CODEC_ID_MP3 "MP3 (MPEG audio layer 3)" - so a caller splits on the
+ * first '=' and keeps the rest verbatim.
+ *
+ * A caller wanting the struct instead includes this header and calls
+ * zuuned_probe_audio_container(); both roads read the file the same way.
+ *
+ * Keys, in order: probed, format, codec, lossless, bit_rate, sample_rate,
+ * channels, bits_per_sample, duration_ms.  A number the file does not state is
+ * 0 and stays in the output instead of being skipped, so a caller can still
+ * tell "the file says nothing" from "the probe never ran".  Returns 0 when the
+ * probe ran and negative when the file could not be read; out is empty in that
+ * case, never half-filled. */
+int zuuned_describe_audio_file(const char *path, char *out, int out_size);
 
 /* Why a file may not travel to the player untouched, named in one place so the
  * sync engine, the session log and a command-line check cannot tell three

@@ -32,6 +32,7 @@ Item {
     signal albumPickRequested(var album, var anchor)
     signal albumContextRequested(var album)
     signal trackEditRequested(var track)
+    signal trackDetailsRequested(var track)
     signal contextRequested()
 
     readonly property bool narrow: width < 700
@@ -379,6 +380,7 @@ Item {
                             modelData.itemId, modelData.title,
                             modelData.artist, modelData.album)
                         onEditRequested: page.trackEditRequested(modelData)
+                        onDetailsRequested: page.trackDetailsRequested(modelData)
                         onArtistTapped: page.artistSelected(modelData.artist)
                         onAlbumTapped: page.albumSelected(MusicIdentity.fromTrack(modelData))
                     }

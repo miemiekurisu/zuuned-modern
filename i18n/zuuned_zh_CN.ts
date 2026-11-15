@@ -1128,6 +1128,10 @@ Arrange them in your reading order.</source>
         <translation>剧集</translation>
     </message>
     <message>
+        <source>All</source>
+        <translation>全部</translation>
+    </message>
+    <message>
         <source>Anime</source>
         <translation>动漫</translation>
     </message>
@@ -1156,6 +1160,10 @@ Arrange them in your reading order.</source>
         <translation>没有匹配项</translation>
     </message>
     <message>
+        <source>no videos on this zune</source>
+        <translation>这台 zune 上没有视频</translation>
+    </message>
+    <message>
         <source>no movies on this zune</source>
         <translation>这台 zune 上没有影片</translation>
     </message>
@@ -1182,6 +1190,10 @@ Arrange them in your reading order.</source>
     <message>
         <source>episodes</source>
         <translation>单集</translation>
+    </message>
+    <message>
+        <source>videos</source>
+        <translation>视频</translation>
     </message>
     <message>
         <source>Season %1</source>
@@ -1593,6 +1605,10 @@ Arrange them in your reading order.</source>
         <translation>剧集</translation>
     </message>
     <message>
+        <source>All</source>
+        <translation>全部</translation>
+    </message>
+    <message>
         <source>Anime</source>
         <translation>动漫</translation>
     </message>
@@ -1633,6 +1649,10 @@ Arrange them in your reading order.</source>
         <translation>%1 集</translation>
     </message>
     <message>
+        <source>No videos yet.</source>
+        <translation>还没有视频。</translation>
+    </message>
+    <message>
         <source>No anime sources yet.</source>
         <translation>还没有动漫来源。</translation>
     </message>
@@ -1643,6 +1663,10 @@ Arrange them in your reading order.</source>
     <message>
         <source>Nothing filed as other.</source>
         <translation>没有归类为其他的内容。</translation>
+    </message>
+    <message>
+        <source>Add a video folder in Settings and its files show up here right away.</source>
+        <translation>在设置里添加一个视频文件夹，里面的文件会直接显示在这里。</translation>
     </message>
     <message>
         <source>Add a folder as &quot;anime&quot; in Settings, or set an existing source&apos;s type to anime there.</source>
@@ -4508,6 +4532,117 @@ Star an episode in any show to find it here.</source>
     </message>
 </context>
 <context>
+    <name>TrackDetailsSheet</name>
+    <message>
+        <source>This row has no file to read.</source>
+        <translation>这一行没有可供读取的文件。</translation>
+    </message>
+    <message>
+        <source>Nothing in these bytes could be read as audio.</source>
+        <translation>这些字节里读不出任何音频。</translation>
+    </message>
+    <message>
+        <source>1 (mono)</source>
+        <translation>1（单声道）</translation>
+    </message>
+    <message>
+        <source>2 (stereo)</source>
+        <translation>2（立体声）</translation>
+    </message>
+    <message>
+        <source>What the file says</source>
+        <translation>文件自己说的是什么</translation>
+    </message>
+    <message>
+        <source>Container</source>
+        <translation>封装格式</translation>
+    </message>
+    <message>
+        <source>Codec</source>
+        <translation>编码</translation>
+    </message>
+    <message>
+        <source>lossless</source>
+        <translation>无损</translation>
+    </message>
+    <message>
+        <source>Bit rate</source>
+        <translation>码率</translation>
+    </message>
+    <message>
+        <source>Sample rate</source>
+        <translation>采样率</translation>
+    </message>
+    <message>
+        <source>Channels</source>
+        <translation>声道</translation>
+    </message>
+    <message>
+        <source>Bit depth</source>
+        <translation>位深</translation>
+    </message>
+    <message>
+        <source>Duration</source>
+        <translation>时长</translation>
+    </message>
+    <message>
+        <source>On the player</source>
+        <translation>在播放器上</translation>
+    </message>
+    <message>
+        <source>On this PC</source>
+        <translation>在这台电脑上</translation>
+    </message>
+    <message>
+        <source>Size</source>
+        <translation>大小</translation>
+    </message>
+    <message>
+        <source>Object</source>
+        <translation>对象</translation>
+    </message>
+    <message>
+        <source>Object name</source>
+        <translation>对象名称</translation>
+    </message>
+    <message>
+        <source>Player calls it</source>
+        <translation>播放器称之为</translation>
+    </message>
+    <message>
+        <source>Player duration</source>
+        <translation>播放器标称时长</translation>
+    </message>
+    <message>
+        <source>Read from the player</source>
+        <translation>已从播放器读取</translation>
+    </message>
+    <message>
+        <source>File</source>
+        <translation>文件</translation>
+    </message>
+    <message>
+        <source>FILE DETAILS</source>
+        <translation>文件详情</translation>
+    </message>
+    <message>
+        <source>Untitled</source>
+        <translation>未命名</translation>
+    </message>
+    <message>
+        <source>Close file details</source>
+        <translation>关闭文件详情</translation>
+    </message>
+    <message>
+        <source>Reading…</source>
+        <translation>读取中…</translation>
+    </message>
+    <message>
+        <source>What the player claims</source>
+        <translation>播放器自己的说法</translation>
+    </message>
+</context>
+<context>
     <name>TrackListRow</name>
     <message>
         <source>Add to Playlist</source>
@@ -4541,12 +4676,28 @@ Star an episode in any show to find it here.</source>
         <source>Delete from Device</source>
         <translation>从设备删除</translation>
     </message>
+    <message>
+        <source>File Details…</source>
+        <translation>文件详情…</translation>
+    </message>
 </context>
 <context>
     <name>UiText</name>
     <message>
         <source>No embedded or folder art in the local files</source>
         <translation>本地文件里没有内嵌图片或文件夹封面</translation>
+    </message>
+    <message>
+        <source>This track is no longer in the library.</source>
+        <translation>这首歌已经不在媒体库里了。</translation>
+    </message>
+    <message>
+        <source>This track has no file path.</source>
+        <translation>这首歌没有文件路径。</translation>
+    </message>
+    <message>
+        <source>Could not read this file. It may have been moved.</source>
+        <translation>读不了这个文件，它可能已经被移走了。</translation>
     </message>
     <message>
         <source>The album or photo selection is invalid.</source>
@@ -4837,6 +4988,10 @@ Star an episode in any show to find it here.</source>
         <translation>已删除 %1 项 —— 释放 %2</translation>
     </message>
     <message>
+        <source>The player is no longer connected.</source>
+        <translation>播放器已经断开连接。</translation>
+    </message>
+    <message>
         <source>Could not read spoken media from this Zune.</source>
         <translation>无法从这台 Zune 读取有声内容。</translation>
     </message>
@@ -4925,10 +5080,6 @@ Star an episode in any show to find it here.</source>
         <translation>没有播放器通过 MTP 连接。</translation>
     </message>
     <message>
-        <source>This player is on Windows&apos; MTP driver, which cannot add videos to the Zune&apos;s video library. Connect it to WinUSB for video sync.</source>
-        <translation>这台播放器走的是 Windows 自己的 MTP 驱动，MTP 无法把视频添加进 Zune 的视频资料库。要同步视频，请为它绑定 WinUSB。</translation>
-    </message>
-    <message>
         <source>uploaded; title or size readback could not be verified</source>
         <translation>已上传；未能核实读回的标题或大小</translation>
     </message>
@@ -4939,6 +5090,26 @@ Star an episode in any show to find it here.</source>
     <message>
         <source>no device</source>
         <translation>没有设备</translation>
+    </message>
+    <message>
+        <source>The player would not describe this object.</source>
+        <translation>播放器不肯说明这个对象。</translation>
+    </message>
+    <message>
+        <source>The player calls this object empty.</source>
+        <translation>播放器说这个对象是空的。</translation>
+    </message>
+    <message>
+        <source>The player would not give up the first bytes of this object.</source>
+        <translation>播放器不肯交出这个对象开头的字节。</translation>
+    </message>
+    <message>
+        <source>These bytes are not an audio file this build can read.</source>
+        <translation>这些字节不是本程序能读的音频文件。</translation>
+    </message>
+    <message>
+        <source>This connection cannot read part of a file, so the codec behind this object stays unknown without downloading all of it.</source>
+        <translation>这条连接不能只读文件的一部分，所以除非把整个对象下载下来，否则它用的编码无法得知。</translation>
     </message>
     <message>
         <source>Too many podcast episodes selected for cleanup.</source>

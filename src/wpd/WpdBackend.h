@@ -42,7 +42,13 @@ enum ObjectKind {
     KindImage,
     KindVideo,
     KindFunctional,
-    KindOther
+    KindOther,
+    // A playlist is an object with no payload whose content is a list of other
+    // objects.  It goes last rather than beside the three media kinds on
+    // purpose: a kind's number is what a log line prints and what a caller
+    // compares, so renumbering the six that already exist would make an old
+    // session log say something a new build does not mean.
+    KindPlaylist
 };
 
 struct DeviceInfo {
@@ -101,9 +107,56 @@ public:
     bool readDevice(DeviceInfo *info, QString *error);
     bool children(const QString &parentId, QVector<ObjectInfo> *out, QString *error);
     bool objectInfo(const QString &id, ObjectInfo *out, QString *error);
+    // The properties a player states about an object, one question at a time, as
+    // "name = value" text.  It exists because a player may rewrite what it was
+    // sent: an object created as a video can come back with a content type that
+    // has no name here, and the only way to tell "the player reclassified it" from
+    // "we announced it wrong" is to read what the player kept.  A key the player
+    // declines is a reported answer, not a skipped line.  Read-only; a blob reports
+    // its length and not its bytes.
+    bool describe(const QString &id, QVector<QString> *lines, QString *error);
+    // The same question with the player's own list of properties, for the
+    // fields no client thought to ask for.  Diagnostic only.
+    bool describeAll(const QString &id, QVector<QString> *lines, QString *error);
 
+    // What this player says about an object format, before anything is written.
+    //
+    // `describe` asks about one object that already exists; the question a new
+    // kind of object asks comes first - does this player take this format at all,
+    // which properties does it keep for it, and will it let a client write the
+    // reference list that makes a playlist a playlist.  WPD answers all three
+    // without a single byte of payload, so a format this client has no name for
+    // is a measurement away rather than a guess.  `formatText` is either an MTP
+    // format code ("BA05", "0xBA05") or a full format guid: a WPD format guid is
+    // the MTP code in its first dword and the WPD format namespace in the rest.
+    // With `objectId` set the same attributes are also asked for that one object,
+    // because "this format accepts references" and "this object's references may
+    // be rewritten" are two answers a player is free to give separately.
+    // Diagnostic only, and read-only: nothing here creates or changes anything.
+    bool probeFormat(const QString &formatText, QVector<QString> *lines,
+                     QString *error, const QString &objectId = QString());
+
+    // Creates a playlist: an object with no payload whose content is a list of
+    // other objects.  `memberIds` are WPD object ids of objects already on the
+    // player, in the order the caller wants them.  It reports failure with a
+    // reason rather than handing back a half-made playlist, and it says so if it
+    // made the object and then could not give it members.
+    bool makePlaylist(const QString &parentId, const QString &name,
+                      const QStringList &memberIds, QString *objectId,
+                      QString *error);
+    // Who a playlist object says it contains, read back off the player.
+    bool objectReferences(const QString &objectId, QStringList *memberIds,
+                          QString *error);
+
+    // Reads an object's DEFAULT stream to a file.  `limitBytes` is not a
+    // progress hint and not a buffer size: with a non-zero cap this stops at
+    // that many bytes on purpose and judges the transfer by what it asked for,
+    // which is what makes reading the front of an object legal here instead of a
+    // download.  WPD has no GetPartialObject, so a cap is "read less", never
+    // "ask the player for a range".
     bool download(const QString &objectId, const QString &destPath,
-                  ProgressFn fn, void *userdata, QString *error);
+                  ProgressFn fn, void *userdata, QString *error,
+                  quint64 limitBytes = 0);
     // A player's own picture for an object, if it keeps one.  WPD calls the two
     // places that live THUMBNAIL and ALBUM_ART; the Zune is known for answering
     // "no representative sample" to MTP's own art request, so whether either
@@ -141,8 +194,12 @@ public:
 
     static QString kindName(int kind);
     // The WPD format a file should be announced as, from its extension:
-    // 1 WMA, 2 MP3, 3 FLAC, 4 WAV, 0 unspecified.
+    // 1 WMA, 2 MP3, 3 FLAC, 4 WAV, 5 MP4 video, 6 ASF/WMV video, 0 unspecified.
+    // 5 and 6 are not just two more containers to name: a player learns what
+    // an object *is* from its content type, so anything that uploads has to be
+    // able to tell a video from a song.  See Session::upload().
     static int formatForExtension(const QString &path);
+    static bool isVideoFormat(int format);
     // The other direction, and the one that decides what a pulled file is called:
     // a WPD object's format property is the only place this player states the
     // container it really holds, because the name it displays is a title and a
@@ -162,8 +219,13 @@ private:
     // transfer has actually been committed.  Measured: the same file is refused by one
     // player and accepted by another on the strength of which optional properties the
     // create carries, so the answer is remembered per connection rather than guessed
-    // per file.  See Session::upload().
+    // per file.  Audio and video are cached apart because they are asked apart: the
+    // two tables share their rungs in a different order, so one index cannot name
+    // both answers, and a session that synced a song and then a video would
+    // otherwise start the video at the song's shape and never ask the video
+    // question at all.  See Session::upload().
     int m_uploadShape = -1;
+    int m_uploadVideoShape = -1;
     QString m_pnpId;
     bool m_ownsCom = false;
     std::atomic<bool> m_abort{false};

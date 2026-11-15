@@ -11,13 +11,20 @@ import Zuuned
 // tiles show immediately from folder-truth, with frame-grab faces when
 // TMDB has no poster yet. Music Videos / Other are filed by hand and
 // skip the readiness gate entirely.
+//
+// ALL is the landing pivot (2026-11-14): every file in the library, one
+// card each, whatever the TMDB lookup made of it. Before it a file the
+// lookup never resolved sat on no shelf anyone would think to open -
+// the page looked empty and the files looked lost. The faces come from
+// TMDB when TMDB has one and from our own frame grab when it does not.
 Item {
     id: root
 
     property string searchText: ""
-    property string currentTab: "Movies"
+    property string currentTab: "All"
     onCurrentTabChanged: gallery.letterFilter = ""
-    readonly property bool flatTab: currentTab === "Movies"
+    readonly property bool flatTab: currentTab === "All"
+        || currentTab === "Movies"
         || currentTab === "Music Videos" || currentTab === "Other"
 
     // Drill state: null | {kind:"movie", id} | {kind:"series", key}
@@ -54,6 +61,8 @@ Item {
         return root.searchText === ""
             || text.toLowerCase().includes(root.searchText.toLowerCase())
     }
+    readonly property var shownAll: videoBrowser.allVideos.filter(
+        v => matchesSearch(v.displayTitle) || matchesSearch(v.filename))
     readonly property var shownMovies: videoBrowser.movieGroups.filter(
         m => matchesSearch(m.title) || matchesSearch(m.filename))
     readonly property var shownSeries: videoBrowser.seriesList.filter(
@@ -293,6 +302,7 @@ Item {
             Layout.rightMargin: Theme.spaceXxxl
 
             PivotBar {
+                id: pivotBar
                 // Natural tab width — the counts + search claim the rest.
                 //
                 // The reservation COMPRESSES on narrow windows. A fixed
@@ -307,17 +317,20 @@ Item {
                 // search; roomy windows still get exactly 660.
                 // root-derived, never parent.width — a self-referential
                 // width in a layout row rearranges recursively.
-                Layout.preferredWidth: Math.min(660,
+                // 700 rather than 660 since All joined the row; the
+                // tabs' own width stays the floor, so a narrow window
+                // still gets its pivots whole.
+                Layout.preferredWidth: Math.min(700,
                     Math.max(implicitWidth, root.width - 300))
                 // Never below the tabs' own width — the band can now
                 // compress, and the Row inside doesn't clip, so a
                 // smaller reservation would let the search ride over
                 // the tabs instead of shrinking something flexible.
                 Layout.minimumWidth: implicitWidth
-                tabs: ["Movies", "TV Shows", "Anime", "Music Videos",
-                       "Other", "Needs Match"]
-                labels: [qsTr("Movies"), qsTr("TV Shows"), qsTr("Anime"),
-                         qsTr("Music Videos"), qsTr("Other"),
+                tabs: ["All", "Movies", "TV Shows", "Anime",
+                       "Music Videos", "Other", "Needs Match"]
+                labels: [qsTr("All"), qsTr("Movies"), qsTr("TV Shows"),
+                         qsTr("Anime"), qsTr("Music Videos"), qsTr("Other"),
                          qsTr("Needs Match")]
                 current: root.currentTab
                 onCurrentChanged: {
@@ -377,7 +390,10 @@ Item {
             Layout.fillWidth: true
             visible: root.detail !== null
             inset: Gallery.spine(root.width)
-            crumbs: [root.currentTab, root.drillTitle]
+            // The tab's label, not its token - a breadcrumb reading
+            // "All" inside a Chinese interface is a stray.
+            crumbs: [pivotBar.labels[pivotBar.tabs.indexOf(root.currentTab)]
+                     ?? root.currentTab, root.drillTitle]
             onBackClicked: root.detail = null
             onCrumbClicked: root.detail = null
         }
@@ -404,7 +420,8 @@ Item {
                 anchorX: Gallery.spine(root.width)
                 cellHeightFor: (w) => Math.round(w * 1.5) + 56
                 nameOf: (r) => r.displayTitle ?? r.title ?? r.name ?? ""
-                rows: root.currentTab === "Movies" ? root.shownMovies
+                rows: root.currentTab === "All" ? root.shownAll
+                    : root.currentTab === "Movies" ? root.shownMovies
                     : root.currentTab === "TV Shows" ? root.shownSeries
                     : root.currentTab === "Anime" ? root.shownAnime
                     : root.currentTab === "Music Videos" ? root.shownMusicVideos
@@ -417,10 +434,12 @@ Item {
                     height: gallery.cellHeightFor(gallery.plan.cell)
 
                     readonly property bool isMovie: root.currentTab === "Movies"
-                    // Filed shelves: flat single files, like movies but
-                    // with no detail page and no readiness gate
+                    // All and the filed shelves: flat single files,
+                    // like movies but with no detail page and no
+                    // readiness gate
                     readonly property bool isFiled:
-                        root.currentTab === "Music Videos"
+                        root.currentTab === "All"
+                        || root.currentTab === "Music Videos"
                         || root.currentTab === "Other"
                     readonly property bool isSingle: isMovie || isFiled
                     // Surgical refresh: a corrected row's fresh fields
@@ -449,8 +468,14 @@ Item {
                                 return p
                             if (parent.isMovie)
                                 return ""
-                            // Frame-grab fallback: TMDB-less series, and
-                            // filed shelves (music videos rarely match)
+                            // A TMDB episode still is a better face than
+                            // a frame we decoded ourselves.
+                            const st = parent.modelData.still ?? ""
+                            if (st !== "")
+                                return st
+                            // Frame-grab fallback: the All wall, TMDB-less
+                            // series, and the filed shelves (music videos
+                            // rarely match)
                             const key = parent.isFiled
                                 ? String(parent.modelData.id)
                                 : String(parent.modelData.firstEpisodeId)
@@ -480,7 +505,8 @@ Item {
                         badge: parent.isMovie ? "MOVIE"
                              : root.currentTab === "Anime" ? "ANIME"
                              : root.currentTab === "Music Videos" ? "MV"
-                             : root.currentTab === "Other" ? "" : "TV"
+                             : root.currentTab === "Other"
+                               || root.currentTab === "All" ? "" : "TV"
                         badgeColor: parent.isMovie ? Theme.orange
                                   : root.currentTab === "Music Videos"
                                     ? Theme.activePink : Theme.pink
@@ -550,7 +576,8 @@ Item {
                         }
 
                         Component.onCompleted: {
-                            if (parent.modelData.poster !== "")
+                            if (parent.modelData.poster !== ""
+                                || (parent.modelData.still ?? "") !== "")
                                 return
                             if (parent.isFiled)
                                 FrameThumbnailService.requestStill(
@@ -572,7 +599,9 @@ Item {
                 anchors.centerIn: parent
                 spacing: Theme.spaceSm
                 visible: root.detail === null
-                      && ((root.currentTab === "Anime"
+                      && ((root.currentTab === "All"
+                          && videoBrowser.allVideos.length === 0)
+                      || (root.currentTab === "Anime"
                           && videoBrowser.animeList.length === 0)
                       || (root.currentTab === "Music Videos"
                           && videoBrowser.musicVideosList.length === 0)
@@ -580,7 +609,9 @@ Item {
                           && videoBrowser.othersList.length === 0))
                 Text {
                     Layout.alignment: Qt.AlignHCenter
-                    text: root.currentTab === "Anime" ? qsTr("No anime sources yet.")
+                    text: root.currentTab === "All"
+                        ? qsTr("No videos yet.")
+                        : root.currentTab === "Anime" ? qsTr("No anime sources yet.")
                         : root.currentTab === "Music Videos"
                           ? qsTr("No music videos filed yet.") : qsTr("Nothing filed as other.")
                     font.pixelSize: 14
@@ -592,7 +623,9 @@ Item {
                     Layout.maximumWidth: 440
                     horizontalAlignment: Text.AlignHCenter
                     wrapMode: Text.WordWrap
-                    text: root.currentTab === "Anime"
+                    text: root.currentTab === "All"
+                        ? qsTr("Add a video folder in Settings and its files show up here right away.")
+                        : root.currentTab === "Anime"
                         ? qsTr("Add a folder as \"anime\" in Settings, or set an existing source's type to anime there.")
                         : root.currentTab === "Music Videos"
                           ? qsTr("Right-click any movie and pick \"Move to Music Videos\" — or file a Needs Match item as other.")

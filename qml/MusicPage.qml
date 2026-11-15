@@ -837,6 +837,7 @@ Item {
                             artistLink: true
                             albumLink: true
                             onEditRequested: editSheet.openFor(modelData)
+                            onDetailsRequested: detailsSheet.openFor(modelData)
                             onPlayed: root.playFromList(root.displayedSongs, index)
                             onArtistTapped: root.pushDrill({ kind: "artist", name: root.artistKeyOf(modelData) })
                             onAlbumTapped: root.openAlbum(MusicIdentity.fromTrack(modelData))
@@ -1299,6 +1300,7 @@ Item {
                     onAlbumPickRequested: (album, anchor) =>
                         root.openAlbumPicker(album, anchor)
                     onTrackEditRequested: track => editSheet.openFor(track)
+                    onTrackDetailsRequested: track => detailsSheet.openFor(track)
                 }
             }
 
@@ -1344,6 +1346,7 @@ Item {
                     onAlbumPickRequested: (album, anchor) =>
                         root.openAlbumPicker(album, anchor)
                     onTrackEditRequested: track => editSheet.openFor(track)
+                    onTrackDetailsRequested: track => detailsSheet.openFor(track)
                 }
             }
 
@@ -1362,6 +1365,7 @@ Item {
                         root.pushDrill({ kind: "artist", name: artist })
                     }
                     onTrackEditRequested: track => editSheet.openFor(track)
+                    onTrackDetailsRequested: track => detailsSheet.openFor(track)
                 }
             }
         }
@@ -1409,6 +1413,9 @@ Item {
     }
     // UX-2 Edit Info — one sheet shared by every library track list
     EditTrackSheet { id: editSheet }
+    // One sheet for every list this page can show, because the question it
+    // answers is the same question in Songs, in an album and on the player.
+    TrackDetailsSheet { id: detailsSheet }
 
     QuickPicker {
         id: trackPicker

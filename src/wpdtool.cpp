@@ -25,6 +25,7 @@ extern "C" void zuuned_win_console_utf8(void);
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QPair>
+#include <QRegularExpression>
 #include <QString>
 #include <QTextStream>
 #include <QVector>
@@ -113,7 +114,9 @@ void probeRawUsb(const QString &pnpId) {
 
 int usage(const QString &why) {
     report(QStringLiteral("VERDICT=usage reason=%1").arg(why));
-    report("usage: wpdtool enumerate|info|tree|get|put|thumb|resources|rm|mkdir|rawmtp [args]");
+    report(
+        "usage: wpdtool enumerate|info|tree|get|head|put|props|thumb|resources|rm|mkdir"
+        "|mkpl|refs|plprobe|rawmtp [args]");
     return 2;
 }
 
@@ -162,6 +165,19 @@ int main(int argc, char **argv) {
                                       QStringLiteral("ms"));
     QCommandLineOption trackOption(QStringLiteral("track"), QStringLiteral("track number"),
                                    QStringLiteral("n"));
+    // Which object to ask a format-level question about.  A player is free to say
+    // one thing about a format and another about one object of that format, so
+    // both questions are worth being able to ask.
+    QCommandLineOption objectOption(QStringLiteral("object"),
+                                    QStringLiteral("object id to ask about"),
+                                    QStringLiteral("id"));
+    // The tracks a playlist is to hold, as WPD object ids.  Both separators are
+    // accepted because object ids are copied out of a tree walk, where they are
+    // already separated by whatever the walk printed.
+    QCommandLineOption membersOption(
+        QStringLiteral("members"),
+        QStringLiteral("member object ids, separated by + or ,"),
+        QStringLiteral("ids"));
     parser.addOption(parentOption);
     parser.addOption(depthOption);
     parser.addOption(artistOption);
@@ -171,6 +187,8 @@ int main(int argc, char **argv) {
     parser.addOption(durationOption);
     parser.addOption(nameOption);
     parser.addOption(trackOption);
+    parser.addOption(objectOption);
+    parser.addOption(membersOption);
     parser.process(app);
 
     const QStringList args = parser.positionalArguments();
@@ -299,6 +317,26 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    if (command == QStringLiteral("head") && args.size() >= 4) {
+        // The call the device-art path makes, on its own: read the front of an object
+        // and stop.  A Zune answers THUMBNAIL and ALBUM_ART for an audio object with
+        // 0x8007138E, so a cover has to come out of the file itself, and what that
+        // costs is what this measures rather than what the header claims.
+        bool converts = false;
+        const quint64 cap = args[2].toULongLong(&converts);
+        if (!converts || !cap) {
+            report(QStringLiteral("VERDICT=fail reason=the byte cap must be a number above zero"));
+            return 1;
+        }
+        if (!session.download(args[1], args[3], progress, nullptr, &error, cap)) {
+            report(QStringLiteral("VERDICT=fail reason=%1").arg(error));
+            return 1;
+        }
+        report(QStringLiteral("bytes=%1 cap=%2").arg(QFileInfo(args[3]).size()).arg(cap));
+        report(QStringLiteral("VERDICT=ok"));
+        return 0;
+    }
+
     if (command == QStringLiteral("mkdir") && args.size() >= 2) {
         // The name is positional; the parent is an option, so it is not args[2].
         QString id;
@@ -311,6 +349,62 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    if (command == QStringLiteral("plprobe") && args.size() >= 2) {
+        // Everything the player says about a format it has no name for, which is
+        // the question a playlist asks: does it take MTP 0xBA05, what does it keep
+        // for it, and will it let a client write the member list.  Read-only, so it
+        // is safe against a player that is busy being used.
+        QVector<QString> lines;
+        if (!session.probeFormat(args[1], &lines, &error, parser.value(objectOption))) {
+            report(QStringLiteral("VERDICT=error reason=%1").arg(error));
+            return 2;
+        }
+        for (const QString &line : std::as_const(lines))
+            report(line);
+        report(QStringLiteral("VERDICT=ok"));
+        return 0;
+    }
+
+    if (command == QStringLiteral("refs") && args.size() >= 2) {
+        // What a playlist object says it contains.  The other half of the
+        // playlist question: a create that is accepted and a member list that is
+        // silently dropped both look like success from one call.
+        QStringList members;
+        if (!session.objectReferences(args[1], &members, &error)) {
+            report(QStringLiteral("VERDICT=fail reason=%1").arg(error));
+            return 1;
+        }
+        report(QStringLiteral("object=%1 members=%2").arg(args[1]).arg(members.size()));
+        for (int i = 0; i < members.size(); ++i)
+            report(QStringLiteral("member[%1]=%2").arg(i).arg(members.at(i)));
+        report(QStringLiteral("VERDICT=ok"));
+        return 0;
+    }
+
+    if (command == QStringLiteral("mkpl") && args.size() >= 2) {
+        // Build a playlist from object ids handed over on the command line, so the
+        // shape the player takes can be measured before anything wires it to a
+        // sync.  Ids may be separated by + or ,; either way the order is the user's.
+        QString memberText = parser.value(membersOption);
+        if (memberText.isEmpty())
+            memberText = args.mid(2).join(QLatin1Char(','));
+        QStringList members;
+        for (const QString &part : memberText.split(QRegularExpression(QStringLiteral("[,+]")),
+                                                    Qt::SkipEmptyParts))
+            members.append(part.trimmed());
+        if (members.isEmpty()) {
+            report(QStringLiteral("VERDICT=fail reason=no member object ids were given"));
+            return 1;
+        }
+        QString id;
+        if (!session.makePlaylist(parser.value(parentOption), args[1], members, &id, &error)) {
+            report(QStringLiteral("VERDICT=fail reason=%1").arg(error));
+            return 1;
+        }
+        report(QStringLiteral("object=%1 members=%2").arg(id).arg(members.size()));
+        report(QStringLiteral("VERDICT=ok"));
+        return 0;
+    }
     if (command == QStringLiteral("resources") && args.size() >= 2) {
         QStringList names;
         if (!session.supportedResourceNames(args[1], &names, &error)) {
@@ -356,6 +450,28 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    if (command == QStringLiteral("props") && args.size() >= 2) {
+        QVector<QString> lines;
+        if (!session.describe(args[1], &lines, &error)) {
+            report(QStringLiteral("VERDICT=fail reason=%1").arg(error));
+            return 1;
+        }
+        for (const QString &line : std::as_const(lines))
+            report(line);
+        report(QStringLiteral("properties=%1 VERDICT=ok").arg(lines.size()));
+        return 0;
+    }
+    if (command == QStringLiteral("propsall") && args.size() >= 2) {
+        QVector<QString> lines;
+        if (!session.describeAll(args[1], &lines, &error)) {
+            report(QStringLiteral("VERDICT=fail reason=%1").arg(error));
+            return 1;
+        }
+        for (const QString &line : std::as_const(lines))
+            report(line);
+        report(QStringLiteral("properties=%1 VERDICT=ok").arg(lines.size()));
+        return 0;
+    }
     if (command == QStringLiteral("rm") && args.size() >= 2) {
         QStringList purged;
         if (!session.removeObjects(args.mid(1), &purged, &error)) {

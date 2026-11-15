@@ -53,6 +53,7 @@ Rectangle {
     signal deleteRequested()
     signal saveRequested()
     signal editRequested()      // UX-2 Edit Info (library rows)
+    signal detailsRequested()   // what the bytes actually are (both row kinds)
 
     width: ListView.view ? ListView.view.width : 400
     height: 34
@@ -345,6 +346,18 @@ Rectangle {
                 color: deleteMenuItem.highlighted ? Theme.rowHoverPink : "transparent"
             }
             onTriggered: { if (DeviceService.connected) row.deleteRequested() }
+        }
+
+        // The one question neither a library row nor a player's property sheet
+        // can answer: what the bytes actually are.  Both row kinds get it,
+        // because a scan-time tag read and a claim the player made on ingest
+        // are both second-hand, and this is the only entry that goes and looks.
+        ZuneMenuItem {
+            objectName: "trackDetailsAction"
+            text: qsTr("File Details…")
+            visible: row.syncable || row.deletable || row.saveable
+            height: visible ? implicitHeight : 0
+            onTriggered: row.detailsRequested()
         }
     }
 

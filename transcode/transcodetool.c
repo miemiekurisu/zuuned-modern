@@ -447,6 +447,7 @@ static int usage(void)
         "  transcodetool video <in> <profile 0-3>\n"
         "  transcodetool probe <in>\n"
         "  transcodetool container <in>\n"
+        "  transcodetool describe <in>\n"
         "  transcodetool art <in> <out.jpg>\n"
         "  transcodetool frame <in> <seconds> <out.jpg>\n"
         "  transcodetool retag <in.mp3> <albumartist>\n"
@@ -635,6 +636,19 @@ int main(int argc, char **argv)
                c.channels, c.sample_rate, c.bits_per_sample, (long long)c.duration_ms,
                zuuned_native_copy_verdict(&c, ZUUNED_AUDIO_WMA),
                zuuned_native_copy_verdict(&c, ZUUNED_AUDIO_WMA_LOSSLESS));
+        return 0;
+    }
+
+    if (strcmp(cmd, "describe") == 0) {
+        /* The literal bytes the file-details sheet parses.  The application
+         * reaches the same string through MediaDescription, so a check here has
+         * exercised what that parser is given rather than a guess at it. */
+        char out[2048];
+        if (zuuned_describe_audio_file(in, out, (int)sizeof out) != 0) {
+            fprintf(stderr, "FAIL: describe\n");
+            return 1;
+        }
+        fputs(out, stdout);
         return 0;
     }
 

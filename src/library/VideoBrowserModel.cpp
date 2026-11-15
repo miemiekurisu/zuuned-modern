@@ -253,7 +253,7 @@ void VideoBrowserModel::rebuild() {
     };
     QHash<int, MovieAgg> byTmdb;
     QVector<const LibVideo *> looseMovies;
-    QVector<const LibVideo *> mvRows, otherRows;
+    QVector<const LibVideo *> mvRows, otherRows, allRows;
     int pending = 0, unmatchedTotal = 0;
 
     // ── TV: group EVERY episode by series (folder-truth) ──
@@ -267,6 +267,7 @@ void VideoBrowserModel::rebuild() {
     QVector<const LibVideo *> unmatchedLooseRows;
 
     for (const LibVideo &v : videos) {
+        allRows.append(&v);
         if (v.isTV()) {
             const QString key = v.series.toLower();
             auto &agg = (isAnime(v) ? animeAgg : seriesAgg)[key];
@@ -429,6 +430,25 @@ void VideoBrowserModel::rebuild() {
     m_movieGroups = movieList;
     m_musicVideos = flatList(mvRows);
     m_others = flatList(otherRows);
+
+    // All: one tile per file, whatever the lookup did or did not do.
+    // Same row shape as the filed shelves (displayTitle, single-version
+    // ids) so the gallery treats every one as a plain card and asks for
+    // its own frame-grab face. Sorted by the title the tile shows.
+    std::sort(allRows.begin(), allRows.end(),
+              [](const LibVideo *a, const LibVideo *b) {
+        return displayTitle(*a).compare(displayTitle(*b),
+                                        Qt::CaseInsensitive) < 0;
+    });
+    QVariantList allList;
+    for (const LibVideo *v : allRows) {
+        QVariantMap m = videoMap(*v);
+        m.insert(QStringLiteral("displayTitle"), displayTitle(*v));
+        m.insert(QStringLiteral("versionCount"), 1);
+        m.insert(QStringLiteral("versionIds"), QVariantList{double(v->id)});
+        allList.append(m);
+    }
+    m_allVideos = allList;
 
     // Needs Match: whole shows first — one fix repairs every episode.
     QVariantList seriesGroups;

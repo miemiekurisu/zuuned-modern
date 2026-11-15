@@ -28,6 +28,7 @@
 /* libav* headers (via MPVKit xcframeworks, symlinked in vendor/ffmpeg-include) */
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
+#include <libavcodec/codec_desc.h>
 #include <libavutil/opt.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/samplefmt.h>
@@ -2006,6 +2007,10 @@ int zuuned_probe_audio_container(const char *path, zuuned_audio_container *out)
     out->probed = 1;
     out->is_asf = fmt->iformat && fmt->iformat->name
                && strstr(fmt->iformat->name, "asf") != NULL;
+    if (fmt->iformat && fmt->iformat->name) {
+        strncpy(out->format_name, fmt->iformat->name, sizeof(out->format_name) - 1);
+        out->format_name[sizeof(out->format_name) - 1] = '\0';
+    }
     out->duration_ms = fmt->duration > 0 ? (int64_t)(fmt->duration / (AV_TIME_BASE / 1000)) : 0;
 
     for (unsigned i = 0; i < fmt->nb_streams; i++) {
@@ -2031,6 +2036,7 @@ int zuuned_probe_audio_container(const char *path, zuuned_audio_container *out)
         if (st->codecpar->codec_tag) out->format_tag = (int)st->codecpar->codec_tag;
         else if (st->codecpar->extradata_size >= 2)
             out->format_tag = (int)AV_RL16(st->codecpar->extradata);
+        if (st->codecpar->bit_rate > 0) out->bit_rate = (int)st->codecpar->bit_rate;
         const char *name = avcodec_get_name(st->codecpar->codec_id);
         if (name) {
             strncpy(out->codec_name, name, sizeof(out->codec_name) - 1);
@@ -2039,8 +2045,61 @@ int zuuned_probe_audio_container(const char *path, zuuned_audio_container *out)
     }
     out->lossless = out->codec_id == (int)AV_CODEC_ID_WMALOSSLESS
                  || out->format_tag == ZUUNED_WMA_FORMAT_TAG_LOSSLESS;
+    /* The audio stream answers first.  Only when it stayed quiet does the
+     * container's own number stand, which is the case for an ASF: its header
+     * carries the bitrate while its WMA stream often does not. */
+    if (!out->bit_rate && fmt->bit_rate > 0) out->bit_rate = (int)fmt->bit_rate;
 
     avformat_close_input(&fmt);
+    return 0;
+}
+
+int zuuned_describe_audio_file(const char *path, char *out, int out_size)
+{
+    if (!out || out_size <= 0) return -1;
+    out[0] = '\0';
+
+    zuuned_audio_container probe;
+    if (zuuned_probe_audio_container(path, &probe) < 0 || !probe.probed)
+        return -1;
+
+    /* Each line formats at the byte the last one stopped on, with only the room
+     * that is left.  A line that would not fit is not written at all, which
+     * leaves a missing key - the same answer a file gives when it holds no
+     * value for it - so a short buffer costs a fact and not the process. */
+    int left = out_size;
+    int used = 0;
+#define ZUUNED_DESCRIBE_LINE(...)                                         \
+    do {                                                                  \
+        const int wrote_ = snprintf(out + used, (size_t)left, __VA_ARGS__); \
+        if (wrote_ < 0 || wrote_ >= left) return 0;                       \
+        used += wrote_;                                                   \
+        left -= wrote_;                                                   \
+    } while (0)
+
+    ZUUNED_DESCRIBE_LINE("probed=1\n");
+    ZUUNED_DESCRIBE_LINE("format=%s\n",
+                         probe.format_name[0] ? probe.format_name : "unknown");
+    ZUUNED_DESCRIBE_LINE("codec=%s\n",
+                         probe.codec_name[0] ? probe.codec_name : "unknown");
+    /* probe.lossless answers the question the sync engine asks -- "is this the
+     * WMA I may carry to the player untouched" -- and a person reading a
+     * details sheet asks a wider one, because a FLAC or a WAV is lossless too.
+     * So the wider question goes to the codec table, which knows it per codec,
+     * and it stops here: the verdict keeps its narrower field. */
+    int lossless = probe.lossless;
+    if (!lossless && probe.codec_id) {
+        const AVCodecDescriptor *desc =
+            avcodec_descriptor_get((enum AVCodecID)probe.codec_id);
+        if (desc && (desc->props & AV_CODEC_PROP_LOSSLESS)) lossless = 1;
+    }
+    ZUUNED_DESCRIBE_LINE("lossless=%d\n", lossless);
+    ZUUNED_DESCRIBE_LINE("bit_rate=%d\n", probe.bit_rate);
+    ZUUNED_DESCRIBE_LINE("sample_rate=%d\n", probe.sample_rate);
+    ZUUNED_DESCRIBE_LINE("channels=%d\n", probe.channels);
+    ZUUNED_DESCRIBE_LINE("bits_per_sample=%d\n", probe.bits_per_sample);
+    ZUUNED_DESCRIBE_LINE("duration_ms=%lld\n", (long long)probe.duration_ms);
+#undef ZUUNED_DESCRIBE_LINE
     return 0;
 }
 

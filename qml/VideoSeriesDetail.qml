@@ -269,8 +269,8 @@ Item {
             source: {
                 if ((still.ep.still ?? "") !== "")
                     return still.ep.still
-                // Device episodes: the representative-sample device art,
-                // read reactively (it lands after requestArt below).
+                // Device episodes: the player's own face for the object,
+                // read reactively (it lands after the request below).
                 if (page.deviceMode) {
                     void DeviceService.artPaths
                     return DeviceService.artPaths[
@@ -284,7 +284,7 @@ Item {
             sourceSize.width: 360
             Component.onCompleted: {
                 if (page.deviceMode)
-                    DeviceService.requestArt(still.ep.itemId ?? still.ep.id)
+                    DeviceService.requestVideoPreview(still.ep.itemId ?? still.ep.id)
                 // Library episodes with no still grab a frame from the file.
                 else if ((still.ep.still ?? "") === "" && (still.ep.filepath ?? "") !== "")
                     FrameThumbnailService.requestStill(

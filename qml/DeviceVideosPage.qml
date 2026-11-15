@@ -11,11 +11,18 @@ import Zuuned
 // we synced). The Zune has no anime metagenre — the library's anime
 // shelf names split the TV pivot. Actions: Save to Library (download
 // into ~/Videos/Zuuned Imports) and Delete.
+//
+// ALL is the landing pivot (2026-11-14), one card per video object on the
+// player whatever its metagenre came back as, for the same reason the library
+// page got one: an object the player never classified sat on no shelf anyone
+// would think to open. A card's face is the player's own representative sample
+// where there is one, and a frame decoded out of the front of the object where
+// there is not - see DeviceWorker::grabWpdVideoFrame() for that measurement.
 Item {
     id: root
 
     property string searchText: ""
-    property string currentTab: "Movies"
+    property string currentTab: "All"
     onCurrentTabChanged: deviceGallery.letterFilter = ""
     // Non-null: {name, episodes: [...]} — the drilled series
     property var openSeries: null
@@ -44,6 +51,9 @@ Item {
         return videos.filter(v => (v.metagenre ?? 0) === mg
                                   && matches(v.name))
     }
+    // Every video object on the player, flat — the shelf that owes the user
+    // nothing but the truth about what is on the volume.
+    readonly property var allVideos: videos.filter(v => matches(v.name))
     readonly property var movieVideos: ofKind(0x25)
     readonly property var musicVideos: ofKind(0x23)
     readonly property var otherVideos: videos.filter(
@@ -176,6 +186,7 @@ Item {
             Layout.rightMargin: Theme.spaceXxxl
 
             PivotBar {
+                id: pivotBar
                 // Compresses on narrow windows, floored at the tabs'
                 // natural width — a fixed reservation inflates this
                 // page past its column and clips the grid under the
@@ -183,9 +194,10 @@ Item {
                 Layout.preferredWidth: Math.min(560,
                     Math.max(implicitWidth, root.width - 300))
                 Layout.minimumWidth: implicitWidth
-                tabs: ["Movies", "TV Shows", "Anime", "Music Videos", "Other"]
-                labels: [qsTr("Movies"), qsTr("TV Shows"), qsTr("Anime"),
-                         qsTr("Music Videos"), qsTr("Other")]
+                tabs: ["All", "Movies", "TV Shows", "Anime", "Music Videos",
+                       "Other"]
+                labels: [qsTr("All"), qsTr("Movies"), qsTr("TV Shows"),
+                         qsTr("Anime"), qsTr("Music Videos"), qsTr("Other")]
                 current: root.currentTab
                 onCurrentChanged: {
                     root.currentTab = current
@@ -235,7 +247,10 @@ Item {
             Layout.fillWidth: true
             visible: root.openSeries !== null
             inset: Gallery.spine(root.width)
-            crumbs: [root.currentTab,
+            // The tab's label, not its token - a breadcrumb reading "All"
+            // inside a Chinese interface is a stray.
+            crumbs: [pivotBar.labels[pivotBar.tabs.indexOf(root.currentTab)]
+                     ?? root.currentTab,
                      root.openSeries ? root.openSeries.name : ""]
             onBackClicked: root.openSeries = null
             onCrumbClicked: root.openSeries = null
@@ -255,6 +270,7 @@ Item {
                 Text {
                     Layout.alignment: Qt.AlignHCenter
                     text: root.searchText !== "" ? qsTr("nothing matches")
+                        : root.currentTab === "All" ? qsTr("no videos on this zune")
                         : root.currentTab === "Movies" ? qsTr("no movies on this zune")
                         : root.currentTab === "TV Shows" ? qsTr("no tv shows on this zune")
                         : root.currentTab === "Anime" ? qsTr("no anime on this zune")
@@ -268,8 +284,14 @@ Item {
                     Layout.alignment: Qt.AlignHCenter
                     visible: root.searchText === ""
                     text: qsTr("queue %1 from your library and sync to fill this shelf")
+                      // The tab's own label, so the hint arrives in the
+                      // language the tabs are in; "all" is not a thing to
+                      // queue, so the shelf that holds everything asks for
+                      // videos instead.
                       .arg(root.currentTab === "TV Shows" || root.currentTab === "Anime"
-                      ? qsTr("episodes") : root.currentTab.toLowerCase())
+                      ? qsTr("episodes") : root.currentTab === "All" ? qsTr("videos")
+                      : pivotBar.labels[pivotBar.tabs.indexOf(root.currentTab)]
+                        ?? root.currentTab)
                     font.pixelSize: 11
                     color: Theme.textDim
                 }
@@ -289,7 +311,8 @@ Item {
                 anchorX: Gallery.spine(root.width)
                 cellHeightFor: (w) => Math.round(w * 1.5) + 56
                 nameOf: (r) => r.name ?? ""
-                rows: root.currentTab === "Movies" ? root.movieVideos
+                rows: root.currentTab === "All" ? root.allVideos
+                    : root.currentTab === "Movies" ? root.movieVideos
                     : root.currentTab === "TV Shows" ? root.tvSeriesList
                     : root.currentTab === "Anime" ? root.animeSeriesList
                     : root.currentTab === "Music Videos" ? root.musicVideos
@@ -404,7 +427,7 @@ Item {
 
                     Component.onCompleted: {
                         if (parent.posterItem !== null)
-                            DeviceService.requestArt(parent.posterItem.itemId)
+                            DeviceService.requestVideoPreview(parent.posterItem.itemId)
                     }
                 }
             }
