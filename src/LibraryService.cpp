@@ -431,6 +431,19 @@ bool LibraryService::albumCoverLookupEnabled() const {
     return QSettings().value(QStringLiteral("albumCoverLookup"), false).toBool();
 }
 
+bool LibraryService::videoLookupEnabled() const {
+    // Ships off, and runLookupRound() says so out loud.  An automatic pass used
+    // to spend one TMDB request per unmatched video on every launch and retry a
+    // stubborn row eight times, on the key this build ships with.  What a Zune
+    // actually holds is personal clips, which have no TMDB entry to find, so the
+    // only measurable outcome of that pass was a library of "no match" rows and a
+    // network conversation nobody started - the same complaint that turned album
+    // covers off.  Asking stays a user decision: the switch, Settings -> Library
+    // "retry unmatched lookups", and "Retry All" on the videos page, the last two
+    // through m_videoLookupAsked.
+    return QSettings().value(QStringLiteral("videoLookup"), false).toBool();
+}
+
 namespace {
 bool hasManualCollectionChoice(const QVariantMap &choice) {
     auto identity = choice.value("identity").toMap();
@@ -1855,6 +1868,19 @@ void LibraryService::runLookupRound() {
     if (m_matchBusy)
         return;
 
+    // One honest line per launch, in the shape the artwork pass already uses, so
+    // a blank poster reads as "nobody asked" rather than as work still pending.
+    if (!videoLookupEnabled() && !m_videoLookupAsked) {
+        if (!m_videoLookupAnnounced) {
+            m_videoLookupAnnounced = true;
+            fprintf(stderr, "[library] video lookup off: %d videos hold no TMDB "
+                            "match; Settings > Library \"retry unmatched lookups\" "
+                            "or \"Retry All\" on the videos page asks once\n",
+                    unmatchedVideoCount());
+        }
+        return;
+    }
+
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     QVector<LibVideo> eligible;
     for (const LibVideo &v : std::as_const(m_videos)) {
@@ -2359,6 +2385,8 @@ void LibraryService::requeueForMatch(const QVariantList &ids) {
     for (const QVariant &id : ids)
         v.append(qint64(id.toDouble()));
     m_db->requeueVideosForMatch(v);
+    if (!v.isEmpty())
+        m_videoLookupAsked = true;   // asked for, so the switch does not veto it
     reloadVideos();
     pokeVideoConsumers();
 }
@@ -2379,6 +2407,7 @@ void LibraryService::requeueAllUnmatched() {
     if (ids.isEmpty())
         return;
     m_db->requeueVideosForMatch(ids);
+    m_videoLookupAsked = true;       // asked for, so the switch does not veto it
     reloadVideos();
     pokeVideoConsumers();
 }

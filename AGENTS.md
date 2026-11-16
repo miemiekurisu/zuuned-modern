@@ -3254,3 +3254,39 @@ here, this sitting added no WPD evidence because the player on the cable is WinU
 model stays unproven, and whether an emptied MTP photo folder lingers is unmeasured - the ZMDB photo-album
 table stayed at 1 through every send and delete. Linux and macOS are unchanged by construction, which here
 means unverified, not verified.
+**2026-11-17 a shelf that takes nothing down, and a lookup nobody asked for:** two defaults found by
+reading the rules against each other. Videos drained unmatched rows against TMDB on **every launch**,
+up to eight attempts for a stubborn row, on the bundled key, while album artwork has carried a
+default-off switch for exactly that complaint - so `videoLookup` (`src/AppSettings.h:276`,
+`videoLookupEnabled()` at `src/LibraryService.cpp:434`) ships `false` and the round returns early with
+one line per launch naming how many rows hold no match, which is what makes a blank poster read as
+"nobody asked" instead of "still pending". An explicit ask is not vetoed: `requeueForMatch()` and
+`requeueAllUnmatched()` set `m_videoLookupAsked` (`src/LibraryService.cpp:2389`, `:2410`), the two
+buttons behind Settings -> Library "retry unmatched lookups" and "Retry All" on the videos page.
+**This is a behaviour change** and a user of an older build will notice it: posters now need asking
+for. The usability gate asserts both halves together (`tests/win-usability/run.ps1:973`, `:975`) -
+the announcement must appear and no provider request line may, which is the only way that case tells
+"off" from "off but the switch was ignored". Second, and the bigger defect: `photos` and `videos` had
+no vanish sweep, because both walks only ever upserted and `DELETE` was reachable only from the user's
+own "Remove from Library". A picture or movie deleted from disk therefore kept its tile forever, with
+no glyph and no message, and a `QQuickImage: Cannot open:` warning on every paint. Music had the rule
+and the two shelves did not. `rowHasNoFile()` (`src/library/LibraryScanner.cpp:138`) and `retireRows()`
+(`:161`) are now that rule for all three shelves: most specific watched root of the same kind owns the
+row, that root must be `walked.complete` this pass and unchanged in `st_dev`/`st_ino` since the walk
+started, absence means `ENOENT`/`ENOTDIR` only (a permission or network error may mean unreadable, not
+gone), and a row no root owns is left alone. `remove*(id, false)` never writes `excluded_files`, so
+files are never implicitly excluded and a file put back re-indexes. Do not "simplify" the root
+identity check - it is what keeps an unmounted or remounted folder from emptying a library.
+`librarytool vanish` grew to 15 checks, eight of them per-shelf, and found a fault in its own fixture
+first: the new `pictures/` and `movies/` trees were seeded with rows but never registered with
+`addWatchFolder()`, so three checks said "the sweep retired nothing" while the rule was refusing
+correctly. A test that forgets its premise is indistinguishable from a feature that does not work;
+when a sweep test reports inaction, prove the premise before believing the sweep. Verified on the real
+profile rather than assumed: read-only it held 70 tracks with 0 homeless, 7 photos with 2 homeless and
+4 videos with 1 homeless (all three left by the QA harness, which deletes its scratch files after a
+device send), the first relinked launch logged `retired 1 vanished video(s)` / `retired 2 vanished
+photo(s)`, the store reads 70 / 5 / 3, and the paint warnings stop at the commit and do not recur.
+No database was hand-edited. Counters on the relinked build: `vanish`/`paths`/`names`/`customize` all
+`ALL PASS`, `tests\win-compat` 204 / 0 / 0, `tests\privacy` 19 / 0, i18n `AUDIT=ok`,
+`tests\win-usability` `launches=19 checks=159 failures=0 skips=0 killed=0`. No device claim was added:
+the only hardware traffic was the app's own auto-connect browse inside the gate's isolated profiles.

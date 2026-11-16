@@ -961,6 +961,19 @@ if (Select-Phase 'pages') {
                     ($vidTab -eq 'All') ('vidTab=' + $vidTab)
                 Check 'the videos wall carries one row for every file the library holds' `
                     ($vidAll -eq $vidFiles) ('vidFiles=' + $vidFiles + ' vidAll=' + $vidAll)
+                # Network honesty, the videos half of the music assertion above.
+                # A launch used to spend one TMDB request per unmatched video on
+                # every start, unasked and on a bundled key.  It now says out loud
+                # that it asked nothing, and no request line of any kind may
+                # appear - which is the only way this case can tell "off" from
+                # "off, but the code ignored the switch".
+                $vidQuiet = @($pageCase.Lines | Where-Object { $_ -match 'video lookup off' })
+                $vidAsked = @($pageCase.Lines | Where-Object {
+                    $_ -match '\[tmdb\]|\[library\] TMDB lookup:|\[match\]' })
+                Check 'a videos launch reports that it looked no video up online' `
+                    ($vidQuiet.Count -ge 1) ('lines=' + $vidQuiet.Count)
+                Check 'a videos launch contacts no video provider' `
+                    ($vidAsked.Count -eq 0) ('' + ($vidAsked | Select-Object -First 1))
             }
         }
         # The device page is the case a user hits every time the cable is out, and

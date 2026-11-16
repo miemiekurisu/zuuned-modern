@@ -66,6 +66,7 @@ the setter.  A key is **wired** when a control writes it *and* something reads i
 | `posterSource` | Artwork source | Seg | `src/LibraryService.cpp:1723` | wired |
 | `albumCoverLookup` | Music artwork | switch | `src/LibraryService.cpp:348` | wired |
 | `autoMetadataLookup` | Music artwork | switch | `src/LibraryService.cpp:338` | wired |
+| `videoLookup` | Re-lookup | switch | `src/LibraryService.cpp` `videoLookupEnabled` | wired |
 | `tmdbApiKey` | - | none | `src/library/TmdbClient.cpp:23` | **live, no control** |
 | `fanarttvApiKey` | - | none | `src/library/MusicIdentityClient.cpp:580` | **live, no control** |
 | `podcastAutoQueue` | Podcasts | switch | `src/main.cpp:325` | wired |

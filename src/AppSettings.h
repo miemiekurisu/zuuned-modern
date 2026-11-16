@@ -266,6 +266,15 @@ public:
     ZUNE_SETTING(bool, albumCoverLookup, setAlbumCoverLookup,
                  "albumCoverLookup", false, toBool)
 
+    // Videos keep the same rule as music artwork, for the same reason.  The
+    // automatic pass used to ask TMDB about every row without a cached match
+    // on every launch - up to eight attempts per row, on the key this build
+    // ships with, without being asked - which is what a user said no to for
+    // covers.  Asking is a user decision now, and both retry buttons
+    // (Settings -> Library, and Retry All on the videos page) bypass this
+    // switch for exactly the rows they point at.
+    ZUNE_SETTING(bool, videoLookup, setVideoLookup, "videoLookup", false, toBool)
+
     // Artwork is a reversible display preference. Each print keeps its own
     // tuning; changing looks never rewrites source artwork or metadata.
     Q_PROPERTY(QString artworkStyle READ artworkStyle WRITE setArtworkStyle NOTIFY changed)

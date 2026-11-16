@@ -1195,6 +1195,33 @@ static int runVanishSelfTest() {
         return t;
     };
 
+    // The two shelves that had no rule at all until now.  A photo row is a plain
+    // stat, so a file that will not decode is enough; a video row sits
+    // deliberately below the folder size floor, because that floor judges what a
+    // folder may refuse to INDEX and says nothing about whether a row the
+    // library already holds still has its file.
+    const QString photoRoot = scratch.path() + QStringLiteral("/pictures");
+    const QString videoRoot = scratch.path() + QStringLiteral("/movies");
+    const QString shotHere = photoRoot + QStringLiteral("/here.jpg");
+    const QString shotGone = photoRoot + QStringLiteral("/gone.jpg");
+    const QString shotUnowned = foreign + QStringLiteral("/foreign-photo.jpg");
+    const QString shotOffline = offline + QStringLiteral("/offline-photo.jpg");
+    const QString clipHere = videoRoot + QStringLiteral("/Here Movie 1080p.mp4");
+    const QString clipGone = videoRoot + QStringLiteral("/Gone Movie 1080p.mp4");
+    const QString clipUnowned = foreign + QStringLiteral("/Foreign Movie 1080p.mp4");
+    const QString clipOffline = offline + QStringLiteral("/Offline Movie 1080p.mp4");
+    QDir().mkpath(photoRoot);
+    QDir().mkpath(videoRoot);
+    const auto writeTiny = [](const QString &path) {
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly)) return false;
+        file.write("payload\n");
+        file.close();
+        return true;
+    };
+    check(writeTiny(shotHere) && writeTiny(clipHere),
+          "vanish: a picture and a video that really are on disk");
+
     const QString dbPath = scratch.path() + QStringLiteral("/vanish.db");
     {
         LibraryDb db;
@@ -1208,6 +1235,38 @@ static int runVanishSelfTest() {
         db.upsertTrack(seed(gone));
         db.upsertTrack(seed(unmounted));
         db.upsertTrack(seed(unowned));
+        // The same three kinds of absence, on the two shelves that never had a
+        // rule: retired, kept because the folder is not there, kept because no
+        // folder owns them.  "offline" is registered for every kind so the
+        // unmounted case is answered per shelf rather than assumed.
+        db.addWatchFolder(photoRoot, QStringLiteral("photos"));
+        db.addWatchFolder(videoRoot, QStringLiteral("movies"));
+        db.addWatchFolder(offline, QStringLiteral("photos"));
+        db.addWatchFolder(offline, QStringLiteral("movies"));
+        const auto seedPhoto = [](const QString &path) {
+            LibPhoto p;
+            p.filepath = path;
+            p.filename = QFileInfo(path).fileName();
+            p.filesize = 1;
+            p.mtime = 1;
+            return p;
+        };
+        const auto seedVideo = [](const QString &path) {
+            LibVideo v;
+            v.filepath = path;
+            v.filename = QFileInfo(path).fileName();
+            v.filesize = 1;
+            v.mtime = 1;
+            return v;
+        };
+        db.upsertPhoto(seedPhoto(shotHere));
+        db.upsertPhoto(seedPhoto(shotGone));
+        db.upsertPhoto(seedPhoto(shotUnowned));
+        db.upsertPhoto(seedPhoto(shotOffline));
+        db.insertVideo(seedVideo(clipHere));
+        db.insertVideo(seedVideo(clipGone));
+        db.insertVideo(seedVideo(clipUnowned));
+        db.insertVideo(seedVideo(clipOffline));
     }
 
     LibraryScanner scanner;
@@ -1237,6 +1296,27 @@ static int runVanishSelfTest() {
     check(left.size() == 3,
           "vanish: exactly one row went, and nothing else moved");
 
+    QStringList shots, clips;
+    {
+        LibraryDb db;
+        if (db.open(dbPath)) {
+            for (const LibPhoto &photo : db.allPhotos())
+                shots << photo.filepath;
+            for (const LibVideo &video : db.allVideos())
+                clips << video.filepath;
+        }
+    }
+    check(shots.contains(shotHere) && clips.contains(clipHere),
+          "vanish: a picture and a video whose files are present survive");
+    check(!shots.contains(shotGone) && !clips.contains(clipGone),
+          "vanish: a picture and a video under a folder this pass read to the end are retired");
+    check(shots.contains(shotOffline) && clips.contains(clipOffline),
+          "vanish: rows under a folder that is not mounted are kept");
+    check(shots.contains(shotUnowned) && clips.contains(clipUnowned),
+          "vanish: a picture and a video no watch folder owns are kept");
+    check(shots.size() == 3 && clips.size() == 3,
+          "vanish: exactly one row of each kind went, and nothing else moved");
+
     // A second pass must have nothing left to retire: the survivors are
     // survivors because the rule says so, not because they were not looked at.
     LibraryScanner again;
@@ -1249,6 +1329,16 @@ static int runVanishSelfTest() {
             second = int(db.allTracks().size());
     }
     check(second == 3, "vanish: a repeat scan retires nothing further");
+    int secondShots = 0, secondClips = 0;
+    {
+        LibraryDb db;
+        if (db.open(dbPath)) {
+            secondShots = int(db.allPhotos().size());
+            secondClips = int(db.allVideos().size());
+        }
+    }
+    check(secondShots == 3 && secondClips == 3,
+          "vanish: a repeat scan retires nothing further from either shelf");
 
     printf("vanish self-test: %s (%d failures)\n",
            failed == 0 ? "ALL PASS" : "FAILED", failed);

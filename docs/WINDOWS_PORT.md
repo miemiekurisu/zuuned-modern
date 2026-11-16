@@ -3872,4 +3872,79 @@ here, and this sitting added no evidence for the WPD road because the player on 
 WinUSB; every model but this Pavo stays unproven. The album a photo send creates is an MTP folder: the ZMDB
 photo-album table stayed at 1 through every send and delete here, so whether an emptied folder lingers on
 the player is still unmeasured. Linux and macOS are unchanged by construction, which on this machine means
-unverified rather than verified.
+unverified rather than verified.### A shelf that takes nothing down, and a lookup nobody asked for (2026-11-17, third sitting)
+
+**Two defaults found by reading the rules against each other instead of from a bug report.**  One
+talked to the network on every launch without being told to; the other lets a library row outlive
+the file it describes, forever.
+
+**TMDB for videos now needs asking, the way album covers already did.**  `runLookupRound()` drained
+every video row without a cached match on every launch, up to eight attempts for a stubborn row, on
+the API key this build ships with.  Album artwork has carried a default-off switch precisely because
+of that complaint (`albumCoverLookup`, off); the videos shelf never got the same rule.  `videoLookup`
+(`src/AppSettings.h:276`, read by `videoLookupEnabled()` at `src/LibraryService.cpp:434`) ships
+`false`, and the round returns before it builds an eligible list, logging one line per launch that
+names how many rows hold no match - so a blank poster reads as "nobody asked" rather than as work
+still pending.  An explicit ask is not vetoed by the switch: `requeueForMatch()`
+(`src/LibraryService.cpp:2389`) and `requeueAllUnmatched()` (`src/LibraryService.cpp:2410`) set
+`m_videoLookupAsked`, which is what Settings -> Library "retry unmatched lookups" and "Retry All" on
+the videos page drive, so both buttons work with the switch off and touch exactly the rows they
+point at.  **This is a behaviour change**: a build that used to fetch posters on its own initiative
+fetches none until asked.  What that pass could ever find here is personal clips, which have no
+TMDB entry to find, so its only measurable output was a library full of "no match" rows and a
+network conversation the user never started.  Measured on the real profile: a launch logs
+`[library] video lookup off: N videos hold no TMDB match; Settings > Library "retry unmatched
+lookups" or "Retry All" on the videos page asks once` and not one `[tmdb]` request line.
+
+**The gate asserts both halves**, because only together do they tell "off" from "off, but the code
+ignored the switch": a videos launch must report that it looked nothing up, and must print no
+provider request line of any kind (`tests/win-usability/run.ps1:973`, `:975`).  That is two checks
+more than the last section counted.
+
+**Photos and videos had no vanish sweep at all: their walks only ever upserted.**  `DELETE FROM
+photos`/`videos` was reachable from one place, the user's own "Remove from Library", so a picture or
+a movie taken off the disk kept its row forever - a tile with nothing behind it, no broken-image
+glyph, no word about it, and a fresh `QQuickImage: Cannot open:` warning on every paint because the
+delegate still asks that path for pixels.  Only music had the rule.  `LibraryScanner` now has it as
+two file-scope helpers used by all three shelves: `rowHasNoFile()` (`src/library/LibraryScanner.cpp:138`)
+and `retireRows()` (`:161`).  The rule is the narrow one.  The most specific watched root of that
+kind owns a row, so an offline nested folder is never cleared by its readable parent; that root must
+have been walked to the end this pass (`walked.complete`) and still carry the `st_dev`/`st_ino` it
+had when the walk started, so an unmounted folder, a remount, or a replaced junction certifies
+nothing; and absence means `ENOENT`/`ENOTDIR` only, because on a permission or network error the file
+may well exist and be merely unreadable.  A row no watch folder of that kind owns - a spoken import,
+a path from a folder the user stopped watching, a device pull that landed elsewhere - is left alone,
+because nothing can speak for whether its file should be there.  Rows go, files never do, and
+`remove*(id, false)` deliberately does not write `excluded_files`: put the file back and the next
+pass indexes it again with whatever metadata lives inside it.  The photo and video walks now certify
+their roots the way the music walk does (`:629`, `:674`) and report what they removed
+(`retired %d vanished video(s)` at `:873`, `... photo(s)` at `:886`).
+
+**A fixture bug found by gating it, worth writing down because the failure text blamed the rule.**
+`librarytool vanish` created a `pictures/` and a `movies/` tree and seeded rows into both, and 3 of
+15 checks answered "the sweep retired nothing" - because the fixture never called `addWatchFolder()`
+for either of them, so no watch folder owned those rows and the rule refused them correctly.  Two
+registration lines and it is 15/15.  A test that forgets its own premise looks exactly like a feature
+that does not work.
+
+**Measured on the real profile, not just in the fixture.**  Read-only before the fix: 70 track rows
+with 0 homeless, 7 photo rows with 2 homeless, 4 video rows with 1 homeless - all three left by the
+QA harness, which sends a picture and a clip to the player and deletes the scratch files afterwards.
+Each sat under a mounted watch folder of the right type, so the sweep should and did reach them.  The
+first launch of the relinked build logged `retired 1 vanished video(s)` and `retired 2 vanished
+photo(s)`; the store now reads 70 / 5 / 3, `Cannot open` stops at the moment the sweep commits and
+does not recur, and no track row moved.  Nobody hand-edited the database.
+
+**Gates on the relinked build.**  `librarytool vanish` `ALL PASS` at 15 checks (8 of them new, per
+shelf for retired / kept-unmounted / kept-unowned / exact counts / repeat-scan no-op);
+`librarytool paths`, `names`, `customize` all `ALL PASS`; `tests\win-compat` 204 / 0 / 0;
+`tests\privacy` 19 / 0; i18n `AUDIT=ok`, 0 sentence-shaped literals outside a catalogue lookup;
+`tests\win-usability` `launches=19 checks=159 failures=0 skips=0 killed=0` `OVERALL=ok`.
+
+**What this sitting did not do.**  No device claim: the only hardware traffic here is the app's own
+auto-connect browse inside the usability gate's isolated profiles, and the wire evidence for
+pictures and movies stays the hand round trip of the previous section.  Nothing was heard.  The
+lookup gate is a network-behaviour change proved from logs, not from a packet capture, and the music
+half of it is untouched.  The podcast and audiobook categories are still unread in both directions on
+this platform, `purgeSpokenItems` has never run here, every model but this Pavo stays unproven, and
+Linux and macOS are unchanged by construction - which on this machine means unverified, not verified.

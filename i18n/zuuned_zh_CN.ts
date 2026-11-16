@@ -3164,6 +3164,14 @@ or select photos and choose Add.</source>
         <translation>资料库中有 %1 个视频，其中 %2 个没有 TMDB 匹配</translation>
     </message>
     <message>
+        <source>look up movie and TV info online (TMDB)</source>
+        <translation>联网查询电影和电视剧信息（TMDB）</translation>
+    </message>
+    <message>
+        <source>Off by default, like music artwork. A launch then asks TMDB nothing and a poster you do not have stays empty until you ask; either button below asks once, for the videos it points at.</source>
+        <translation>默认关闭，与音乐封面同理。这样启动时不会向 TMDB 发出任何请求，你尚未拥有的海报会一直保持空白，直到你主动查询；下面任一按钮都只会为它所指向的视频查询一次。</translation>
+    </message>
+    <message>
         <source>retry unmatched lookups (%1)</source>
         <translation>重试未匹配的查询（%1）</translation>
     </message>

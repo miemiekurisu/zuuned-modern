@@ -122,6 +122,57 @@ bool accessibleDirectory(const QString &path, struct stat *identity = nullptr) {
     return ok;
 }
 
+/* One media kind's share of the vanish sweep: does this stored row provably
+ * have no file behind it any more?  Three kinds of missing file look identical
+ * to stat() and are not identical at all - gone from a folder this pass read to
+ * the end, gone because the folder is not mounted or not plugged in, and
+ * outside every watch folder so that nothing can say whether it belongs here.
+ * Only the first answers true.  The most specific watched root wins, so an
+ * offline nested folder is never cleared by its readable parent, and a root
+ * that changed identity mid-scan (a remount, a replaced junction) certifies
+ * nothing.  Absence means ENOENT/ENOTDIR: a permission or network error leaves
+ * the row alone, because there the file may well exist and be merely
+ * unreadable.  A row no watch folder of this kind owns is left alone for the
+ * same reason - a spoken import, or a path from a folder the user removed from
+ * the library, has nothing to speak for whether its file should be here. */
+static bool rowHasNoFile(const QString &path, const QSet<QString> &roots,
+                         const QHash<QString, QPair<quint64, quint64>> &completedRoots) {
+    QString owner;
+    for (const QString &root : roots) {
+        const QString prefix =
+            root == QLatin1String("/") ? root : root + QLatin1Char('/');
+        if (path.startsWith(prefix) && root.size() > owner.size()) owner = root;
+    }
+    if (owner.isEmpty()) return false;
+    struct stat currentRoot {};
+    if (!completedRoots.contains(owner) || !accessibleDirectory(owner, &currentRoot))
+        return false;
+    if (completedRoots.value(owner)
+        != qMakePair(quint64(currentRoot.st_dev), quint64(currentRoot.st_ino)))
+        return false;
+    struct stat file {};
+    return ::stat(pathBytes(path).constData(), &file) != 0
+        && (errno == ENOENT || errno == ENOTDIR);
+}
+
+/* Delete the rows the rule above proved homeless, in one transaction, and
+ * report how many actually went.  Rows go, files never do: put the file back
+ * and the next pass indexes it again with whatever metadata lives inside it. */
+static int retireRows(LibraryDb &db, const QVector<QPair<qint64, QString>> &rows,
+                      std::atomic<bool> &cancel,
+                      bool (LibraryDb::*removeRow)(qint64, bool)) {
+    if (rows.isEmpty() || cancel || !db.begin()) return 0;
+    bool ok = true;
+    int removed = 0;
+    for (const auto &row : rows) {
+        if (cancel || !(db.*removeRow)(row.first, false)) { ok = false; break; }
+        removed++;
+    }
+    if (ok && !cancel && db.commit()) return removed;
+    db.rollback();
+    return 0;
+}
+
 struct FolderMetadata { QString artist, album; int disc = 0; };
 struct TrackResult { LibTrack track; QString error; };
 
@@ -395,6 +446,7 @@ void LibraryScanner::scan() {
     // Video roots keep their folder TYPE — it forces category at insert
     // time and picks the size floor (5MB tv/anime, 50MB movies).
     QVector<WatchFolder> videoRoots;
+    QSet<QString> videoRootPaths;
     for (const WatchFolder &f : db.watchFolders()) {
         const QString norm = normalizePath(f.path);
         rootType.insert(norm, f.type);
@@ -406,6 +458,7 @@ void LibraryScanner::scan() {
             || f.type == QLatin1String("anime") || f.type == QLatin1String("all")) {
             WatchFolder vf = f;
             vf.path = norm;
+            videoRootPaths.insert(norm);
             videoRoots.append(vf);
         }
     }
@@ -506,12 +559,14 @@ void LibraryScanner::scan() {
     // ═══ Videos (filename-decode only; libav probe is DEFERRED to the
     //     app's probe consumer — SMB header reads are 200-500ms/file) ═══
     QVector<VideoWork> videoWork;
+    QHash<QString, QPair<quint64, quint64>> completedVideoRoots;
     if (!videoRoots.isEmpty() && !m_cancel) {
         const auto index = db.videoPathIndex();
         const auto sizes = db.videoSizeIndex();
         for (const WatchFolder &root : videoRoots) {
-            if (m_cancel) break;
-            LibraryScan::walkFiles(
+            struct stat initialRoot {};
+            if (m_cancel || !accessibleDirectory(root.path, &initialRoot)) continue;
+            const auto walked = LibraryScan::walkFiles(
                 root.path, QDir::Files | QDir::Readable,
                 [&](const QFileInfo &fi) {
                     const QString suffix = fi.suffix().toLower();
@@ -566,17 +621,27 @@ void LibraryScanner::scan() {
                     videoWork.append(w);
                 },
                 &m_cancel);
+            struct stat finalRoot {};
+            if (!m_cancel && walked.complete
+                && accessibleDirectory(root.path, &finalRoot)
+                && initialRoot.st_dev == finalRoot.st_dev
+                && initialRoot.st_ino == finalRoot.st_ino)
+                completedVideoRoots.insert(
+                    root.path, {quint64(finalRoot.st_dev), quint64(finalRoot.st_ino)});
         }
     }
 
     // ═══ Photos (stat-only) ═══
     QVector<LibPhoto> photoWork;
+    QHash<QString, QPair<quint64, quint64>> completedPhotoRoots;
     {
         const auto index = db.photoPathIndex();
         for (const QString &root : photoRoots) {
             if (m_cancel) break;
             Excluded &hide = excluded[root];
-            LibraryScan::walkFiles(
+            struct stat initialRoot {};
+            if (m_cancel || !accessibleDirectory(root, &initialRoot)) continue;
+            const auto walked = LibraryScan::walkFiles(
                 root, QDir::Files | QDir::Readable,
                 [&](const QFileInfo &fi) {
                     const QString suffix = fi.suffix().toLower();
@@ -602,6 +667,12 @@ void LibraryScanner::scan() {
                     photoWork.append(shot);
                 },
                 &m_cancel);
+            struct stat finalRoot {};
+            if (!m_cancel && walked.complete && accessibleDirectory(root, &finalRoot)
+                && initialRoot.st_dev == finalRoot.st_dev
+                && initialRoot.st_ino == finalRoot.st_ino)
+                completedPhotoRoots.insert(
+                    root, {quint64(finalRoot.st_dev), quint64(finalRoot.st_ino)});
         }
     }
 
@@ -769,43 +840,51 @@ void LibraryScanner::scan() {
         QVector<QPair<qint64, QString>> vanished;
         for (const LibTrack &track : db.allTracks()) {
             if (m_cancel) break;
-            QString owner;
-            for (const QString &root : musicRoots) {
-                const QString prefix =
-                    root == QLatin1String("/") ? root : root + QLatin1Char('/');
-                if (track.filepath.startsWith(prefix) && root.size() > owner.size())
-                    owner = root;
-            }
-            // No music watch folder owns it - a spoken import, a path from a
-            // folder the user removed from the library - so nothing can speak
-            // for whether its file should be here.
-            if (owner.isEmpty()) continue;
-            struct stat currentRoot {};
-            if (!completedMusicRoots.contains(owner)
-                || !accessibleDirectory(owner, &currentRoot)) continue;
-            if (completedMusicRoots.value(owner)
-                != qMakePair(quint64(currentRoot.st_dev), quint64(currentRoot.st_ino)))
-                continue;
-            struct stat file {};
-            if (::stat(pathBytes(track.filepath).constData(), &file) == 0
-                || (errno != ENOENT && errno != ENOTDIR))
-                continue;
-            vanished.append(qMakePair(track.id, track.filepath));
+            if (rowHasNoFile(track.filepath, musicRoots, completedMusicRoots))
+                vanished.append(qMakePair(track.id, track.filepath));
         }
-        if (!vanished.isEmpty() && !m_cancel && db.begin()) {
-            bool ok = true;
-            int removed = 0;
-            for (const auto &row : vanished) {
-                if (m_cancel || !db.removeTrack(row.first, false)) { ok = false; break; }
-                removed++;
-            }
-            if (ok && !m_cancel && db.commit()) {
-                tracksRetired = removed;
-                fprintf(stderr, "[scan] retired %d vanished track(s)\n", tracksRetired);
-                emit chunkCommitted();
-            } else {
-                db.rollback();
-            }
+        tracksRetired = retireRows(db, vanished, m_cancel, &LibraryDb::removeTrack);
+        if (tracksRetired > 0) {
+            fprintf(stderr, "[scan] retired %d vanished track(s)\n", tracksRetired);
+            emit chunkCommitted();
+        }
+    }
+
+    // The same rule, for the two shelves that never had it.  A photo or a video
+    // walk only ever ADDED rows, so a picture or a movie the user deleted from
+    // disk kept its tile forever: an empty card on the wall, no broken-image
+    // glyph, no word about it, and a warning on every paint because the
+    // delegate still asks that file for pixels.  Measured on a real library
+    // after a test picture was taken away - the Photos page reported it could
+    // not open the image on every visit, for a file that no longer existed, and
+    // no rescan could ever say so, because nothing here compared a row with the
+    // folder that owns it.  A device pull lands inside a watched root like any
+    // other folder, so a pulled row is certifiable on exactly the same terms.
+    int videosRetired = 0, photosRetired = 0;
+    if (!m_cancel) {
+        QVector<QPair<qint64, QString>> vanished;
+        for (const LibVideo &video : db.allVideos()) {
+            if (m_cancel) break;
+            if (rowHasNoFile(video.filepath, videoRootPaths, completedVideoRoots))
+                vanished.append(qMakePair(video.id, video.filepath));
+        }
+        videosRetired = retireRows(db, vanished, m_cancel, &LibraryDb::removeVideo);
+        if (videosRetired > 0) {
+            fprintf(stderr, "[scan] retired %d vanished video(s)\n", videosRetired);
+            emit chunkCommitted();
+        }
+    }
+    if (!m_cancel) {
+        QVector<QPair<qint64, QString>> vanished;
+        for (const LibPhoto &photo : db.allPhotos()) {
+            if (m_cancel) break;
+            if (rowHasNoFile(photo.filepath, photoRoots, completedPhotoRoots))
+                vanished.append(qMakePair(photo.id, photo.filepath));
+        }
+        photosRetired = retireRows(db, vanished, m_cancel, &LibraryDb::removePhoto);
+        if (photosRetired > 0) {
+            fprintf(stderr, "[scan] retired %d vanished photo(s)\n", photosRetired);
+            emit chunkCommitted();
         }
     }
 

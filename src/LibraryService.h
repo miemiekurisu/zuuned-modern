@@ -462,6 +462,10 @@ private:
     QVector<LibVideo> m_videos;
     bool m_probeBusy = false;
     bool m_matchBusy = false;
+    // Set by requeueForMatch() / requeueAllUnmatched(): a lookup was asked
+    // for, so the drain runs with the switch off until nothing is eligible.
+    bool m_videoLookupAsked = false;
+    bool m_videoLookupAnnounced = false;
     bool m_customizationBusy = false;
     LibraryScanner *m_scanner = nullptr;
     AlbumArtService *m_art = nullptr;
@@ -478,6 +482,11 @@ private:
     // album covers only: a portrait has no file to read and no store that sells
     // one, so it stays behind the switch above.
     bool albumCoverLookupEnabled() const;
+    // Settings -> Library "look up movie and TV info online (TMDB)".  Default
+    // off, the same rule as the two above: a launch contacts TMDB only when
+    // told to.  m_videoLookupAsked carries an explicit request, so both retry
+    // buttons work with the switch off.
+    bool videoLookupEnabled() const;
     QVariantMap m_artistImages;
     QVariantMap m_albumArtworkStatus, m_artistArtworkStatus;
     QHash<QString, QVariantMap> m_albumMatchingEvidence;

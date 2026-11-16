@@ -1100,12 +1100,13 @@ Item {
                         desc: qsTr("optional. Your own key beats the one this build ships with, for new lookups.")
 
                         // Both readers shipped long before this card existed:
-                        // src/library/TmdbClient.cpp:98 prefers this key over the
+                        // src/library/TmdbClient.cpp:103 prefers this key over the
                         // bundled one, and src/library/MusicIdentityClient.cpp:580
-                        // over the shared Fanart.tv key. Nothing asked for that
-                        // key over the network unless a lookup was already opted
-                        // into (see Music artwork above), so an empty field here
-                        // changes nothing at all.
+                        // over the shared Fanart.tv key. Nothing asks for that key
+                        // over the network unless a lookup was already opted into:
+                        // the switch under Re-lookup for videos, and Music artwork
+                        // for covers and portraits. An empty field here changes
+                        // nothing at all, and said so before either switch existed.
                         ColumnLayout {
                             Layout.fillWidth: true
                             spacing: Theme.spaceMd
@@ -1150,6 +1151,27 @@ Item {
                         desc: qsTr("%1 videos in library, %2 without a TMDB match")
                               .arg(LibraryService.videoCount)
                               .arg(LibraryService.unmatchedVideoCount)
+                        RowLayout {
+                            spacing: Theme.spaceSm
+                            SpokenCheckBox {
+                                objectName: "videoLookupToggle"
+                                checked: AppSettings.videoLookup
+                                Accessible.name: qsTr("look up movie and TV info online (TMDB)")
+                                onClicked: AppSettings.videoLookup =
+                                    !AppSettings.videoLookup
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: qsTr("look up movie and TV info online (TMDB)")
+                                color: Theme.textSecondary
+                                font.pixelSize: 13
+                                font.weight: Font.Light
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                        PhaseNote {
+                            text: qsTr("Off by default, like music artwork. A launch then asks TMDB nothing and a poster you do not have stays empty until you ask; either button below asks once, for the videos it points at.")
+                        }
                         GlassButton {
                             text: qsTr("retry unmatched lookups (%1)")
                                   .arg(LibraryService.unmatchedVideoCount)
