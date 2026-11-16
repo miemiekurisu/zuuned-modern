@@ -1112,6 +1112,20 @@ QVariantList LibraryService::musicIdentityPeers(const QVariantMap &track) const 
     return m_localTrackIdentities.peers(track);
 }
 
+namespace {
+// A pending playlist slot and a device row name the same song when all five
+// identity fields agree, so an import does not open a second slot for a member
+// that is already waiting. A row with no name at all gets no key: an empty one
+// would collide with every other unnamed slot.
+QString memberKey(const QString &artist, const QString &album, const QString &title,
+                  int disc, int track) {
+    const QString a = artist.trimmed(), b = album.trimmed(), t = title.trimmed();
+    if (a.isEmpty() && b.isEmpty() && t.isEmpty()) return QString();
+    return QString::number(qMax(0, disc)) + QChar(0x1f) + QString::number(qMax(0, track))
+        + QChar(0x1f) + a + QChar(0x1f) + b + QChar(0x1f) + t;
+}
+} // namespace
+
 QVariantMap LibraryService::importDevicePlaylist(const QString &name, const QVariantList &items,
                                                   const QVariantList &sourcePeers) {
     MusicIdentity::Index peers;
@@ -1119,9 +1133,7 @@ QVariantMap LibraryService::importDevicePlaylist(const QString &name, const QVar
     for (const auto &value : items) peers.add(MusicIdentity::fromMap(value.toMap()),++peerId);
     for (const auto &value : sourcePeers) peers.add(MusicIdentity::fromMap(value.toMap()),++peerId);
     QVector<LibraryDb::PlaylistEntry> entries;
-    QVariantList toPull;
-    QSet<quint32> requested;
-    int here = 0;
+    QVector<QVariantMap> rows;
     for (const QVariant &value : items) {
         const auto item = value.toMap();
         LibraryDb::PlaylistEntry entry;
@@ -1136,20 +1148,61 @@ QVariantMap LibraryService::importDevicePlaylist(const QString &name, const QVar
         entry.trackId = matchTrackId(entry.artist, entry.album, entry.title,
                                     entry.discNumber, entry.trackNumber, matchingPeers);
         entries.append(entry);
-        if (entry.trackId >= 0) ++here;
-        else {
-            const quint32 itemId = item.value(QStringLiteral("itemId")).toUInt();
-            if (itemId > 0 && !requested.contains(itemId)) {
-                requested.insert(itemId); toPull.append(item);
-            }
+        rows.append(item);
+    }
+    // Refuse to forge it twice. A tape whose name the library already carries
+    // takes the members it does not hold yet rather than getting a twin beside
+    // it, which is the same promise the device side makes for a forge.
+    const qint64 twin = m_db->findPlaylistByName(name);
+    QVector<int> keep;
+    if (twin < 0) {
+        for (int i = 0; i < entries.size(); ++i) keep.append(i);
+    } else {
+        QSet<qint64> owned;
+        QSet<QString> heldSlots;
+        for (const auto &have : m_db->playlistEntries(twin)) {
+            if (have.trackId >= 0) { owned.insert(have.trackId); continue; }
+            const QString key = memberKey(have.artist, have.album, have.title,
+                                          have.discNumber, have.trackNumber);
+            if (!key.isEmpty()) heldSlots.insert(key);
+        }
+        for (int i = 0; i < entries.size(); ++i) {
+            const auto &entry = entries.at(i);
+            const QString key = memberKey(entry.artist, entry.album, entry.title,
+                                          entry.discNumber, entry.trackNumber);
+            // The word slots is a Qt keyword macro, so this set has another name.
+            if (!key.isEmpty() && heldSlots.contains(key)) continue;
+            if (entry.trackId >= 0 && owned.contains(entry.trackId)) continue;
+            keep.append(i);
         }
     }
-    const qint64 id = m_db->createPlaylistEntries(name.trimmed(), entries);
+
+    // Only what the join actually added counts, in both directions: the toast
+    // and the pull queue report the same numbers the playlist gained.
+    QVector<LibraryDb::PlaylistEntry> added;
+    QVariantList toPull;
+    QSet<quint32> requested;
+    int hereNow = 0;
+    for (const int i : keep) {
+        const auto &entry = entries.at(i);
+        added.append(entry);
+        if (entry.trackId >= 0) { ++hereNow; continue; }
+        const quint32 itemId = rows.at(i).value(QStringLiteral("itemId")).toUInt();
+        if (itemId > 0 && !requested.contains(itemId)) {
+            requested.insert(itemId); toPull.append(rows.at(i));
+        }
+    }
+
+    qint64 id = twin;
+    if (twin < 0) id = m_db->createPlaylistEntries(name.trimmed(), added);
+    else if (!added.isEmpty() && !m_db->appendPlaylistEntries(twin, added)) id = -1;
     if (id < 0)
         return {{"success", false}, {"id", -1}, {"error", UiText::tr("Could not save this playlist. Try again.")}};
     reloadPlaylists();
-    return {{"success", true}, {"id", double(id)}, {"here", here},
-        {"pending", int(entries.size()) - here}, {"itemsToPull", toPull}, {"error", QString()}};
+    return {{"success", true}, {"id", double(id)}, {"reused", twin >= 0},
+        {"added", int(added.size())}, {"here", hereNow},
+        {"pending", int(added.size()) - hereNow},
+        {"itemsToPull", toPull}, {"error", QString()}};
 }
 
 bool LibraryService::importPlaylistTrack(double playlistId,

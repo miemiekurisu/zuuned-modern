@@ -31,6 +31,18 @@
         <translation>▶ 加入正在播放</translation>
     </message>
     <message>
+        <source>queued %1 tracks</source>
+        <translation>已加入队列 %1 首</translation>
+    </message>
+    <message>
+        <source>already on the Zune</source>
+        <translation>已在 Zune 上</translation>
+    </message>
+    <message>
+        <source>already queued</source>
+        <translation>已在队列中</translation>
+    </message>
+    <message>
         <source>delete from device</source>
         <translation>从设备删除</translation>
     </message>
@@ -63,6 +75,18 @@
     <message>
         <source>▶ add to now playing</source>
         <translation>▶ 加入正在播放</translation>
+    </message>
+    <message>
+        <source>queued %1 tracks</source>
+        <translation>已加入队列 %1 首</translation>
+    </message>
+    <message>
+        <source>already on the Zune</source>
+        <translation>已在 Zune 上</translation>
+    </message>
+    <message>
+        <source>already queued</source>
+        <translation>已在队列中</translation>
     </message>
     <message>
         <source>ALBUMS</source>
@@ -2576,8 +2600,36 @@ or select photos and choose Add.</source>
         <translation>%1 首曲目</translation>
     </message>
     <message>
+        <source>%1 has no tracks this browser can see</source>
+        <translation>%1 里没有这个浏览器能看到的曲目</translation>
+    </message>
+    <message>
+        <source>pulling %1 more</source>
+        <translation>正在再拉取 %1 首</translation>
+    </message>
+    <message>
+        <source>all of them are already here</source>
+        <translation>它们全都已经在本地了</translation>
+    </message>
+    <message>
+        <source>%1 was already in your library: %2 new, %3</source>
+        <translation>%1 已经在你的资料库里：新增 %2 首，%3</translation>
+    </message>
+    <message>
+        <source>%1 copied to your library: %2 of %3 here, %4</source>
+        <translation>已把 %1 复制到你的资料库：%3 首里有 %2 首就在本地，%4</translation>
+    </message>
+    <message>
+        <source>%1 members the browser did not see were skipped</source>
+        <translation>有 %1 个成员是这个浏览器没有看到的，已跳过</translation>
+    </message>
+    <message>
         <source>Playlists</source>
         <translation>播放列表</translation>
+    </message>
+    <message>
+        <source>Copy to library</source>
+        <translation>复制到资料库</translation>
     </message>
     <message>
         <source>no playlists on this zune yet — make one!</source>
@@ -4136,6 +4188,14 @@ or select photos and choose Add.</source>
     <message>
         <source>add book</source>
         <translation>添加书籍</translation>
+    </message>
+    <message>
+        <source>saving…</source>
+        <translation>正在保存……</translation>
+    </message>
+    <message>
+        <source>subscribe</source>
+        <translation>订阅</translation>
     </message>
 </context>
 <context>

@@ -1239,6 +1239,16 @@ qint64 LibraryDb::createPlaylistEntries(const QString &name, const QVector<Playl
     return write.finish() ? id : -1;
 }
 
+qint64 LibraryDb::findPlaylistByName(const QString &name) {
+    const QString want = name.trimmed();
+    if (!m_db || want.isEmpty()) return -1;
+    Stmt s(m_db,
+        "SELECT id FROM playlists WHERE name=? COLLATE NOCASE ORDER BY id LIMIT 1");
+    if (!s.ok()) return -1;
+    s.bindText(1, want);
+    return s.step() == SQLITE_ROW ? s.colInt64(0) : -1;
+}
+
 QVector<QPair<qint64, QString>> LibraryDb::allPlaylists(QVector<int> *counts, QVector<int> *pendingCounts) {
     QVector<QPair<qint64, QString>> out;
     if (counts) counts->clear();

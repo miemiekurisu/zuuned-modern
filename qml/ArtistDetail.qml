@@ -330,10 +330,10 @@ Item {
                         const res = SyncEngine.addTracks(page.fullTracks.map(
                             t => page._syncItemOf(t)))
                         toastHost.show(res.error || (res.added > 0
-                            ? "queued " + res.added + " tracks"
+                            ? qsTr("queued %1 tracks").arg(res.added)
                             : (res.onDevice ?? 0) > 0
-                              ? "already on the zune"
-                              : "already queued"))
+                              ? qsTr("already on the Zune")
+                              : qsTr("already queued")))
                     }
                 }
             }

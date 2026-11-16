@@ -3578,3 +3578,64 @@ need a re-browse, because zuuned registers no `IPortableDeviceEvents` sink.
 made on the player with the app not running.  `tests\win-usability` result is recorded in the
 commit message rather than assumed.  **Nothing was listened to**, the WinUSB/libzune line is
 untouched, and no Linux playlist evidence is carried into any of it.
+
+## Zune HD regression sweep, and WMA Lossless with its cover (2026-11-16)
+
+The MTP player went back in the drawer and the Zune HD came out, so this tree - the one that
+carries the MTP playlist forge and the `WM/Picture` leg of the lossless encoder - was read against
+the model it has not been read against since those two landed.  `devicetool` answers
+`VERDICT=agree`, `os_driver=winusb`, `os_problem=0`, and the ZMDB scan tallies **168 tracks,
+10 albums, 10 artists, 5 photos, 1 photo album, 0 playlists, 0 videos**, with the one movie the
+videos page shows arriving through the HD's own MTP video fallback rather than ZMDB.  Every page
+was photographed - music, videos, photos, playlists and the four device pages - and the artwork
+invariants came back self-consistent, `artAgree` equal to `artDecoy` with every wanted owner
+found.  **No regression was found on the HD.**
+
+**The whole cycle on this tree rather than a piece of it.**  A pull took one device row into the
+CJK music root: 74,573 bytes, `49 44 33 03` where the name promised `.mp3`, indexed rather than
+merely written.  An upload sent a 49,644-byte tone: `retagged to ID3v2.3`,
+`audio target=mp3 produced=mp3`, `forge done: 1 ok, 0 failed`,
+`sync-summary elapsedMs=2651 failed=0`, device rows 168 -> 169.  A delete took it back - the
+post-sync rescan still counted 169 and then `delete-settled deviceTracks=168 rowGone=true` with the
+row reading 已删除 1 项 - so deletion over WinUSB on this model behaves the way the two
+2026-11-14 WPD deletions did.
+
+**The question carried since 2026-10-29, answered with something other than this app's own word.**
+With `syncAudioFormat=wma-lossless` the log reads `target 2 ch / 44100 Hz / 16-bit for a 2 ch /
+44100 Hz / 16-bit source`, `cover carried: image/png, 2362 bytes`,
+`wrote 882000 samples as 2 ch / 44100 Hz / 16-bit lossless`, and
+`audio target=wma-lossless produced=wmalossless tag=0x0163`.  That file then went onto the HD and
+came back off it, and `ffprobe` named what survived the wire: `codec_name=wmalossless`,
+`codec_long_name=Windows Media Audio Lossless`, 44100 Hz stereo, ASF magic `30 26 B2 75` under the
+device-supplied `.mp3` name, and a `WM/Picture` attribute.  Decoded, the source FLAC and the pulled
+file give **the same 3,528,000 bytes of s16 under the same MD5** - bit-exact through the player, on
+the tree that writes the cover, so the picture leg cost the audio leg nothing.  A cover this
+encoder writes is readable by this app at both ends: the local album count went 9 -> 10 and
+`artAgree` went with it.  One 20 s lossless tone stays on the player for the half nobody here can
+do - **it has not been listened to.**
+
+**Four strings the audit could not see.**  Driving that round trip surfaced `saving…` and
+`subscribe` in `qml/SpokenImportSheet.qml` and the three transfer toasts shared by
+`qml/AlbumDetail.qml` and `qml/ArtistDetail.qml` (`queued N tracks`, `already on the zune`,
+`already queued`) sitting as bare literals.  `AUDIT=ok` was true beside every one of them because
+the `qml` check looks at user-facing *properties*, and a toast built inside a `show()` call is not
+a property.  They are `qsTr` now, the count travels through `.arg()` as `queued %1 tracks`, the Zune
+spelling reuses the catalogue's existing line rather than a fourth casing of it, and the catalogue
+is 1617 texts with 0 unfinished.  The heuristic's blind spot itself is unchanged and still worth
+knowing.  `qml/Main.qml` grew a `[qa-rows]` dump under `--qa-probe` - up to 80 device rows with
+their item ids - which is what lets a scripted pull name a real object instead of guessing at one,
+and one harness trap is worth writing down: `Start-Process -ArgumentList` hands a spaced
+`--qa-device` spec to the app unquoted, the spec splits on the first space, `qaDeviceSpec`
+legitimately answers null, and the run looks healthy while doing nothing.
+
+**What stayed broken, unchanged.**  `get_object_info(0x07000002)` still answers `0x2002` three
+times a scan; three objects still fail every thumbnail method after
+`bad AUINT8 count 0 in 4-byte payload`; and the moniker tally on this player reads
+**artist 25, genre 128, album 0, title 0** - the genre figure is new to this file, and none of it
+reaches the screen, which reads Unknown Artist.
+
+**Gates.**  `librarytool paths` `ALL PASS (0 failures)` and `tests\win-compat` 204 checks /
+0 failures / 0 skips against the rebuilt tree.  `tests\win-usability` was deliberately not run:
+the player and the real profile were in use throughout.  Still open on this model - a playlist
+forged on the HD (it holds none), the podcast and audiobook categories in both directions, photo
+*send*, and anything anyone has heard.

@@ -80,7 +80,7 @@ Popup {
             Item { Layout.fillWidth: true }
             SpokenButton {
                 objectName: "spokenSaveImport"
-                text: sheet.saving ? "saving…" : sheet.book ? qsTr("add book") : "subscribe"
+                text: sheet.saving ? qsTr("saving…") : sheet.book ? qsTr("add book") : qsTr("subscribe")
                 enabled: !SpokenMediaService.busy && !sheet.saving && (sheet.book ? sheet.orderedParts.length > 0 && bookTitle.text.trim().length > 0 : sheet.previewReady && SpokenMediaService.preview.kind === "show")
                 onClicked: {
                     sheet.saving = true

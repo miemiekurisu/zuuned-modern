@@ -29,6 +29,57 @@ Item {
         toastHost.show("saving " + track.title + "…")
     }
 
+    // Copy one of the zune's tapes into the library. Members come out of the
+    // browser's own rows, so the join sees the device's own disc and track
+    // numbers and not just a name. What we already own joins this minute; the
+    // rest is pulled into the import folder, where the watcher indexes the
+    // file and the pending slot left here joins by itself. A tape whose name
+    // the library already carries takes its missing members (see
+    // LibraryService::importDevicePlaylist), so pressing this twice is safe.
+    function itemsFor(pl) {
+        const items = []
+        let unseen = 0
+        for (const id of (pl.trackIds ?? [])) {
+            const info = DeviceService.trackInfo(id)
+            if (info.title === undefined) unseen++
+            else items.push(info)
+        }
+        return { items: items, unseen: unseen }
+    }
+
+    function importToLibrary(pl) {
+        if (!DeviceService.connected || !pl) return
+        const name = String(pl.name ?? "").trim()
+        const picked = itemsFor(pl)
+        if (picked.items.length === 0) {
+            toastHost.show(qsTr("%1 has no tracks this browser can see").arg(name))
+            return
+        }
+        const imported = LibraryService.importDevicePlaylist(
+            name, picked.items, DeviceService.deviceTrackRows())
+        if (!imported.success) { toastHost.show(imported.error); return }
+        const pulls = imported.itemsToPull ?? []
+        // Arm the indicator before the extracts it counts down arrive.
+        if (pulls.length > 0) DeviceService.beginPull("track", pulls.length, imported.here)
+        for (const e of pulls) {
+            if (!DeviceService.connected) break
+            DeviceService.saveTrackToLibrary(e.itemId, e.title || "",
+                                             e.artist || "", e.album || "")
+        }
+        const tail = pulls.length > 0
+            ? qsTr("pulling %1 more").arg(pulls.length)
+            : qsTr("all of them are already here")
+        const report = [imported.reused
+            ? qsTr("%1 was already in your library: %2 new, %3")
+                .arg(name).arg(imported.added).arg(tail)
+            : qsTr("%1 copied to your library: %2 of %3 here, %4")
+                .arg(name).arg(imported.here).arg(imported.added).arg(tail)]
+        if (picked.unseen > 0)
+            report.push(qsTr("%1 members the browser did not see were skipped")
+                            .arg(picked.unseen))
+        toastHost.show(report.join(" · "))
+    }
+
     Connections {
         target: DeviceService
         function onStateChanged() {
@@ -67,6 +118,22 @@ Item {
                     : qsTr("%1 tracks").arg((root.openPlaylist.trackIds ?? []).length)
                 font.pixelSize: 12
                 color: Theme.textDim
+            }
+            // The tape is on screen and open; copying it is the one thing
+            // a visitor came here to do, so it is a button and not a drag
+            // the user has to know about.
+            Text {
+                visible: root.openPlaylist !== null && DeviceService.connected
+                text: qsTr("Copy to library")
+                font.pixelSize: 13
+                color: copyPlArea.containsMouse ? Theme.activePink : Theme.pink
+                MouseArea {
+                    id: copyPlArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.importToLibrary(root.openPlaylist)
+                }
             }
             Text {
                 visible: root.openPlaylist === null
@@ -335,6 +402,11 @@ Item {
     ZuneMenu {
         id: plMenu
         property var target: null
+        ZuneMenuItem {
+            text: qsTr("Copy to library")
+            enabled: DeviceService.connected
+            onTriggered: root.importToLibrary(plMenu.target)
+        }
         ZuneMenuItem {
             text: qsTr("Delete from Zune")
             enabled: DeviceService.connected

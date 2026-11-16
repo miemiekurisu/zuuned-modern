@@ -132,6 +132,31 @@ int main(int argc, char **argv) {
         for (const auto &row : library.playlists()) if (row.toMap().value("name").toString() == "Repeated")
             repeats = titles(library.playlistTracks(row.toMap().value("id").toDouble())) == QStringList{"A", "C", "A"};
         check(m3u.value("added").toInt() == 3 && repeats, "M3U import also retains intentional repeated tracks");
+        // Copying the same tape off the zune twice is the ordinary case, since the
+        // browser keeps offering the button, so a second press has to join the tape
+        // the library already carries instead of opening a twin beside it.
+        const auto firstCopy = library.importDevicePlaylist("Twin tape",
+            {deviceTrack("A", 701), deviceTrack("Ghost", 702)});
+        const double twinId = firstCopy.value("id").toDouble();
+        const int tapeCount = library.playlists().size();
+        check(firstCopy.value("success").toBool() && !firstCopy.value("reused").toBool()
+              && firstCopy.value("added").toInt() == 2 && firstCopy.value("here").toInt() == 1
+              && firstCopy.value("itemsToPull").toList().size() == 1,
+              "a device tape copied for the first time reports what it added and what it still needs");
+        const auto again = library.importDevicePlaylist("Twin tape",
+            {deviceTrack("A", 701), deviceTrack("Ghost", 702)});
+        check(again.value("success").toBool() && again.value("reused").toBool()
+              && again.value("id").toDouble() == twinId && again.value("added").toInt() == 0
+              && again.value("itemsToPull").toList().isEmpty()
+              && library.playlists().size() == tapeCount
+              && db.playlistEntries(qint64(twinId)).size() == 2,
+              "copying the same tape again opens no twin, duplicates no member and queues no second pull");
+        const auto grown = library.importDevicePlaylist("TWIN TAPE ",
+            {deviceTrack("A", 701), deviceTrack("Ghost", 702), deviceTrack("B", 703)});
+        check(grown.value("success").toBool() && grown.value("id").toDouble() == twinId
+              && grown.value("added").toInt() == 1 && grown.value("here").toInt() == 1
+              && db.playlistEntries(qint64(twinId)).size() == 3,
+              "a tape whose name differs only in case or spaces joins the one it matches and gains only its new member");
     }
     QSettings().setValue("pendingPlaylistAdds", oldNotes); // crash before old settings cleanup
     {

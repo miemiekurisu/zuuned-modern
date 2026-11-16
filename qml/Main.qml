@@ -317,7 +317,30 @@ ApplicationWindow {
             + " artPreferArtOk=" + qaArtProof.preferArtOk
             + " artKeyOwner=" + qaArtProof.keyOwner
             + " artKeyDecoy=" + qaArtProof.keyDecoy)
+        qaDumpDeviceRows()
     }
+    // QA harness (`--qa-probe`, device attached): the browse rows this session can
+    // actually see on the player, in the log.  A scripted `--qa-device` pull and
+    // `--qa-delete` both name a track by title, and until now nothing in the app
+    // ever printed a device title, so a real-player round trip could only be
+    // started by guessing one.  Reads the very rows the page paints, once, and
+    // stays silent without the probe flag, so ordinary runs log nothing extra.
+    property bool qaDeviceDumped: false
+    function qaDumpDeviceRows() {
+        if (!qaProbe || qaDeviceDumped)
+            return
+        const rows = DeviceService.deviceTrackRows()
+        if (!rows || rows.length === 0)
+            return
+        qaDeviceDumped = true
+        console.log("[qa-rows] deviceTracks=" + DeviceService.trackCount
+            + " rows=" + rows.length)
+        for (let i = 0; i < rows.length && i < 80; i++)
+            console.log("[qa-rows] " + i + " itemId=" + rows[i].itemId
+                + " title=" + rows[i].title + " artist=" + rows[i].artist
+                + " album=" + rows[i].album)
+    }
+
     // The window keeps reporting while a gate drives it, so a resize or a queue
     // change is visible in the log instead of needing a screenshot to infer.
     Timer {
@@ -988,31 +1011,16 @@ ApplicationWindow {
                         // collections arrive pre-expanded into `items`.
                         onDeviceItemsDropped: (page, items, name) => {
                             if (!DeviceService.connected) return
-                            // W24 · a device playlist dropped on the
-                            // library: recreate it here. Tracks we own join
-                            // now; the rest are pulled and auto-join once
-                            // scanned (LibraryService keeps them pending).
+                            // W24 · a device playlist dropped on the library
+                            // is the very copy the playlists page offers as a
+                            // button, so the two cannot drift. W25: its members
+                            // come from the device rows rather than from the drag
+                            // payload, which is why the join also sees the
+                            // device's own disc and track numbers.
                             if (page === "libraryPlaylists") {
-                                const imported = LibraryService.importDevicePlaylist(
-                                    name !== "" ? name : "Imported playlist", items,
-                                    DeviceService.deviceTrackRows())
-                                if (!imported.success) {
-                                    toastHost.show(imported.error)
-                                    return
-                                }
-                                const pulls = imported.itemsToPull || []
-                                const toPull = pulls.length
-                                const here = imported.here
-                                if (toPull > 0)
-                                    DeviceService.beginPull("track", toPull, here)
-                                for (const e of pulls) {
-                                    if (!DeviceService.connected) break
-                                    DeviceService.saveTrackToLibrary(
-                                        e.itemId, e.title || "", e.artist || "", e.album || "")
-                                }
-                                toastHost.show("saved playlist ‘" + name + "’ · "
-                                    + here + " here"
-                                    + (toPull > 0 ? " · pulling " + toPull : ""))
+                                devicePlaylistsPage.importToLibrary(
+                                    { name: name,
+                                      trackIds: items.map(it => it.itemId ?? -1) })
                                 return
                             }
                             // Pass 1: split into what we must extract vs.
@@ -1200,6 +1208,7 @@ ApplicationWindow {
                         visible: window.currentPage === "deviceAudiobooks"
                     }
                     PlaylistsPage {
+                        id: devicePlaylistsPage
                         anchors.fill: parent
                         visible: window.currentPage === "devicePlaylists"
                     }

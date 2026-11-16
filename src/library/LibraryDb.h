@@ -108,6 +108,10 @@ public:
                                                 QVector<int> *pendingCounts = nullptr);
     // Ordered track ids of a playlist.
     QVector<qint64> playlistTrackIds(qint64 playlistId);
+    // The id of the playlist already carrying exactly this name (case- and
+    // space-insensitive), or -1. Names are not unique in the schema, so a
+    // caller that must not create a twin asks here instead of assuming.
+    qint64 findPlaylistByName(const QString &name);
     bool renamePlaylist(qint64 id, const QString &name);
     bool deletePlaylist(qint64 id);
     // Replace the full ordered track list.
