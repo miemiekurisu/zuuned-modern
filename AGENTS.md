@@ -3034,8 +3034,8 @@ WPD one: a 40-member local playlist went to the player, every member transcoded
 `audio target=mp3 produced=mp3`, then `forge done: 1 ok, 0 failed`,
 `playlist phase: 1 playlists, 209 device tracks indexed`, `forging playlist: 40 members resolved`,
 and `created playlist (id=0x07000152, fmt=0xBA05, 40 tracks)`.  The rescan agreed instead of
-taking the app's word: the same log reads `playlist record atom=07000152 size=287` - 7 bytes of
-record header plus **40 four-byte handles** - and the device playlist listing answers
+taking the app's word: the same log reads `playlist record atom=07000152 size=287` for the very
+atom whose name the object walk gives, and the device playlist listing answers
 `device playlists (1)`.  So a playlist forged on this model lands with its members and is read
 back with them.  Whether the player's own on-screen playlist view shows it, and whether it plays
 it, stay unconfirmed, and nobody has listened to any of it.
@@ -3043,9 +3043,34 @@ it, stay unconfirmed, and nobody has listened to any of it.
 One trap that would make the next reader distrust that evidence: the scan line in the same
 breath says `scanned: 209 tracks, 0 videos, 5 photos, 12 albums, 11 artists, **0 playlists**`, and
 that zero is structural, not a lost playlist.  `libzune/src/zmdb.c` has no `PARSE_DESC` for
-`SCHEMA_PLAYLIST` - the block that touches playlist records exists to hex-dump up to five of them
+`SCHEMA_PLAYLIST` - the block that touches playlist records existed to hex-dump up to five of them
 for research - so `playlist_count` is 0 on every HD scan no matter what the player holds.  The
 honest count is `[zmdb] device playlists (N)` in `src/DeviceWorker.cpp`, which walks the objects
-themselves.  Two consequences: never quote the scan tally's playlist field as a device fact, and
-note that a shipped path still writes that 64-byte hex dump into every session log, which is
-research noise rather than diagnostics and is worth deleting the next time that file is open.
+themselves, so never quote the scan tally's playlist field as a device fact.  Later the same day
+that hex dump was deleted and every record is walked, which leaves one
+`playlist records seen: N` line in its place; live against the same player it answers 2 while the
+tally beside it still reads 0 playlists, and the extra entry is `atom=07000002 size=67`, which
+also appears in a 2026-11-15 scan that answered `device playlists (0)` and is therefore not a
+user list.  Count descriptor entries with that line, never lists.
+
+One number here was wrong when it was first written and is corrected rather than quietly dropped.
+`size=287` is **not** a 7-byte record header plus 40 four-byte object handles, which is 167, and
+the 287 was never checked against that arithmetic before being published in this file and in
+`docs/WINDOWS_PORT.md`.  Nothing in this repository decodes a playlist record's layout, so the
+size is printed and not explained: the read-back fact is the atom matching the one the object
+walk names, and `zmdb.c` now says so at the source.
+
+**2026-11-16 the QA residue goes, and deletion stops being a single sighting.**  Three rows this
+project had left on the HD were purged with the user's agreement, and each one is judged by a
+re-walk rather than by a return code: two ASCII-named QA rows and one row whose folder and track
+are Han characters, taking the player from 209 tracks to 208, 207, then 206, every one
+`rowGone=true`, with free space read back at 10.5259 GB.  The Han row matching exactly says the
+delete path needs no CJK special case.  Deletion on this model is therefore four round trips and
+not one, and it buys nothing else: device-side playback is still unheard, the spoken categories
+and photo *send* stay deliberate refusals, and the local bit-exact pull of the lossless tone was
+left where it is.  No row name is quoted above because they are the app's own QA fixtures, not
+user content, and the same reason keeps the folder name out of this file.  With the counter
+change described in the paragraph above carrying into the binary, the gates re-run against the
+relinked build are `tests\win-compat` 204 checks / 0 failures / 0 skips, `librarytool paths`
+ALL PASS and `tests\privacy` 19 / 0; `tests\win-usability` was not run in this sitting either,
+so its last recorded number is still `launches=17 checks=95 failures=0`.

@@ -866,10 +866,28 @@ static ZuneDBLibrary *zmdb_parse_full(const uint8_t *data, size_t data_len) {
 
     #undef PARSE_DESC
 
-    /* Playlists: hex dump for research, then fall back to MTP internally later */
+    /* Playlists: this scan does not parse SCHEMA_PLAYLIST into the library, on
+     * purpose - zune_get_playlists() answers from the MTP objects and their
+     * reference lists, which is the only shape a player keeps a playlist in.
+     * The records are still opened here so that a forged playlist is visible as
+     * a READ rather than only as a write receipt: measured on a Pavo (Zune HD)
+     * on 2026-11-16 a 40-member list this app forged read back in the next scan
+     * as atom=07000152 size=287.  Do not turn that size into a member count:
+     * this file does not decode a playlist record's layout, and the tempting
+     * reading of a 7-byte head plus 40 four-byte handles is 167, not 287, so it
+     * is not offered.  What is evidence is that the record is there in a read
+     * and that the same scan's "device playlists (1)" names the same atom.  The
+     * other atom printed by this loop, 07000002 size=67, is not a user list at
+     * all - it is present in a 2026-11-15 scan that answered "device playlists
+     * (0)" - so "playlist records seen" counts descriptor entries, never lists.
+     * And because lib->playlist_count is never touched by this loop the tally
+     * below prints 0 playlists no matter what the player holds: the honest count
+     * is the DeviceWorker line.  Every record is walked now that the reason for
+     * the hex dump is gone; a cap of five also capped the evidence. */
     if (disc.playlist >= 0 && disc.playlist < 96) {
         ZMDBDescriptor *pd = &st.descs[disc.playlist];
-        for (uint32_t i = 0; i < pd->entry_count && i < 5; i++) {
+        int records = 0;
+        for (uint32_t i = 0; i < pd->entry_count; i++) {
             uint32_t eoff = pd->data_offset + (i * pd->entry_size);
             if (eoff + 4 > data_len) break;
             uint32_t aid = rd32(data + eoff);
@@ -880,14 +898,10 @@ static ZuneDBLibrary *zmdb_parse_full(const uint8_t *data, size_t data_len) {
             const uint8_t *rec = zmdb_read_record(&st, roff, &rsz);
             if (!rec) continue;
             fprintf(stderr, "[zunedb] playlist record atom=%08X size=%u\n", aid, rsz);
-            /* Hex dump first 64 bytes for analysis */
-            uint32_t dlen = rsz < 64 ? rsz : 64;
-            for (uint32_t b = 0; b < dlen; b++) {
-                if (b % 16 == 0) fprintf(stderr, "  %04x: ", b);
-                fprintf(stderr, "%02x ", rec[b]);
-                if (b % 16 == 15 || b == dlen - 1) fprintf(stderr, "\n");
-            }
+            records++;
         }
+        if (records)
+            fprintf(stderr, "[zunedb] playlist records seen: %d\n", records);
     }
 
     free(st.index);

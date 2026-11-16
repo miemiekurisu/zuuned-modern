@@ -3646,16 +3646,41 @@ Eleven minutes after the sweep above recorded that this player held no playlists
 a 40-member local playlist to it, and the ZMDB road did the whole job: 40 members resolved and
 transcoded (`audio target=mp3 produced=mp3`, the user's own format setting), `forge done: 1 ok,
 0 failed`, `created playlist (id=0x07000152, fmt=0xBA05, 40 tracks)`.  The next scan is the proof,
-because it is a read rather than a receipt: `playlist record atom=07000152 size=287` - a 7-byte
-record header plus 40 four-byte object handles - and the object walk answers
+because it is a read rather than a receipt: the next scan prints `playlist record
+atom=07000152 size=287` for the same atom, and the object walk answers
 `device playlists (1)`.  **A playlist forged on a Pavo over WinUSB lands on the player with its
 members and is read back with them.**  The player's own on-screen playlist view and playing it
 there are still unconfirmed, and nothing here was listened to.
 
 Do not be misled by the scan line printed beside it, `scanned: 209 tracks, ..., 0 playlists`.
 That zero is structural: `libzune/src/zmdb.c` never parses `SCHEMA_PLAYLIST` into its library -
-the code that touches playlist records exists to hex-dump up to five of them for research - so
+the code that touches playlist records existed to hex-dump up to five of them for research - so
 its `playlist_count` is 0 on every HD scan even when the player holds ten lists.  The field that
-answers is `device playlists (N)` from `src/DeviceWorker.cpp`, which walks the objects.  The same
-block leaves a 64-byte hex dump of every playlist record it opens in the session log, which is
-leftover research output and should go.
+answers is `device playlists (N)` from `src/DeviceWorker.cpp`, which walks the objects.  Later
+the same day the hex dump was deleted and every record is walked, so the block prints a single
+`playlist records seen: N` line; against this player it answers 2 beside a tally that still reads
+0 playlists, because the descriptor also holds `atom=07000002 size=67`, which shows up in a scan
+answering `device playlists (0)` and is therefore not a user list.  That counter counts
+descriptor entries and must not be quoted as a list count.
+
+One number in the section above was wrong as written and is corrected rather than edited away.
+`size=287` is not a 7-byte record header plus 40 four-byte object handles - that arithmetic comes
+out as 167 - and no code in this tree decodes a playlist record's layout.  The size is therefore
+printed and left unexplained; the read-back evidence is that the atom matches the one the object
+walk names.
+
+### Deletion measured four times, and the research hex dump leaves (2026-11-16, same day)
+
+Three rows this project left on the player were purged with the user's agreement - two
+ASCII-named QA rows and one whose folder and track are Han characters - and the walk after each
+one answered `rowGone=true` while the count fell 209, 208, 207, 206, free space back at
+10.5259 GB.  So deletion on a Pavo over WinUSB is four round trips rather than the single
+sighting this page carried, and a Han-named spec is matched by the same path with no special
+case.  What that still does not buy: device-side playback, the spoken categories, photo *send*,
+and anything anybody has listened to.
+
+`libzune/src/zmdb.c` no longer hex-dumps playlist records into the session log and no longer
+caps the walk at five; it prints one `playlist records seen: N` line.  Live it answers 2 while
+the scan tally still prints 0 playlists, which is the same structural zero as before, and the
+second entry `atom=07000002 size=67` is present even on a scan that reports no playlists.  The
+`size=287` arithmetic above was wrong and is corrected, not re-explained.
