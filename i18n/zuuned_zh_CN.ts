@@ -5752,6 +5752,10 @@ Star an episode in any show to find it here.</source>
         <translation>无法完成下载</translation>
     </message>
     <message>
+        <source>%1 episode(s) downloaded</source>
+        <translation>已下载 %1 个单集</translation>
+    </message>
+    <message>
         <source>This item no longer exists</source>
         <translation>此项目已不存在</translation>
     </message>

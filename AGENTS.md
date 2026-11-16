@@ -3074,3 +3074,32 @@ change described in the paragraph above carrying into the binary, the gates re-r
 relinked build are `tests\win-compat` 204 checks / 0 failures / 0 skips, `librarytool paths`
 ALL PASS and `tests\privacy` 19 / 0; `tests\win-usability` was not run in this sitting either,
 so its last recorded number is still `launches=17 checks=95 failures=0`.
+
+**2026-11-16 the first podcast on a Windows player, and a disconnect that was always designed.**
+The user asked whether the drop after a podcast sync is a bug or a feature. One session answers
+it end to end. The device read `spoken inventory: 0 podcast episodes`; three episodes of a test
+feed went over; the show cover was accepted (`album art set for item ... (291753 bytes)`, three
+times, so the `did not accept the show cover` warning never fired); finalize ran `0x9201` to -1
+(response 0x2005), `CleanDataStore 0x9108` to 0, `0x9202` to -1 (0x2005); the app then logged
+`[libusb] closed` **itself**, and the very next line was
+`re-index reconnect: attempt 1 of 6 in 6000ms`. Six seconds later the ladder opened the player,
+authenticated, rescanned, and answered `spoken inventory: 3 podcast episodes` - a write with a
+read behind it. So the gap the user watched is the deliberate release that lets the player
+re-index, because WinUSB holds the interface for a whole re-index and no hotplug arrival will
+ever come, and the ladder closed it on the first rung. The budget is unchanged at
+6/12/20/30/45/60 s: still absent past about three minutes is the 2026-10-21 wedge and wants a
+power cycle, not another retry.
+
+That read closes the podcast **send** direction on a Pavo over WinUSB, which every paragraph
+above this one calls a deliberate refusal. It was only ever a refusal on the WPD side:
+`doSendPodcast` names Windows' MTP driver and tells the user to connect the player over WinUSB,
+while `zune_forge_folder` + `zune_forge_podcast_series` + `zune_smuggle_podcast_episode` +
+`zune_brand` have been wired on the ZMDB path the whole time and had simply never been run on
+Windows. Open after this: the player's own on-screen podcast list, playing a synced episode, the
+device-side deletion of one, the audiobook direction, and anything anyone has listened to.
+
+Reading that path also turned up a translation defect. The download completion message was a bare
+`QStringLiteral("%1 episode(s) downloaded")`, and because `i18n/audit.py` only judges literals
+*inside* a tr wrapper it could not see it - the same blind spot the 2026-11-16 toast finding
+records. It goes through `UiText::tr` now, and the catalogue is 1618 texts / 0 unfinished /
+0 stale after `i18n/update.ps1` and `build_qm.ps1 -Fill -NextToExe`.

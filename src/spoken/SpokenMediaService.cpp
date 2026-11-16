@@ -969,7 +969,7 @@ void SpokenMediaService::download(const QStringList &ids) {
                 return;
             ++count;
         }
-        r.message = QStringLiteral("%1 episode(s) downloaded").arg(count);
+        r.message = UiText::tr("%1 episode(s) downloaded").arg(count);
     });
 }
 void SpokenMediaService::saveCover(const QString &id, const QUrl &source, bool reset,

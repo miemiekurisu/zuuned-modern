@@ -1065,6 +1065,7 @@ Cancelled; completed downloads were kept ~=> 已取消；已完成的下载内�
 Episode no longer exists ~=> 单集已不存在
 Cannot create download file ~=> 无法创建下载文件
 Cannot finish download ~=> 无法完成下载
+%1 episode(s) downloaded ~=> 已下载 %1 个单集
 This item no longer exists ~=> 此项目已不存在
 The cover changed since you opened Customize. Reopen it and try again. ~=> 自定义打开后封面已发生变化。请重新打开后重试。
 Choose a local image under 10 MiB ~=> 请选择小于 10 MiB 的本地图片

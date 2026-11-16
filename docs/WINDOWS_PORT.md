@@ -3684,3 +3684,25 @@ caps the walk at five; it prints one `playlist records seen: N` line.  Live it a
 the scan tally still prints 0 playlists, which is the same structural zero as before, and the
 second entry `atom=07000002 size=67` is present even on a scan that reports no playlists.  The
 `size=287` arithmetic above was wrong and is corrected, not re-explained.
+
+### A podcast landed on the player, and the post-sync gap explained itself (2026-11-16, same day)
+
+The user asked whether the disconnect that follows a podcast sync is a bug. It is the finalize
+chain working as designed, and the same session proved the write: `spoken inventory: 0 podcast
+episodes` before, three episodes sent, the show cover accepted at 291,753 bytes, finalize
+reporting `0x9108` ok between two vendor operations that answer 0x2005, then `[libusb] closed`
+by the app itself and `re-index reconnect: attempt 1 of 6 in 6000ms`. The ladder re-opened and
+authenticated in six seconds and the rescan answered `spoken inventory: 3 podcast episodes`.
+
+Releasing the handle is what lets the player re-index at all, since WinUSB keeps the interface
+for the whole re-index and `libusb_hotplug` reports no arrival here. If the player is still
+absent after the full 6/12/20/30/45/60 s ladder (about three minutes), that is the 2026-10-21
+wedge and a power cycle, not something a longer ladder fixes.
+
+So podcast send on a Pavo over WinUSB is now a closed gate with a read behind it, not the
+refusal this page used to state; the refusal is WPD-only and still says so on screen. The
+player's own podcast view, playing a synced episode, deleting one from the device, and the
+audiobook direction stay open, and nothing was listened to. One real defect fell out of the
+reading: the download completion message sat outside the catalogue as a bare literal, invisible
+to `i18n/audit.py` because that script judges only literals inside a tr wrapper. It is
+`UiText::tr` now; catalogue 1618 / 0 unfinished / 0 stale.
