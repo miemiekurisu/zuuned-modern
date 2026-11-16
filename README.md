@@ -127,13 +127,24 @@ Zune HD over WinUSB, except the one that says it did not.
 - **Deletion** - one music track purged through the right-click control, and the next
   launch read 168 tracks in 10 albums by 10 artists back off the player with its own free
   space 18.5 MB larger. The agreement is the device's, not a row dropped from a list.
+- **Podcast send, over the WinUSB road** - three episodes of a test feed went in, the show
+  cover was accepted at 291,753 bytes, and the next inventory read `3 podcast episodes`
+  back off the player.  Over Windows' own MTP driver the category is refused in words.
+
+A finished sync leaves the player connected.  Nothing in this application releases it until
+you press `eject`; Settings -> Device -> "When a sync ends" puts the old behaviour - let go
+so the player can re-index, reconnect when it answers - back behind a switch, for a player
+that really does wait for the session to close.  Whether a Zune waits for that is a premise
+this project has never measured, and the switch says so out loud on screen.
 
 **Not yet proven on Windows**, and not inherited from Linux either: any deletion beyond
-those two music tracks (one per road), the podcast, audiobook, photo and video transfer
-categories - adding photos or video over the MTP road is refused by design rather than left
-untested - every Zune model but that one Pavo, audible PC-side playback (the automated gate opens WASAPI muted, so
-no automated run has heard anything), and the packaged folder with a player attached or on a machine
-that did not build it - there is a preview artifact now, but still no installer and no code signing.
+those two music tracks (one per road), the audiobook, photo and video transfer categories,
+and the half of a podcast the player has to do by itself - a send has been read back, no
+synced show has been seen or heard on the player's own screen - adding photos or video over
+the MTP road is refused by design rather than left untested - every Zune model but that one
+Pavo, audible PC-side playback (the automated gate opens WASAPI muted, so no automated run
+has heard anything), and the packaged folder with a player attached or on a machine that
+did not build it - there is a preview artifact now, but still no installer and no code signing.
 **WMA Lossless** is encoded on Windows, by the encoder the operating system already ships rather than
 a bundled codec, and a track written that way has now
 been heard on the HD; the format is documented for the Zune HD alone, so no other model has been

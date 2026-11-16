@@ -840,6 +840,14 @@ Arrange them in your reading order.</source>
         <translation>上次同步：%1</translation>
     </message>
     <message>
+        <source>sync complete — still connected</source>
+        <translation>同步完成 —— 仍在连接中</translation>
+    </message>
+    <message>
+        <source>still connected — eject to let the Zune rebuild its library</source>
+        <translation>仍在连接中 —— 若要 Zune 重建索引请弹出设备</translation>
+    </message>
+    <message>
         <source>no zune</source>
         <translation>没有 zune</translation>
     </message>
@@ -3492,6 +3500,18 @@ or select photos and choose Add.</source>
         <translation>插上 Zune 后，这张卡片会自动从设备读取内容填写。</translation>
     </message>
     <message>
+        <source>When a sync ends</source>
+        <translation>同步结束时</translation>
+    </message>
+    <message>
+        <source>zuuned keeps hold of the player after a sync so you can go on browsing it, and eject stays a button you press. What the old behaviour did was hand the player back, on the belief that only losing the session makes it rebuild its own library — something this app has never measured, and the cost of being wrong is a player that disappears from the panel in the middle of a session. Turn this on if new items never appear on the player until it has been unplugged, and a finished sync will disconnect itself and reconnect when the player answers again.</source>
+        <translation>同步结束后 zuuned 会继续持有播放器，方便你继续浏览，弹出仍然是由你按下的按钮。旧做法会把播放器交还系统，理由是只有失去会话它才会重建自己的媒体库——而这一点本应用从未实测过；判断错误的代价是播放器在会话中途从面板上消失。若发现只有拔插之后播放器上才出现新内容，请开启此项：同步结束后会自动断开，并在播放器重新响应时自动重连。</translation>
+    </message>
+    <message>
+        <source>disconnect after a sync so the Zune can re-index</source>
+        <translation>同步结束后断开连接，以便 Zune 重建索引</translation>
+    </message>
+    <message>
         <source>Previously connected</source>
         <translation>连接过的设备</translation>
     </message>
@@ -4962,6 +4982,10 @@ Star an episode in any show to find it here.</source>
     <message>
         <source>Sync complete — eject to apply changes</source>
         <translation>同步完成 —— 弹出设备以应用更改</translation>
+    </message>
+    <message>
+        <source>Sync complete — eject to re-index</source>
+        <translation>同步完成 —— 弹出设备以重建索引</translation>
     </message>
     <message>
         <source>Disconnected — the Zune is re-indexing, reconnecting in %1s</source>

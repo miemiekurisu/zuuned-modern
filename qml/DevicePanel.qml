@@ -41,6 +41,7 @@ Item {
     // Repeater.count is reactive; the model's rowCount() is not
     readonly property int queueCount: queueRepeater.count
     readonly property bool awaitingDisconnect: DeviceService.awaitingDisconnect
+    readonly property bool pendingReindex: DeviceService.pendingReindex
 
     // ── Wired from Main.qml (loading pipeline) ──
     property bool isLoadingDeviceData: false
@@ -1257,19 +1258,23 @@ Item {
                 }
 
                 ColumnLayout {
-                    visible: root.awaitingDisconnect
+                    visible: root.awaitingDisconnect || root.pendingReindex
                     Layout.fillWidth: true
                     Layout.topMargin: Theme.spaceXs
                     spacing: Theme.spaceXs
 
                     Text {
-                        text: qsTr("sync complete")
+                        text: root.pendingReindex && !root.awaitingDisconnect
+                              ? qsTr("sync complete — still connected")
+                              : qsTr("sync complete")
                         font.pixelSize: 14
                         font.weight: Font.Light
                         color: Theme.green
                     }
                     Text {
-                        text: qsTr("disconnect your Zune to apply changes")
+                        text: root.pendingReindex && !root.awaitingDisconnect
+                              ? qsTr("still connected — eject to let the Zune rebuild its library")
+                              : qsTr("disconnect your Zune to apply changes")
                         font.pixelSize: 11
                         font.weight: Font.Light
                         color: Theme.textSecondary

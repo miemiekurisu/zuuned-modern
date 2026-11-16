@@ -1749,6 +1749,30 @@ Item {
                     }
 
                     Sblk {
+                        title: qsTr("When a sync ends")
+                        desc: qsTr("zuuned keeps hold of the player after a sync so you can go on browsing it, and eject stays a button you press. What the old behaviour did was hand the player back, on the belief that only losing the session makes it rebuild its own library — something this app has never measured, and the cost of being wrong is a player that disappears from the panel in the middle of a session. Turn this on if new items never appear on the player until it has been unplugged, and a finished sync will disconnect itself and reconnect when the player answers again.")
+
+                        RowLayout {
+                            spacing: Theme.spaceSm
+                            SpokenCheckBox {
+                                objectName: "releaseAfterSyncToggle"
+                                checked: AppSettings.releaseAfterSync
+                                Accessible.name: qsTr("disconnect after a sync so the Zune can re-index")
+                                onClicked: AppSettings.releaseAfterSync =
+                                    !AppSettings.releaseAfterSync
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: qsTr("disconnect after a sync so the Zune can re-index")
+                                color: Theme.textSecondary
+                                font.pixelSize: 13
+                                font.weight: Font.Light
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                    }
+
+                    Sblk {
                         title: qsTr("Previously connected")
                         desc: qsTr("every Zune this app has talked to, so a player you plug in next month is still recognised.")
 

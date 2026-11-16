@@ -30,6 +30,20 @@ class AppSettings : public QObject {
     ZUNE_SETTING(bool, podcastAutoQueue, setPodcastAutoQueue,
                  "podcastAutoQueue", false, toBool)
 
+    // Whether a finished sync puts the player down so it can rebuild its own
+    // library, or Zuuned keeps the session until the user ejects.
+    //
+    // Default OFF, on the user's rule: the app releases a device only when it
+    // is told to. The chain this replaces severed the session after every sync
+    // because closing it is *thought* to be what starts the on-device
+    // re-index - a premise this tree has never measured - and the cost of
+    // getting it wrong is a player that disappears from the panel in the middle
+    // of a working session. With it off the connection stays up, eject stays an
+    // offer the user declines or accepts, and anyone whose player really does
+    // need a session close has one switch to ask for it.
+    ZUNE_SETTING(bool, releaseAfterSync, setReleaseAfterSync,
+                 "releaseAfterSync", false, toBool)
+
     // What music becomes on the way to the player: "mp3", "wma" or
     // "wma-lossless".
     //

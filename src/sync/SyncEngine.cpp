@@ -2930,15 +2930,22 @@ void SyncEngine::finishSync(bool completed) {
         // stay visible for retry.
         m_queue.removeCompleted();
         if (m_device) {
-            m_device->setAwaitingDisconnect(true);
-            // Swap our running estimate for the device's own numbers,
-            // then finalize + close the session: an open session keeps
-            // the device parked in sync mode at 100% — closing it is
-            // what starts the on-device DB re-index (mac
-            // LIBMTP_Release_Device pattern). Worker queue order:
-            // terminal notify → storage refresh → finalize → sever.
+            // Swap our running estimate for the device's own numbers, then end
+            // the session the way the user asked to end it: by default nothing
+            // is put down. The player keeps answering here, `eject` stays the one
+            // control that releases it, and the panel says what is still waiting
+            // for it. The setting that restores the old chain carries the premise
+            // that chain rests on (mac LIBMTP_Release_Device: an open session
+            // parks the screen at 100% and closing it is what starts the
+            // on-device DB re-index) and that this tree never measured it.
+            // Worker queue order either way:
+            // terminal notify → storage refresh → finalize [→ sever].
+            if (QSettings().value(QStringLiteral("releaseAfterSync"), false).toBool())
+                m_device->setAwaitingDisconnect(true);
+            else
+                m_device->noteChangesPending();
             m_device->refreshStorage();
-            m_device->finalizeAndRelease();
+            m_device->finalizeAfterSync();
         }
     } else {
         m_syncCompleted = false;

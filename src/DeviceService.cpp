@@ -315,6 +315,7 @@ void DeviceService::onZuneArrived() {
 void DeviceService::onZuneLeft() {
     m_devicePresent = false;
     m_awaitingDisconnect = false;  // physical unplug completes the cycle
+    m_pendingReindex = false;
     m_reprobeTimer.stop();
     m_reprobeAttempt = 0;
     m_reprobePending = false;
@@ -581,6 +582,7 @@ void DeviceService::onSeverDone() {
     if (m_ejecting) {
         m_ejecting = false;
         m_awaitingDisconnect = false;  // auto-detect may reconnect now (mac)
+        m_pendingReindex = false;
         // No re-index happens on Windows' own MTP driver - a file is in its
         // folder the moment the transfer closes - so promising one there would be
         // a status the user waits for and never gets.
@@ -612,6 +614,18 @@ void DeviceService::setAwaitingDisconnect(bool v) {
     m_awaitingDisconnect = v;
     if (v)
         m_status = UiText::tr("Sync complete — eject to apply changes");
+    emit stateChanged();
+}
+
+// The post-sync state when the session stays ours. The player has the new
+// records and may want a restart to show them, which is why the panel is allowed
+// to offer eject; it is not why any operation would be refused, and unlike
+// setAwaitingDisconnect this state refuses nothing.
+void DeviceService::noteChangesPending() {
+    if (onWindowsMtpDriver())
+        return;  // nothing is waiting on a restart over Windows own MTP driver
+    m_pendingReindex = true;
+    m_status = UiText::tr("Sync complete — eject to re-index");
     emit stateChanged();
 }
 
@@ -672,6 +686,40 @@ void DeviceService::eject() {
     emit workerFinalize();
 }
 
+// Two roads end a sync and the user decides which one, because the difference
+// is felt on their desk and not in this file. Keeping the session means the
+// panel keeps the player: the rows stay browsable, the next operation needs no
+// reconnect, and nothing vanishes mid-session. Releasing it is the road this
+// tree had before, kept whole and reachable from Settings because the premise
+// under it - that only a session close makes the player fold new records into
+// its own library - has never been measured here.
+void DeviceService::finalizeAfterSync() {
+    if (QSettings().value(QStringLiteral("releaseAfterSync"), false).toBool()) {
+        fprintf(stderr, "[device] sync done - releaseAfterSync is on, releasing "
+                        "the player so it can re-index\n");
+        finalizeAndRelease();
+        return;
+    }
+    finalizeKeepingSession();
+}
+
+void DeviceService::finalizeKeepingSession() {
+    if (!m_connected)
+        return;
+    // The same reason the release chain gives: over Windows own MTP driver this
+    // application never owned the session, there is no vendor finalize to ask
+    // for, and a file has been in its folder since its transfer closed.
+    if (onWindowsMtpDriver()) {
+        fprintf(stderr, "[device] sync done over Windows' MTP driver - nothing to "
+                        "finalize and no re-index to wait for\n");
+        return;
+    }
+    m_finalizingInPlace = true;
+    fprintf(stderr, "[device] finalize with the session kept open - eject is the "
+                    "way to hand the player its re-index\n");
+    emit workerFinalize();
+}
+
 void DeviceService::finalizeAndRelease() {
     if (!m_connected || m_ejecting)
         return;
@@ -703,6 +751,16 @@ void DeviceService::finalizeAndRelease() {
 }
 
 void DeviceService::onFinalizeDone(bool ok) {
+    if (m_finalizingInPlace) {
+        // The vendor operations answered and the interface never left. Whether
+        // the player then rebuilt its own library with the session still open is
+        // exactly what this line exists to make checkable; it does not claim it.
+        m_finalizingInPlace = false;
+        fprintf(stderr, "[device] finalize %s with the session still open\n",
+                ok ? "ok" : "reported failure");
+        emit stateChanged();
+        return;
+    }
     if (!m_ejecting)
         return;  // finalize during a sync flow — SyncEngine handles it
     if (!ok)
@@ -1196,6 +1254,12 @@ void DeviceService::setSyncActive(bool active) {
     if (m_syncActive == active)
         return;
     m_syncActive = active;
+    if (active && m_pendingReindex) {
+        // Work is live on the player again, so "eject to re-index" is no longer
+        // the newest fact about it. The next sync end says so again if it is.
+        m_pendingReindex = false;
+        emit stateChanged();
+    }
     if (!active && m_spokenRequested && m_connected)
         QTimer::singleShot(0, this, &DeviceService::refreshSpokenMedia);
 }

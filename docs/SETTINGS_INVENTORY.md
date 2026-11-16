@@ -31,7 +31,7 @@ than in three places.
 
 ## Every stored key, and what reads it
 
-33 keys in `AppSettings`, and 3 in `Prefs`, two of which turn out to be unused aliases.  "Reader" names the place that consumes it, not
+Every key `AppSettings` stores, and 3 in `Prefs`, two of which turn out to be unused aliases.  "Reader" names the place that consumes it, not
 the setter.  A key is **wired** when a control writes it *and* something reads it.
 
 | key | card | control | reader | status |
@@ -71,6 +71,7 @@ the setter.  A key is **wired** when a control writes it *and* something reads i
 | `podcastAutoQueue` | Podcasts | switch | `src/main.cpp:325` | wired |
 | `podcastAutoQueueCount` | Podcasts | picker | `qml/PodcastSyncPicker.qml` | wired |
 | `podcastAutoCleanup` | Podcasts | switch | `src/sync/SyncEngine.cpp:1113` | wired |
+| `releaseAfterSync` | When a sync ends | switch | `src/DeviceService.cpp` `finalizeAfterSync`, `src/sync/SyncEngine.cpp` `finishSync` | wired |
 | `Prefs.playerStyle` | Now-playing player | Seg | ribbon, island, mini-player, video | wired |
 | `Prefs.backdrop` | - | none | none | **dead alias** of `backdropPreset` |
 | `Prefs.displayFont` | - | none | none | **dead alias** of `headerFont` |
@@ -88,7 +89,12 @@ set the import default, remove, plus the per-folder track count), Artwork source
 Duplicate formats, Re-lookup, Music artwork (two switches plus retry-missing), Rescan.
 
 **Device** - USB access, Transcode acceleration, Default video profile, Preferred audio
-language, and the three added today: This Zune, Previously connected, Audio conversion.
+language, and the three added today: This Zune, Previously connected, Audio
+conversion.  A later card, **When a sync ends**, holds one switch:
+`releaseAfterSync`.  By default a finished sync leaves the player connected and
+`eject` stays the only release; the switch puts the old release-and-reconnect
+chain back, for a player that really does wait for the session to close - a
+premise this tree has never measured, which is what the card says out loud.
 
 **Mixtapes** - Your mixtapes (art and dominant colour per tape), Import & export
 (`.m3u` in, export out).

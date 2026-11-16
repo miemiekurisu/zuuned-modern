@@ -3103,3 +3103,40 @@ Reading that path also turned up a translation defect. The download completion m
 *inside* a tr wrapper it could not see it - the same blind spot the 2026-11-16 toast finding
 records. It goes through `UiText::tr` now, and the catalogue is 1618 texts / 0 unfinished /
 0 stale after `i18n/update.ps1` and `build_qm.ps1 -Fill -NextToExe`.
+
+**2026-11-16 the user keeps the plug: a finished sync no longer puts the player down.** The
+paragraph above answers "bug or feature" with *feature, and here is the ladder that closes the
+gap*. The user rejects the design rather than the diagnosis: **the app must not disconnect the
+player before he disconnects it himself**. So the release chain that has ended every sync since
+the port began is now opt-in, and `eject` is the only control left in the app that releases a
+player. `releaseAfterSync` (`src/AppSettings.h`, default OFF) is the switch.
+`SyncEngine::finishSync` asks it once and either sets `awaitingDisconnect` as before or calls
+`DeviceService::noteChangesPending()`, and either way then queues `refreshStorage()` and
+`finalizeAfterSync()` - the new name for "end a sync", branching on the same setting. The
+default road is `finalizeKeepingSession()`: the same `workerFinalize`/`zune_finalize`, the
+interface never released, no `workerSever`, so the panel keeps its rows and the next operation
+needs no reconnect. `m_finalizingInPlace` exists to make that answer attributable - the log
+says `finalize with the session kept open` then `finalize ok with the session still open` and
+never pretends to know what the player did with its library afterwards. The UI half is a
+`pendingReindex` property and a post-sync card reading `sync complete - still connected`;
+unlike `awaitingDisconnect` it is an offer and not a gate, because the session is still ours and
+nothing is re-indexing behind our back, so it refuses no operation the user can still ask for.
+It clears on unplug, on an eject's sever, and the moment new sync work goes live. Over Windows'
+own MTP driver nothing moved: it never owned a session, so both roads return early there and
+`pendingReindex` is never set.
+Two things this does NOT change, said plainly because both used to be the whole story. The
+6/12/20/30/45/60 s ladder is untouched - `eject` and the opt-in road still arm it, because a
+player released on Windows never announces its return. And the premise under the old default,
+that only losing the session makes a Zune fold new records into its own library (copied from
+mac's `LIBMTP_Release_Device`), has still never been measured here, while **every Windows write
+read-back this repository holds, podcast included, was measured through that release chain**.
+The switch is therefore where the evidence lives and the default is the user's rule; whether a
+Pavo re-indexes with the session open is now checkable from those two log lines plus the
+player's own on-screen list, and stays unmeasured until that pairing happens. If new items only
+appear after an unplug, the switch is the honest answer and not a regression. Catalogue 1624
+texts / 0 unfinished / 0 stale, six new rows, menus and Settings included. Against the relinked
+build: `tests\win-compat` 204 checks / 0 failures / 0 skips, `librarytool paths` ALL PASS,
+`tests\privacy` 19 / 0; `tests\win-usability` was not run in this sitting because the user's
+own instance was holding the attached player, and a second instance in an isolated profile would
+have contended for its interface. The app relaunched on the new binary browsed the HD read-only
+and answered 9 albums with its own storage numbers. Nothing has been listened to.

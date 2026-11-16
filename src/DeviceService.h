@@ -130,6 +130,11 @@ class DeviceService : public QObject {
     // must not be auto-breached on arrival — it may be re-indexing.
     Q_PROPERTY(bool awaitingDisconnect READ awaitingDisconnect
                WRITE setAwaitingDisconnect NOTIFY stateChanged)
+    // A sync left records on the player that its own library may only fold in
+    // once it has been restarted. This is an offer, not a gate: unlike
+    // awaitingDisconnect it stops nothing the user can still ask for, because
+    // the session is still ours and nothing is re-indexing behind our back.
+    Q_PROPERTY(bool pendingReindex READ pendingReindex NOTIFY stateChanged)
 
 public:
     explicit DeviceService(QObject *parent = nullptr);
@@ -349,6 +354,11 @@ public:
     // sync mode and into its restart/re-index cycle — leaving the
     // session open parks its screen at 100% forever.
     void finalizeAndRelease();
+    // How a sync ends, which is the user's call: the release chain above, or
+    // the session-preserving one below. The default is the one below.
+    void finalizeAfterSync();
+    // Ask the player to fold in what a sync wrote, and stay connected.
+    void finalizeKeepingSession();
     // A player on Windows' own MTP driver is the measured exception to that
     // paragraph: nothing of ours holds its interface and no vendor re-index is
     // waiting on this session, so there it keeps the connection.  See
@@ -356,6 +366,10 @@ public:
 
     bool awaitingDisconnect() const { return m_awaitingDisconnect; }
     void setAwaitingDisconnect(bool v);
+    bool pendingReindex() const { return m_pendingReindex; }
+    // Say "there are changes the player has not folded in yet" without taking
+    // the session away - the post-sync state when releaseAfterSync is off.
+    Q_INVOKABLE void noteChangesPending();
     // A Zune that re-indexes without leaving the bus offers no hotplug
     // arrival, and on Windows that is every Zune: WinUSB keeps the interface
     // for the whole re-index.  The finalize chain therefore arms its own
@@ -526,6 +540,10 @@ private:
     QString m_connectionError;
     QColor m_moodColor; // invalid/transparent when disconnected
     bool m_awaitingDisconnect = false;
+    bool m_pendingReindex = false;
+    // Set while a finalize runs with the session kept open, so its answer is
+    // attributable and stays distinguishable from the eject chain.
+    bool m_finalizingInPlace = false;
     bool m_ejecting = false;
     // Whether the session that is being torn down was on Windows' own MTP driver.
     // onWindowsMtpDriver() asks m_connected, and an eject clears it before the

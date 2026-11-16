@@ -3706,3 +3706,39 @@ audiobook direction stay open, and nothing was listened to. One real defect fell
 reading: the download completion message sat outside the catalogue as a bare literal, invisible
 to `i18n/audit.py` because that script judges only literals inside a tr wrapper. It is
 `UiText::tr` now; catalogue 1618 / 0 unfinished / 0 stale.
+
+### Nobody lets go but the user (2026-11-16, same day)
+
+The section above explains the post-sync gap as designed behaviour. The user rejected the design
+instead of the diagnosis: until he presses disconnect himself, nothing in this application
+should drop the player. The release chain is therefore now opt-in - `releaseAfterSync`, one
+switch under Settings -> Device -> "When a sync ends", default off - and `eject` is the only
+control left that ends a session.
+
+What the default does when a sync finishes: the queue keeps its completed rows, the device is
+noted as holding records the player has not folded in, storage is refreshed, and
+`zune_finalize()` runs on a session that is never released. The panel says
+`sync complete - still connected` and offers eject; the rows stay browsable and the next send
+needs no reconnect. The state behind that card refuses nothing, which is the difference from the
+`awaitingDisconnect` it replaced, and it clears on unplug, on eject, and as soon as new sync
+work is live.
+
+What it costs in evidence, stated because that is why the switch exists: every write read-back
+on this page, including the podcast three sections up, went through the release chain. That
+chain is intact behind the switch, and the claim under it - that a Zune only rebuilds its
+library once the session closes, inherited from mac LIBMTP_Release_Device - has never been
+measured on this tree. Two log lines now make the question checkable, `finalize with the session
+kept open` and `finalize ok with the session still open`; the answer to it is on the player's
+own screen rather than in a log, and if new items appear only after an unplug then the switch is
+the right setting and not a workaround. The reconnect ladder is untouched, because a player that
+*is* released on Windows still never announces its return, and nothing about the WPD driver
+changed - it never held a session, so both roads there do nothing and say so.
+
+Counters for the relinked build: `tests\win-compat` 204 checks / 0 failures / 0 skips,
+`librarytool paths` ALL PASS, `tests\privacy` 19 checks / 0 failures, catalogue 1624 texts / 0
+unfinished / 0 stale. `tests\win-usability` was not run: the user's own instance held the
+attached player, and a harness instance in an isolated profile would have contended for its
+interface, so its last recorded number stands. The relaunched application read the HD back
+read-only in its normal auto-connect - albums, storage, one video - which is the already-closed
+music-library read and not a new gate. Device-side re-index behaviour with the session kept
+open: unmeasured, and nothing here claims it. Nothing has been listened to.
