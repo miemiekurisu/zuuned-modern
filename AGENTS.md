@@ -3196,3 +3196,61 @@ player is bound to WinUSB, deletion/spoken/video categories and every non-Pavo m
 the A-02 interrupted-video recovery and A-03 background-thread join are compile-verified with
 measured neighbours rather than measured. The Linux and macOS lines are unchanged by construction,
 which here means unverified, not verified.
+
+**2026-11-17 second sitting - a path is not a name, and pictures and movies come back:** a picture this
+build sent was listed on the Windows device page under the *sender's whole absolute path*, and `Save to
+Library` on that row wrote the right 17,482 bytes under a file name that was that path with every separator
+turned into an underscore. libzune cut the basename at the last `/` and a native Windows path carries none,
+so the path travelled to the player as the ObjectName and `LibraryPaths::safeComponent()` only neutralised
+it on the way home. `zune_path_sep()`/`zune_path_tail()` (`libzune/src/util.c:32`, `:46`; declared
+`libzune/include/zune.h:703`) is now the one rule: a POSIX build reads only `/`, because a POSIX filename
+may legitimately contain a backslash, and a Windows build takes whichever separator comes later.
+`path_get_dirname`, `path_get_basename`, `zune_decode_filename`, `photo_basename` plus the send site that
+bypassed it (`libzune/src/photo.c:535`), `basename_of`/`filename_no_ext` (`libzune/src/track.c:240`, `:210`)
+and the transcoder's own copy (`libzune/src/transcode.c:44`) read it from there; after the sweep the only
+`strrchr(x, '/')` left in `libzune/src` and `src` is the one inside the rule. The same missing separator had
+made `zune_decode_filename()`'s series-from-folder rule answer `Unknown Series` for a TV clip named on a
+Windows path, because `path_get_dirname()` found no separator and answered `.`.
+
+**Gated where a C rule can be gated, and then re-crossed on the wire.** `librarytool paths` is 82 checks, up
+from the 73 the paragraph above quotes, and the nine new ones branch on `Q_OS_WIN` on purpose - Windows
+expects `pic.jpg` and no drive letter out of a three-level native path, the later separator winning in a
+path that mixes both shapes, the series name out of a grandparent folder; POSIX keeps `we\ird.jpg` as one
+filename. The series case was red before the fix. Against one `--clean-first` relink (352/352) and one Pavo
+Zune HD (`devicetool VERDICT=agree`, `os_problem=0`, baseline 206 tracks / 5 photos / 0 videos): a JPEG sent
+came back **fetched by its own file name** at 17,482 bytes hashing to `ab4be0d247bd525b`, byte-identical to
+what was prepared, then deleted with the photo count back at 5; music went up to 207 and came back with
+`readbackDurationMs=2000` against a 2000 ms spec, then purged to 206; and a three-second synthetic clip made
+the **first full movie round trip** - ordinary video admission, this app's own transcode (`[sync] video
+phase: 1 entries, profile 2`, 320x240 in, 480x272 out, decode path `HARDWARE (first frame fmt=cuda)`),
+`video sent`, `upload-settled failed=0`, fetched by name at 219,383 bytes that `ffprobe` reads as h264
+480x272 + aac 2.995 s, then purged to `videos=0`. A movie round trip certifies the container because the
+player returns this application's transcode, not the file handed in; the picture round trip is the one that
+certifies bytes. The player was left exactly as found and the fetched QA files were deleted from this
+machine.
+
+**A harness for rows that had no handle, and one defect deliberately left alone.** `--qa-item
+"<fetch|purge>|<photo|video|track>|<name>[|<itemId>]"` (`qml/Main.qml:646`) drives the ordinary
+Save-to-Library control and the ordinary right-click DeleteObject for one named row and logs
+`before`/`saved`/`settled`; a purge refuses unless the caller also names the itemId it expects, because
+photo and movie rows identify themselves by nothing but a name and a size and a personal file deleted on a
+name match does not come back. It is inert without the flag on every platform. `get_representative_sample
+... bad AUINT8 count 0 in 4-byte payload` (13 sightings across eight sessions) is now understood as this
+library blaming the player for a legal answer - a 4-byte AUINT8 with count 0 is an empty array meaning this
+object holds no `RepresentativeSampleData`, and the bound at `libzune/src/mtp.c:1339` (`count == 0 || count
+> raw_len - 4`) calls that malformed while the callers already read no-data as no-art
+(`libzune/src/thumbnail.c:48`, `:55`). That edit is deliberately **not** in this change: a libzune
+error-reporting fix should arrive with a device read of its own, so today's device evidence stays
+attributable to the naming fix.
+
+**Counters to quote now:** `librarytool paths` ALL PASS 82, `mtpframingtool` 1285 / 0, `tests\win-compat`
+204 / 0 / 0, `tests\privacy` 19 / 0, i18n `AUDIT=ok`, `tests\win-usability` `launches=19 checks=157
+failures=0 skips=0 killed=0` `OVERALL=ok`. `docs/WINDOWS_PORT.md`, `README.md` and `README.zh-CN.md` no
+longer say a byte of a picture or a video never came back, and deletion is off both READMEs' "not yet
+proven" list for music on both roads plus a picture and a movie over WinUSB. **Still not measured:** nothing
+was heard here on either side (the only thing ever heard on this platform stays the one WMA Lossless track),
+the podcast and audiobook categories are unread in both directions and `purgeSpokenItems` has never run
+here, this sitting added no WPD evidence because the player on the cable is WinUSB-bound, every non-Pavo
+model stays unproven, and whether an emptied MTP photo folder lingers is unmeasured - the ZMDB photo-album
+table stayed at 1 through every send and delete. Linux and macOS are unchanged by construction, which here
+means unverified, not verified.

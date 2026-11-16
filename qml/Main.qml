@@ -123,6 +123,8 @@ ApplicationWindow {
             qaDeviceTimer.start()
         if (qaDeleteSpec)
             qaDeleteTimer.start()
+        if (qaItemSpec)
+            qaItemTimer.start()
     }
     // QA harness (`--qa-probe`): one authoritative line about what this window
     // actually decided to show.  The usability gates need it because a painted
@@ -639,6 +641,150 @@ ApplicationWindow {
             window.qaDeleteStep()
             if (ticks >= 150 || window.qaDeleteDone)
                 stop()
+        }
+    }
+    // QA harness (`--qa-item "<fetch|purge>|<photo|video|track>|<name>[|<itemId>]"`):
+    // the categories `--qa-device` cannot reach.  A fetch runs the ordinary
+    // Save-to-Library path for one picture or movie -- the same call
+    // DevicePicturesPage/DeviceVideosPage make -- and a purge runs the ordinary
+    // right-click DeleteObject, so a read and a deletion become evidence in a log
+    // rather than a screenshot.  A purge refuses unless the caller also names the
+    // handle it expects, because a photo row and a video row identify themselves
+    // by a name and a size only, and a personal file that is deleted by a harness
+    // match-on-name does not come back.  Inert without the flag, on every platform.
+    readonly property var qaItemSpec: {
+        const args = Qt.application.arguments
+        const i = args.indexOf("--qa-item")
+        if (i < 0 || i + 1 >= args.length)
+            return null
+        const parts = String(args[i + 1]).split("|")
+        return parts.length >= 3 ? parts : null
+    }
+    property bool qaItemIssued: false
+    property bool qaItemDone: false
+    function qaItemLog(note) {
+        console.log("[qa-item] " + note)
+    }
+    function qaItemRows(kind) {
+        if (kind === "photo")
+            return DeviceService.photosList
+        if (kind === "video")
+            return DeviceService.videosList
+        return DeviceService.deviceTrackRows()
+    }
+    function qaItemName(row) {
+        const name = row.name === undefined ? "" : String(row.name)
+        if (name.length > 0)
+            return name
+        return row.title === undefined ? "" : String(row.title)
+    }
+    function qaItemRowFor(kind, name) {
+        const rows = qaItemRows(kind)
+        for (let i = 0; i < rows.length; i++)
+            if (qaItemName(rows[i]) === name)
+                return rows[i]
+        return null
+    }
+    function qaItemSize(row) {
+        return row.sizeMB === undefined ? "" : row.sizeMB
+    }
+    function qaItemStep() {
+        const spec = qaItemSpec
+        if (!spec || qaItemDone)
+            return
+        const action = spec[0], kind = spec[1], name = spec[2]
+        const wantId = spec.length > 3 && String(spec[3]).length > 0
+            ? Number(spec[3]) : -1
+        qaItemLog("state action=" + action + " kind=" + kind
+            + " connected=" + DeviceService.connected
+            + " busy=" + DeviceService.busy
+            + " stage=" + DeviceService.connectionStage
+            + " purging=" + DeviceService.purging
+            + " syncing=" + SyncEngine.isSyncing
+            + " deviceTracks=" + DeviceService.trackCount
+            + " photos=" + DeviceService.photosList.length
+            + " videos=" + DeviceService.videosList.length
+            + " freeGB=" + DeviceService.freeGB)
+        if (qaItemIssued) {
+            if (DeviceService.busy || DeviceService.purging)
+                return
+            qaItemLog("settled action=" + action + " kind=" + kind
+                + " rowGone=" + (qaItemRowFor(kind, name) === null)
+                + " photos=" + DeviceService.photosList.length
+                + " videos=" + DeviceService.videosList.length
+                + " deviceTracks=" + DeviceService.trackCount
+                + " freeGB=" + DeviceService.freeGB
+                + " status=\"" + DeviceService.status + "\"")
+            qaItemDone = true
+            return
+        }
+        if (!DeviceService.connected || DeviceService.busy
+            || DeviceService.purging || SyncEngine.isSyncing)
+            return
+        const row = qaItemRowFor(kind, name)
+        if (!row) {
+            qaItemLog("missing action=" + action + " kind=" + kind
+                + " name=\"" + name + "\"")
+            const rows = qaItemRows(kind)
+            for (let i = 0; i < rows.length; i++)
+                qaItemLog("same-list itemId=" + rows[i].itemId
+                    + " name=\"" + qaItemName(rows[i])
+                    + "\" sizeMB=" + qaItemSize(rows[i]))
+            return
+        }
+        if (wantId >= 0 && Number(row.itemId) !== wantId) {
+            qaItemLog("refused reason=id-mismatch asked=" + wantId
+                + " row=" + row.itemId + " name=\"" + name + "\"")
+            qaItemDone = true
+            return
+        }
+        if (action === "purge" && wantId < 0) {
+            qaItemLog("refused reason=a purge must name the handle it expects"
+                + " kind=" + kind + " name=\"" + name + "\"")
+            qaItemDone = true
+            return
+        }
+        qaItemLog("before action=" + action + " kind=" + kind
+            + " itemId=" + row.itemId + " sizeMB=" + qaItemSize(row))
+        if (action === "purge") {
+            DeviceService.purgeItems([row.itemId])
+        } else if (kind === "photo") {
+            qaItemLog("into " + DeviceService.photoImportsDir())
+            DeviceService.savePhotoToLibrary(row.itemId, name, "")
+        } else if (kind === "video") {
+            qaItemLog("into " + DeviceService.importsDir())
+            DeviceService.saveVideoToLibrary(row.itemId, name, "")
+        } else {
+            qaItemLog("into " + DeviceService.musicImportsDir())
+            DeviceService.saveTrackToLibrary(row.itemId, name,
+                row.artist === undefined ? "" : String(row.artist),
+                row.album === undefined ? "" : String(row.album))
+        }
+        qaItemIssued = true
+    }
+    Timer {
+        id: qaItemTimer
+        interval: 2000
+        repeat: true
+        property int ticks: 0
+        onTriggered: {
+            ticks++
+            window.qaItemStep()
+            if (ticks >= 150 || window.qaItemDone)
+                stop()
+        }
+    }
+    Connections {
+        target: DeviceService
+        enabled: window.qaItemSpec !== null
+        function onPhotoSaved(filename, ok) {
+            window.qaItemLog("saved kind=photo name=\"" + filename + "\" ok=" + ok)
+        }
+        function onVideoSaved(filename, ok) {
+            window.qaItemLog("saved kind=video name=\"" + filename + "\" ok=" + ok)
+        }
+        function onTrackSaved(filename, ok) {
+            window.qaItemLog("saved kind=track name=\"" + filename + "\" ok=" + ok)
         }
     }
     Connections {

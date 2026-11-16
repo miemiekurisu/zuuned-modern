@@ -56,6 +56,12 @@
 #include "VideoMatcher.h"
 #include "VideoNaming.h"
 
+// The path-component rule the C transfer layer runs on is pinned here too,
+// because a basename cut at the wrong byte is an object name on the player.
+#include "zune.h"
+
+#include <cstdlib>
+
 #include <QCoreApplication>
 #include <QStringList>
 #include <QEventLoop>
@@ -887,6 +893,74 @@ static int runPathsSelfTest() {
                   && !missing.cancelled,
               "walk: an unreadable root yields no files and certifies no root");
     }
+
+    /* ---- where a path component ends, in the C transfer layer ----
+     * A photo sent from Windows arrived on the player named by the sender's
+     * absolute path: libzune cut the basename at the last '/' and a native path
+     * carries none, so Save to Library imported a file whose name was that whole
+     * path with every separator turned into an underscore (measured on a Zune HD,
+     * 2026-11-17).  The same scan decides the ObjectFileName of a sent track and
+     * the series a TV-named video borrows from its folder, so the rule lives in
+     * zune_path_sep()/zune_path_tail() and every caller reads it from there.
+     * A POSIX filename may legitimately contain a backslash, so a POSIX build
+     * must keep reading one as an ordinary character -- that is the one
+     * expectation that branches, and it branches on purpose. */
+#ifdef Q_OS_WIN
+    eq("pathTail: a native Windows path gives up its last component",
+       QString::fromUtf8(zune_path_tail("D:\\media\\shots\\pic.jpg")),
+       QStringLiteral("pic.jpg"));
+    eq("pathTail: a forward slash still separates on Windows",
+       QString::fromUtf8(zune_path_tail("D:/media/shots/pic.jpg")),
+       QStringLiteral("pic.jpg"));
+    eq("pathTail: the later separator wins when a path mixes both shapes",
+       QString::fromUtf8(zune_path_tail("D:/media\\shots/pic.jpg")),
+       QStringLiteral("pic.jpg"));
+    eq("pathTail: the drive letter never survives into a name",
+       QString::fromUtf8(zune_path_tail("D:\\pic.jpg")),
+       QStringLiteral("pic.jpg"));
+    eq("pathTail: a name with no separator is its own last component",
+       QString::fromUtf8(zune_path_tail("pic.jpg")), QStringLiteral("pic.jpg"));
+    check(zune_path_sep(nullptr) == nullptr && zune_path_tail(nullptr) == nullptr,
+          "pathTail: NULL stays NULL instead of being dereferenced");
+    check(zune_path_sep("pic.jpg") == nullptr,
+          "pathTail: a bare name reports no separator at all");
+    {
+        char *series = nullptr;
+        int season = 0, episode = 0;
+        const int tv = zune_decode_filename(
+            "E:\\media\\That Show\\Season 1\\S01E01.wmv", &series,
+            &season, &episode);
+        const QString got = series ? QString::fromUtf8(series) : QString();
+        free(series);
+        check(tv == 1 && season == 1 && episode == 1,
+              "decodeFilename: an episode named on a native path is still an episode");
+        eq("decodeFilename: the series comes from the folder, not the whole drive",
+           got, QStringLiteral("That Show"));
+    }
+#else
+    eq("pathTail: a POSIX name may contain a backslash",
+       QString::fromUtf8(zune_path_tail("/media/shots/we\\ird.jpg")),
+       QStringLiteral("we\\ird.jpg"));
+    eq("pathTail: POSIX still cuts at the last slash",
+       QString::fromUtf8(zune_path_tail("/media/shots/pic.jpg")),
+       QStringLiteral("pic.jpg"));
+    eq("pathTail: a Windows spelling is one long POSIX filename",
+       QString::fromUtf8(zune_path_tail("D:\\media\\shots\\pic.jpg")),
+       QStringLiteral("D:\\media\\shots\\pic.jpg"));
+    check(zune_path_sep(nullptr) == nullptr && zune_path_tail(nullptr) == nullptr,
+          "pathTail: NULL stays NULL instead of being dereferenced");
+    {
+        char *series = nullptr;
+        int season = 0, episode = 0;
+        const int tv = zune_decode_filename(
+            "/media/That Show/Season 1/S01E01.wmv", &series, &season, &episode);
+        const QString got = series ? QString::fromUtf8(series) : QString();
+        free(series);
+        check(tv == 1 && season == 1 && episode == 1
+                  && got == QStringLiteral("That Show"),
+              "decodeFilename: a POSIX path keeps naming the way it always did");
+    }
+#endif
 
     printf("paths self-test: %s (%d failures)\n",
            failed == 0 ? "ALL PASS" : "FAILED", failed);

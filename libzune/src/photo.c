@@ -379,11 +379,7 @@ static char *shell_path_bytes(const char *path)
  * the platform writes its paths in. */
 static const char *photo_basename(const char *path)
 {
-    const char *slash = strrchr(path, '/');
-    const char *backslash = strrchr(path, '\\');
-    if (backslash && (!slash || backslash > slash))
-        slash = backslash;
-    return slash ? slash + 1 : path;
+    return zune_path_tail(path);
 }
 
 /* ---- Photo Preprocessing ----
@@ -529,9 +525,14 @@ int zune_smuggle_photo(ZuneDevice *dev, const char *filepath,
         }
     }
 
-    /* Use original filename for the device, but .jpg extension since we converted */
-    const char *orig_basename = strrchr(filepath, '/');
-    orig_basename = orig_basename ? orig_basename + 1 : filepath;
+    /* Use original filename for the device, but .jpg extension since we
+     * converted.  Through photo_basename(), and not a bare scan for '/': a
+     * Windows path is spelled with backslashes, so the whole path used to
+     * travel to the player as the object name.  Measured on a Zune HD, where
+     * the photo row read back as the sender's absolute path and Save to
+     * Library then imported a file whose name was that path with every
+     * separator turned into an underscore. */
+    const char *orig_basename = photo_basename(filepath);
 
     /* Build JPEG filename from original name */
     char jpg_name[256];

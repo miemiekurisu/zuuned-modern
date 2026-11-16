@@ -51,8 +51,9 @@ Device -> Audio conversion**, WMA Lossless included; that target is written by t
 the operating system already ships rather than by a bundled codec, and it refuses rather
 than quietly downgrading to lossy. The Windows port carries music in both directions
 against a player and takes music back off it, one track at a time, with the player
-agreeing in a later session; photos and video have been sent from Windows without a byte
-of either coming back - see the status page.
+agreeing in a later session; a picture sent from Windows comes back byte for byte and a video
+comes back as the transcode this application made, and either one can then be deleted - see
+the status page.
 
 ## The pages
 
@@ -130,6 +131,11 @@ Zune HD over WinUSB, except the one that says it did not.
 - **Podcast send, over the WinUSB road** - three episodes of a test feed went in, the show
   cover was accepted at 291,753 bytes, and the next inventory read `3 podcast episodes`
   back off the player.  Over Windows' own MTP driver the category is refused in words.
+- **Picture and movie round trips, over the WinUSB road** - a JPEG the app sent came back with the
+  same bytes it started with, and a three-second clip the app had transcoded on the way in came
+  back as that same 480x272 transcode; both were then deleted, and the player counted 5 photos and
+  0 videos again.  A movie is judged by what it decodes to, because the player hands back what it
+  made rather than what you handed it.
 
 A finished sync leaves the player connected.  Nothing in this application releases it until
 you press `eject`; Settings -> Device -> "When a sync ends" puts the old behaviour - let go
@@ -137,18 +143,20 @@ so the player can re-index, reconnect when it answers - back behind a switch, fo
 that really does wait for the session to close.  Whether a Zune waits for that is a premise
 this project has never measured, and the switch says so out loud on screen.
 
-**Not yet proven on Windows**, and not inherited from Linux either: any deletion beyond
-those two music tracks (one per road), the audiobook, photo and video transfer categories,
-and the half of a podcast the player has to do by itself - a send has been read back, no
-synced show has been seen or heard on the player's own screen - adding photos or video over
-the MTP road is refused by design rather than left untested - every Zune model but that one
-Pavo, audible PC-side playback (the automated gate opens WASAPI muted, so no automated run
-has heard anything), and the packaged folder with a player attached or on a machine that
-did not build it - there is a preview artifact now, but still no installer and no code signing.
-**WMA Lossless** is encoded on Windows, by the encoder the operating system already ships rather than
-a bundled codec, and a track written that way has now
-been heard on the HD; the format is documented for the Zune HD alone, so no other model has been
-offered one and the setting says out loud that the likely result elsewhere is a silent track.
+**Not yet proven on Windows**, and not inherited from Linux either: the audiobook transfer
+category and the half of a podcast the player has to do by itself - a send has been read
+back, no synced show has been seen or heard on the player's own screen - adding photos or
+video over the MTP road is refused by design rather than left untested - every Zune model
+but that one Pavo, audible PC-side playback (the automated gate opens WASAPI muted, so no
+automated run has heard anything), and the packaged folder with a player attached or on a
+machine that did not build it - there is a preview artifact now, but still no installer and
+no code signing. Deletion left that list: music has been purged on both roads, and a picture
+and a movie over the WinUSB road, each confirmed afterwards by the player's own counts.
+
+**WMA Lossless** is encoded on Windows, by the encoder the operating system already ships
+rather than a bundled codec, and a track written that way has now been heard on the HD; the
+format is documented for the Zune HD alone, so no other model has been offered one and the
+setting says out loud that the likely result elsewhere is a silent track.
 
 ## Getting a Zune seen by Windows
 

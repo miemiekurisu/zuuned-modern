@@ -693,6 +693,16 @@ int zune_finalize(ZuneDeviceHandle dev);
 
 /* ---- Utility ---- */
 
+/* The one rule in this library that says where a path component ends.
+ * A POSIX filename may contain a backslash, so only a Windows build reads one
+ * as a separator; a Windows build must read one, because that is how a native
+ * path is spelled and a name that keeps `D:\` is a name no path can open
+ * again.  zune_path_sep() answers NULL for a path with no separator and for
+ * NULL; zune_path_tail() answers the component after it, or the path itself.
+ * Neither copies nor allocates; the result lives in the caller's buffer. */
+const char *zune_path_sep(const char *path);
+const char *zune_path_tail(const char *path);
+
 /* Parse video filename for TV series metadata.
  * Detects S01E05, "Episode XX", trailing numbers, etc.
  * Returns 0 if no pattern detected (it's a movie). */

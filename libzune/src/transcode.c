@@ -43,8 +43,7 @@ static char *shell_escape(const char *s)
 
 static char *filename_no_ext(const char *path)
 {
-    const char *base = strrchr(path, '/');
-    base = base ? base + 1 : path;
+    const char *base = zune_path_tail(path);
 
     const char *dot = strrchr(base, '.');
     size_t len = dot ? (size_t)(dot - base) : strlen(base);

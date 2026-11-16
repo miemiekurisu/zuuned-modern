@@ -208,8 +208,7 @@ static uint64_t get_file_size(const char *path) {
  * Returns malloc'd string. Caller frees.
  */
 static char *filename_no_ext(const char *path) {
-    const char *base = strrchr(path, '/');
-    base = base ? base + 1 : path;
+    const char *base = zune_path_tail(path);
 
     const char *dot = strrchr(base, '.');
     if (dot && dot > base) {
@@ -239,8 +238,9 @@ static uint16_t format_from_ext(const char *filepath) {
  * Returns a pointer into the filepath string (no allocation).
  */
 static const char *basename_of(const char *filepath) {
-    const char *base = strrchr(filepath, '/');
-    return base ? base + 1 : filepath;
+    /* This name goes out as ObjectFileName, so a missed separator puts
+     * the caller's whole path on the player for any MTP client to read. */
+    return zune_path_tail(filepath);
 }
 
 /*

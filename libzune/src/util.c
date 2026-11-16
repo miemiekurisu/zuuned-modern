@@ -23,12 +23,40 @@
 /*  Path helpers (replacing GLib g_path_get_*)                        */
 /* ------------------------------------------------------------------ */
 
+/* ---- Where a path component ends ---- */
+
+/* Every basename and dirname in this library comes through here, because a
+ * scan for '/' alone silently hands a whole Windows path to whatever asked:
+ * an MTP object name, a device-facing title, or a series name read out of a
+ * folder.  See zune.h for the rule. */
+const char *zune_path_sep(const char *path)
+{
+    const char *sep;
+    if (!path) return NULL;
+    sep = strrchr(path, '/');
+#ifdef _WIN32
+    {
+        const char *backslash = strrchr(path, '\\');
+        if (backslash && (!sep || backslash > sep)) sep = backslash;
+    }
+#endif
+    return sep;
+}
+
+const char *zune_path_tail(const char *path)
+{
+    const char *sep;
+    if (!path) return NULL;
+    sep = zune_path_sep(path);
+    return sep ? sep + 1 : path;
+}
+
 /* Return the directory component of a path. Caller frees. */
 static char *path_get_dirname(const char *path)
 {
     if (!path || !path[0]) return strdup(".");
 
-    const char *last_slash = strrchr(path, '/');
+    const char *last_slash = zune_path_sep(path);
     if (!last_slash) return strdup(".");
 
     /* Handle root "/" */
@@ -47,8 +75,7 @@ static char *path_get_basename(const char *path)
 {
     if (!path || !path[0]) return strdup(".");
 
-    const char *base = strrchr(path, '/');
-    base = base ? base + 1 : path;
+    const char *base = zune_path_tail(path);
 
     if (!base[0]) return strdup("/");
     return strdup(base);
@@ -129,8 +156,7 @@ int zune_decode_filename(const char *filepath,
     *out_episode = 0;
 
     /* Get filename without path and extension */
-    const char *base = strrchr(filepath, '/');
-    base = base ? base + 1 : filepath;
+    const char *base = zune_path_tail(filepath);
     const char *dot = strrchr(base, '.');
     size_t namelen = dot ? (size_t)(dot - base) : strlen(base);
 
