@@ -3636,6 +3636,26 @@ reaches the screen, which reads Unknown Artist.
 
 **Gates.**  `librarytool paths` `ALL PASS (0 failures)` and `tests\win-compat` 204 checks /
 0 failures / 0 skips against the rebuilt tree.  `tests\win-usability` was deliberately not run:
-the player and the real profile were in use throughout.  Still open on this model - a playlist
-forged on the HD (it holds none), the podcast and audiobook categories in both directions, photo
-*send*, and anything anyone has heard.
+the player and the real profile were in use throughout.  Still open on this model - the podcast
+and audiobook categories in both directions, photo *send*, and anything anyone has heard.  A
+playlist forged on the HD was open here for eleven minutes; the next section closes it.
+
+### A playlist forged on the HD, and read back with its members (2026-11-16, same day)
+
+Eleven minutes after the sweep above recorded that this player held no playlists, the user synced
+a 40-member local playlist to it, and the ZMDB road did the whole job: 40 members resolved and
+transcoded (`audio target=mp3 produced=mp3`, the user's own format setting), `forge done: 1 ok,
+0 failed`, `created playlist (id=0x07000152, fmt=0xBA05, 40 tracks)`.  The next scan is the proof,
+because it is a read rather than a receipt: `playlist record atom=07000152 size=287` - a 7-byte
+record header plus 40 four-byte object handles - and the object walk answers
+`device playlists (1)`.  **A playlist forged on a Pavo over WinUSB lands on the player with its
+members and is read back with them.**  The player's own on-screen playlist view and playing it
+there are still unconfirmed, and nothing here was listened to.
+
+Do not be misled by the scan line printed beside it, `scanned: 209 tracks, ..., 0 playlists`.
+That zero is structural: `libzune/src/zmdb.c` never parses `SCHEMA_PLAYLIST` into its library -
+the code that touches playlist records exists to hex-dump up to five of them for research - so
+its `playlist_count` is 0 on every HD scan even when the player holds ten lists.  The field that
+answers is `device playlists (N)` from `src/DeviceWorker.cpp`, which walks the objects.  The same
+block leaves a 64-byte hex dump of every playlist record it opens in the session log, which is
+leftover research output and should go.

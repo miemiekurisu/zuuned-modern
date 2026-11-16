@@ -3024,6 +3024,28 @@ no-ops in an otherwise healthy-looking run.  Faults that stayed: `0x2002` on
 `get_object_info(0x07000002)`, three objects failing every thumbnail method, and monikers at
 **artist 25, genre 128, album 0, title 0** - the genre half is a new measurement, and the screen
 still reads Unknown Artist.  Gates: `librarytool paths` ALL PASS, `tests\win-compat` 204/0/0;
-`tests\win-usability` not run because the player and the real profile were in use.  Open here: a
-playlist forged on the HD (it holds none), the spoken categories both ways, photo *send*, and
-anything anyone has heard.
+`tests\win-usability` not run because the player and the real profile were in use.  Open here: the
+spoken categories both ways, photo *send*, and anything anyone has heard.  The playlist clause
+that stood here was superseded within the hour by the paragraph below.
+
+**2026-11-16 the same hour: a playlist forged on the HD, and a counter that cannot count it.**
+The open item closed itself in the user's own session, on the libzune/ZMDB road rather than the
+WPD one: a 40-member local playlist went to the player, every member transcoded
+`audio target=mp3 produced=mp3`, then `forge done: 1 ok, 0 failed`,
+`playlist phase: 1 playlists, 209 device tracks indexed`, `forging playlist: 40 members resolved`,
+and `created playlist (id=0x07000152, fmt=0xBA05, 40 tracks)`.  The rescan agreed instead of
+taking the app's word: the same log reads `playlist record atom=07000152 size=287` - 7 bytes of
+record header plus **40 four-byte handles** - and the device playlist listing answers
+`device playlists (1)`.  So a playlist forged on this model lands with its members and is read
+back with them.  Whether the player's own on-screen playlist view shows it, and whether it plays
+it, stay unconfirmed, and nobody has listened to any of it.
+
+One trap that would make the next reader distrust that evidence: the scan line in the same
+breath says `scanned: 209 tracks, 0 videos, 5 photos, 12 albums, 11 artists, **0 playlists**`, and
+that zero is structural, not a lost playlist.  `libzune/src/zmdb.c` has no `PARSE_DESC` for
+`SCHEMA_PLAYLIST` - the block that touches playlist records exists to hex-dump up to five of them
+for research - so `playlist_count` is 0 on every HD scan no matter what the player holds.  The
+honest count is `[zmdb] device playlists (N)` in `src/DeviceWorker.cpp`, which walks the objects
+themselves.  Two consequences: never quote the scan tally's playlist field as a device fact, and
+note that a shipped path still writes that 64-byte hex dump into every session log, which is
+research noise rather than diagnostics and is worth deleting the next time that file is open.
