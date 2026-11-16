@@ -538,12 +538,34 @@ char *zuuned_transcode_audio_ex(const char *input_path, const char *album_artist
         av_packet_unref(pkt);
     }
 
-    /* Flush decoder */
-    avcodec_send_packet(dec_ctx, NULL);
+    /* Flush decoder.  EAGAIN here means the decoder still holds output of
+     * its own, not that the flush was refused, so drain and send the flush
+     * again exactly as the packet loop above does: one drain and one retry,
+     * not a loop, which is what keeps EOF from spinning here.  The loop
+     * already drained after every packet, so this is the rare path.
+     * Any other negative return takes the failure path the rest of this
+     * function already uses rather than encoding a truncated file. */
+    int flush_ret = avcodec_send_packet(dec_ctx, NULL);
+    if (flush_ret == AVERROR(EAGAIN)) {
+        while (avcodec_receive_frame(dec_ctx, frame) == 0)
+            av_frame_unref(frame);
+        flush_ret = avcodec_send_packet(dec_ctx, NULL);
+    }
+    if (flush_ret < 0) {
+        fprintf(stderr, LOG_PREFIX " decoder flush send failed (%d)\n",
+                flush_ret);
+        goto cleanup;
+    }
     while (avcodec_receive_frame(dec_ctx, frame) >= 0) {
         int out_samples = swr_get_out_samples(swr_ctx, frame->nb_samples);
         int16_t *pcm_buf = malloc(out_samples * 2 * sizeof(int16_t));
-        if (!pcm_buf) continue;
+        /* A frame the allocator refused here would silently shorten the
+         * file and nothing in the return value can say so, so it fails the
+         * encode the way the other allocation failures in this function do. */
+        if (!pcm_buf) {
+            fprintf(stderr, LOG_PREFIX " out of memory flushing decoder\n");
+            goto cleanup;
+        }
         uint8_t *out_ptr = (uint8_t *)pcm_buf;
         int converted = swr_convert(swr_ctx, &out_ptr, out_samples,
                                     (const uint8_t **)frame->extended_data, frame->nb_samples);
@@ -1641,8 +1663,22 @@ char *zuuned_transcode_video(const char *input_path, int profile,
             goto vcleanup;   /* ret != 0 → temp unlinked, NULL returned */
         }
         if (pkt->stream_index == video_stream_idx) {
-            /* Decode video frame */
-            avcodec_send_packet(vdec_ctx, pkt);
+            /* Decode video frame.  EAGAIN means the decoder is full, not
+             * that the packet is unusable: drain and retry the same packet,
+             * one drain and one retry, as the audio transcode loop does.
+             * Falling through instead drops every frame it carried. */
+            int send_ret = avcodec_send_packet(vdec_ctx, pkt);
+            if (send_ret == AVERROR(EAGAIN)) {
+                while (avcodec_receive_frame(vdec_ctx, dec_frame) == 0)
+                    av_frame_unref(dec_frame);
+                send_ret = avcodec_send_packet(vdec_ctx, pkt);
+            }
+            if (send_ret < 0) {
+                fprintf(stderr, LOG_PREFIX " video: decoder send failed (%d)\n",
+                        send_ret);
+                av_packet_unref(pkt);
+                goto vcleanup;
+            }
             while (avcodec_receive_frame(vdec_ctx, dec_frame) >= 0) {
                 AVFrame *sw_frame = dec_frame;
                 AVFrame *hw_download = NULL;
@@ -1854,7 +1890,21 @@ char *zuuned_transcode_video(const char *input_path, int profile,
             }
         } else if (pkt->stream_index == audio_stream_idx && adec_ctx && aenc_ctx && swr_ctx && audio_fifo) {
             /* Decode audio → resample → FIFO → encode in frame_size chunks */
-            avcodec_send_packet(adec_ctx, pkt);
+            /* Same contract as the video branch: EAGAIN drains and retries
+             * this packet once, any other refusal fails the transcode. */
+            int send_ret = avcodec_send_packet(adec_ctx, pkt);
+            if (send_ret == AVERROR(EAGAIN)) {
+                while (avcodec_receive_frame(adec_ctx, dec_frame) == 0)
+                    av_frame_unref(dec_frame);
+                send_ret = avcodec_send_packet(adec_ctx, pkt);
+            }
+            if (send_ret < 0) {
+                fprintf(stderr,
+                        LOG_PREFIX " video: audio decoder send failed (%d)\n",
+                        send_ret);
+                av_packet_unref(pkt);
+                goto vcleanup;
+            }
             while (avcodec_receive_frame(adec_ctx, dec_frame) >= 0) {
                 /* Resample to encoder format */
                 int out_samples = swr_get_out_samples(swr_ctx, dec_frame->nb_samples);
@@ -2255,7 +2305,23 @@ int zuuned_extract_art(const char *filepath, const char *output_jpeg_path,
     }
 
     AVFrame *img_frame = av_frame_alloc();
-    avcodec_send_packet(img_ctx, art_pkt);
+    /* EAGAIN means the decoder is holding a frame already: drain it and
+     * hand the picture over again, one drain and one retry like every other
+     * send in this file.  Any other refusal exits exactly the way a failed
+     * receive below does. */
+    int send_ret = avcodec_send_packet(img_ctx, art_pkt);
+    if (send_ret == AVERROR(EAGAIN)) {
+        while (avcodec_receive_frame(img_ctx, img_frame) == 0)
+            av_frame_unref(img_frame);
+        send_ret = avcodec_send_packet(img_ctx, art_pkt);
+    }
+    if (send_ret < 0) {
+        fprintf(stderr, LOG_PREFIX " art: decoder send failed (%d)\n", send_ret);
+        av_frame_free(&img_frame);
+        avcodec_free_context(&img_ctx);
+        avformat_close_input(&fmt);
+        return -1;
+    }
     int got = avcodec_receive_frame(img_ctx, img_frame);
     if (got < 0) {
         av_frame_free(&img_frame);

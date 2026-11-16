@@ -3742,3 +3742,52 @@ interface, so its last recorded number stands. The relaunched application read t
 read-only in its normal auto-connect - albums, storage, one video - which is the already-closed
 music-library read and not a new gate. Device-side re-index behaviour with the session kept
 open: unmeasured, and nothing here claims it. Nothing has been listened to.
+
+### The audit round of 2026-11-16, and the first evidence the photo encoder ever had on Windows (2026-11-17)
+
+`docs/audits/CODE_AUDIT_2026-11-16.md` is a read of the whole tree by someone else; `docs/audits/CODE_AUDIT_RESPONSE_2026-11-16.md`
+answers it finding by finding. Every confirmed finding is implemented, one was false (the eight `system()`
+calls in `libzune/src/device.c` are inside a block comment that opens at `:26` and closes at `:50`, and a grep
+without context reports them as live), and two were declined with their conditions written down: `/WX` in CI is
+blocked by three warnings that predate this round, and splitting the 140-170 KB translation units waits for
+state-machine tests rather than being attempted blind. The Windows-relevant part is the shell.
+
+**No shell in front of ffmpeg, because percent has no escape.** `cmd.exe` expands `%VAR%` inside double quotes
+and `%%` is not an escape on a command line, so the Windows branches that quoted paths with doubled `"` could
+never make a device-supplied file name inert - a photo named `%PATH%.jpg` reached the encoder under a name nobody
+chose. `zuuned_run_no_shell()` (`compat/win/wincompat.c:1680`, declared `compat/win/posix_shim.h:505`) builds a
+command line from argv under the `CommandLineToArgvW` rules and `CreateProcessW`s the program directly, with
+`CREATE_NO_WINDOW` and one inheritable `NUL` behind all three child handles; `libzune/src/photo.c:432`,
+`libzune/src/thumbnail.c:136` and `libzune/src/util.c:391` use it, `shell_quote_path()` is deleted, and the POSIX
+and macOS command strings are byte-for-byte what they were. The live `system()` calls in this tree are now only
+inside `#else` branches. Full account in `docs/WINDOWS_COMPAT_AUDIT.md`.
+
+**A gate closed, and it closed by accident of reading the log.** The 19 instrumented launches of this sitting's
+`tests\win-usability` run each auto-connected to the attached Zune HD, and together they logged
+`[libzune] resized full file for thumbnail` 51 times across 17 of those launches and `all photo thumbnail methods
+failed` zero times; that success line is reachable on `_WIN32` only when `zuuned_run_no_shell()` returned 0.
+The ffmpeg resize branch - the one this page recorded, back on 2026-10-21, as failing on `cmd.exe` on every
+single call - has now worked 51 times against real photo objects on a player. Photo thumbnail generation is
+therefore a Windows gate with hardware behind it rather than a compiled branch, which is a stronger claim than
+this file has ever made about it. ffmpeg is still not bundled: it is a download, and its absence is exactly why
+these methods fail as a group. The `all thumbnail methods failed` lines that do still appear come from
+`libzune/src/thumbnail.c:69`, which never shells out; that is the known `get_representative_sample` defect, open
+and untouched. The same launches read storage back at 10,525,163,520 and 15,543,730,176 bytes, which is what
+makes the new MTP object-info bounds check at `libzune/src/mtp.c:419` accept a real player and not only a fuzzed
+one. `devicetool` still answers `VERDICT=agree` with the devnode at `os_problem=0`.
+
+**Counters, and one superseded sentence.** `cmake --build build --clean-first` 352/352; `mtpframingtool` 1285
+checks / 0 failures (was 1245; the new bounds have cases of their own); `librarytool paths` ALL PASS 73;
+`tests\win-compat` 204 / 0 / 0; `tests\privacy` 19 / 0; i18n `AUDIT=ok`. And `tests\win-usability` was run this
+time - `launches=19 checks=157 failures=0 skips=0 killed=0`, `OVERALL=ok` - which supersedes the sentence above
+this section saying it had not been run and that its previous number stood. That harness has grown since the
+`launches=17 checks=95` figure `AGENTS.md` carries; no test file changed in this sitting, so the growth is
+earlier harness work that was never written down here, and the number to quote from today is the one above.
+
+**What this sitting did not do.** No file was written to, deleted from, or read back off a player: the device
+work is a re-read inside the already-closed library-read and photo-thumbnail gates, done through the app's normal
+auto-connect while it ran the harnesses. Audio has still never been heard, WPD is untested because this player is
+bound to WinUSB, the audiobook and video categories stay open along with every model but this Pavo, and the A-02
+interrupted-video recovery and the A-03 background-thread join are compile-verified with measured neighbours
+rather than measured themselves. The Linux and macOS lines are unchanged by construction, which on this machine
+means unverified rather than verified. Nothing has been listened to.

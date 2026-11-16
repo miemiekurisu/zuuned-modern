@@ -1,5 +1,6 @@
 #include "Redactor.h"
 
+#include <QDir>
 #include <QRegularExpression>
 #include <QUrl>
 #include <algorithm>
@@ -131,11 +132,35 @@ QString Redactor::sanitize(const QString &input) const
         text.replace(home, QStringLiteral("~"));
         text.replace(QString::fromLatin1(QUrl::toPercentEncoding(home, "/")),
                      QStringLiteral("~"), Qt::CaseInsensitive);
+        // Qt spells homePath with forward slashes even on Windows, where the
+        // same folder is written with backslashes by the shell, by native tools
+        // and by anything a user pastes into a report, so fold that spelling
+        // too. The inequality is what keeps POSIX byte-identical: there
+        // toNativeSeparators() is the identity, so on Linux this replaces
+        // nothing the two lines above have not already replaced.
+        const QString nativeHome = QDir::toNativeSeparators(home);
+        if (nativeHome != home) {
+            text.replace(nativeHome, QStringLiteral("~"));
+            text.replace(QString::fromLatin1(QUrl::toPercentEncoding(nativeHome, "/")),
+                         QStringLiteral("~"), Qt::CaseInsensitive);
+        }
     }
     // Include other conventional home-directory names that may occur in old
     // session logs copied from a different profile.
     static const QRegularExpression homes(QStringLiteral("/(?:home|Users)/[^/\\s\\\"']+"));
     text.replace(homes, QStringLiteral("~"));
+    // The backslash spelling of the same convention: a Windows support line
+    // says C: then a backslash then Users then the account name, and neither
+    // rule above can see it. This is deliberately a second rule rather than a
+    // wider first one: it needs a drive root and backslash separators, so it
+    // cannot match anything a POSIX path spells and the forward-slash rule
+    // keeps byte-identical output on Linux. Case-insensitive because the file
+    // system is. Like the rule above it consumes only the name component, so
+    // the rest of the path survives and the account name does not.
+    static const QRegularExpression nativeHomes(QStringLiteral(
+        "[A-Za-z]:\\\\{1,2}(?:home|Users)\\\\+[^\\\\/\\s\\\"']+"),
+        QRegularExpression::CaseInsensitiveOption);
+    text.replace(nativeHomes, QStringLiteral("~"));
     if (!m_context.userName.isEmpty()) {
         const QRegularExpression user(QStringLiteral("(?<![\\w])%1(?![\\w])")
                                           .arg(QRegularExpression::escape(m_context.userName)),

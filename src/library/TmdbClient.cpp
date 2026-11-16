@@ -26,6 +26,12 @@ constexpr const char *kBundledFanartKey = "b5177dee86dfad2bc891dbe74bb253bf";
 constexpr const char *kPosterSize = "w500";   // detail sidebar at 2×
 constexpr const char *kStillSize = "w300";    // 16:9 rows at 2×
 
+// The same byte ceiling src/library/ArtworkHttp.cpp puts on every artwork
+// response, reused here so that no provider reply in this app is ever read
+// without a limit. 32 MiB is far above any JSON document these endpoints
+// return, so it only ever fires on a hostile or broken endpoint.
+constexpr qint64 kMaximumResponseBytes = 32 * 1024 * 1024;
+
 QString extractYear(const QString &date) {
     return date.size() >= 4 ? date.left(4) : QString();
 }
@@ -118,6 +124,15 @@ QByteArray TmdbClient::fetch(const QString &url, bool *ok, bool throttled,
 
     QNetworkReply *reply = m_nam->get(req);
     QEventLoop loop;
+    // Abort the moment the transfer crosses the ceiling, as ArtworkHttp does.
+    // abort() leaves the reply in OperationCanceledError and still emits
+    // finished(), so the loop always exits and the existing error branch is
+    // the answer: empty body, ok == false, one stderr line. No new shape.
+    QObject::connect(reply, &QNetworkReply::downloadProgress, reply,
+                     [reply](qint64 received, qint64 total) {
+        if (received > kMaximumResponseBytes || total > kMaximumResponseBytes)
+            reply->abort();
+    });
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     loop.exec();
 
@@ -128,8 +143,15 @@ QByteArray TmdbClient::fetch(const QString &url, bool *ok, bool throttled,
         data = reply->readAll();
         if (ok) *ok = true;
     } else {
+        // Every TMDB url built here carries the provider key in the query, so
+        // the query never reaches stderr: scheme+host+path is enough to place
+        // the failure. Truncation is not an answer - the first 80 characters of
+        // a search url are most of a 32-character key - and this is the same
+        // rule Redactor applies to urls, which drops every query value.
         fprintf(stderr, "[tmdb] fetch failed (%d/%s): %s\n", status,
-                qUtf8Printable(reply->errorString()), qUtf8Printable(url.left(80)));
+                qUtf8Printable(reply->errorString()),
+                qUtf8Printable(QUrl(url).toString(
+                    QUrl::RemoveUserInfo | QUrl::RemoveQuery)));
     }
     reply->deleteLater();
     return data;

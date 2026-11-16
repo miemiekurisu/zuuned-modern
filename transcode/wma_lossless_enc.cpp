@@ -547,7 +547,7 @@ void writeTags(Writer &writer, AVFormatContext *fmt, AVStream *stream,
     addYearTag(header, tagOf(fmt, stream, "date"));
     if (discNumber > 0) {
         char disc[16];
-        sprintf(disc, "%d", discNumber);
+        snprintf(disc, sizeof(disc), "%d", discNumber);
         addStringTag(header, L"PartOfSet", disc);
     } else {
         addStringTag(header, L"PartOfSet", tagOf(fmt, stream, "disc"));

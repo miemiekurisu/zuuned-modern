@@ -1218,8 +1218,18 @@ void DeviceWorker::sendTrackWpd(const QString &entryId, const QString &filepath,
     quint32 handle = 0;
     if (!wpdHandleOf(objectId, &handle))
         handle = 0;
-    if (handle)
+    if (handle) {
         m_wpdIds.insert(handle, objectId);
+    } else {
+        // The object is ON the player; only its numeric handle is unknown,
+        // so the in-session dedup map cannot be keyed by id and SyncEngine's
+        // m_sentTrackIds stays empty for this row.  The identity record and
+        // the next device breach cover it, which is why this is a log line and
+        // not a failure - but a silent 0 here is what turned a duplicate send
+        // into a mystery.  No object id is printed: it is device content.
+        fprintf(stderr, "[worker] wpd: sent without a numeric handle; dedup for"
+                        " this object rests on its identity alone\n");
+    }
     emit sendDone(entryId, true, handle, QString());
 }
 
@@ -1298,8 +1308,18 @@ void DeviceWorker::sendVideoWpd(const QString &entryId, const QString &filepath,
     quint32 handle = 0;
     if (!wpdHandleOf(objectId, &handle))
         handle = 0;
-    if (handle)
+    if (handle) {
         m_wpdIds.insert(handle, objectId);
+    } else {
+        // The object is ON the player; only its numeric handle is unknown,
+        // so the in-session dedup map cannot be keyed by id and SyncEngine's
+        // m_sentTrackIds stays empty for this row.  The identity record and
+        // the next device breach cover it, which is why this is a log line and
+        // not a failure - but a silent 0 here is what turned a duplicate send
+        // into a mystery.  No object id is printed: it is device content.
+        fprintf(stderr, "[worker] wpd: sent without a numeric handle; dedup for"
+                        " this object rests on its identity alone\n");
+    }
     emit sendVideoDone(entryId, true, handle, QString());
 }
 

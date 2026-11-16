@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QFuture>
 #include <QHash>
 #include <QMap>
 #include <QObject>
@@ -384,6 +385,10 @@ private:
     void retainFailedInflight(quint32 itemId);
     void markInflightVideo(const QString &filename, const QString &title);
     void clearInflight();
+    // Every QtConcurrent job this class starts, so the destructor can join
+    // it: each one reads a QPointer of this class from its own thread, and
+    // QPointer is only honest on the thread the object lives on.
+    void trackBackgroundWork(const QFuture<void> &work);
 
     QSet<QString> m_podcastChecks;
     SyncQueueModel m_queue;
@@ -455,10 +460,12 @@ private:
     QTimer m_persistTimer;                // A1 debounce
     QString m_interruptedSend;            // B2 startup finding
     QString m_interruptedVideoFile;       // exact ObjectFileName, never display Name
+    QString m_currentVideoWireName;       // what markInflightVideo() last wrote
     QVariantMap m_recoveryRecord;
     QVariantMap m_activeRecoveryRecord;
     QString m_pendingRecoveryToken;
     QString m_interruptedRecoveryStatus;
+    QVector<QFuture<void>> m_backgroundWork;  // off-thread preparations
     QString m_queueDevice;                // B3 stamp
     QVariantMap m_lastSync;               // D1 persisted outcome
     QString currentDeviceIdent() const;

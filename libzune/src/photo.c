@@ -310,33 +310,24 @@ static char *shell_escape(const char *s)
 
 /* One path, quoted for the shell system() will hand it to and already wrapped
  * in those quotes, so a caller can drop the result straight into a command.
+ * /bin/sh takes single quotes, with every one in the value doubled.
  *
- * cmd.exe does not quote with single quotes at all: 'C:\My Pics\a.jpg' is two
- * arguments to ffmpeg rather than one, and its 2>/dev/null is a redirect into a
- * directory nobody has.  A POSIX-spelled command therefore fails on Windows
- * every time, and the caller's fallback then hands the untouched original to
- * the device - the oversized picture this step exists to prevent.
+ * This is POSIX and macOS only, and Windows having no version of it is the
+ * finding rather than an omission: cmd.exe expands %VAR% inside double quotes
+ * exactly as it does outside them, doubling a double quote protects the
+ * argument from the program being run and not from the shell that reads the
+ * line first, and percent has no cmd.exe escape at all.  A picture whose name
+ * spelled %PATH% therefore reached the encoder under a name nobody chose.  No
+ * quoting fixes that, so the Windows branch of zune_arm_photo() hands argv to
+ * zuuned_run_no_shell() and runs no shell.
  *
  * A path with no room left in the command line is a path the resize cannot be
  * trusted with, so every caller here refuses rather than truncating.  Same rule
  * thumbnail.c Method 2 already follows. */
+#ifndef _WIN32
 static char *shell_quote_dup(const char *path)
 {
     if (!path) return NULL;
-#ifdef _WIN32
-    size_t len = strlen(path);
-    char *buf = malloc(len * 2 + 3);
-    if (!buf) return NULL;
-    size_t o = 0;
-    buf[o++] = '"';
-    for (const char *p = path; *p; p++) {
-        if (*p == '"') buf[o++] = '"';
-        buf[o++] = *p;
-    }
-    buf[o++] = '"';
-    buf[o] = '\0';
-    return buf;
-#else
     char *escaped = shell_escape(path);
     if (!escaped) return NULL;
     size_t len = strlen(escaped);
@@ -348,15 +339,17 @@ static char *shell_quote_dup(const char *path)
     buf[len + 2] = '\0';
     free(escaped);
     return buf;
-#endif
 }
+#endif
 
-/* The input, in bytes the shell will read back as this same file.  /bin/sh takes
- * the UTF-8 the callers already hand over, so POSIX needs nothing at all.  On
- * Windows cmd.exe decodes with the ANSI code page while src/DeviceWorker.cpp
- * hands UTF-8, and a NULL here is a name that code page cannot spell.  The input
- * alone gets this treatment: ZUUNED_TMPDIR already arrives in the code page, so
- * re-spelling it would mangle a temp directory with a non-ASCII name. */
+/* The input, in bytes the encoder will read back as this same file.  /bin/sh
+ * takes the UTF-8 the callers already hand over, so POSIX needs nothing at all.
+ * On Windows the child decodes its command line with the ANSI code page while
+ * src/DeviceWorker.cpp hands UTF-8 - the same code page zuuned_run_no_shell()
+ * turns these bytes back into, so the name means the file it meant before - and
+ * a NULL here is a name that code page cannot spell.  The input alone gets this
+ * treatment: ZUUNED_TMPDIR already arrives in the code page, so re-spelling it
+ * would mangle a temp directory with a non-ASCII name. */
 #ifdef _WIN32
 static char *shell_path_bytes(const char *path)
 {
@@ -377,12 +370,10 @@ static char *shell_path_bytes(const char *path)
 #define ZUUNED_TMPDIR "/tmp/"
 #endif
 
-/* Silence, spelled for whichever shell runs the encoder. */
-#ifdef _WIN32
-#define SHELL_QUIET ">nul 2>&1"
-#else
+/* Silence, spelled for whichever shell runs the encoder.  Windows has no
+ * shell on this path any more - zuuned_run_no_shell() wires the child standard
+ * handles to NUL - so only the POSIX spelling remains in use. */
 #define SHELL_QUIET "2>/dev/null"
-#endif
 
 /* The log line names the file, and the last separator wears whichever shape
  * the platform writes its paths in. */
@@ -404,7 +395,7 @@ static const char *photo_basename(const char *path)
  *
  * macOS: uses sips (always available, no extra dependency)
  * Linux: uses ffmpeg (same dependency as transcode)
- * Windows: the same ffmpeg, quoted for cmd.exe by shell_quote_dup
+ * Windows: the same ffmpeg, started with argv and no shell in front of it
  */
 char *zune_arm_photo(const char *input_path)
 {
@@ -426,6 +417,21 @@ char *zune_arm_photo(const char *input_path)
                         " system code page: %s\n", input_path);
         return NULL;
     }
+#ifdef _WIN32
+    /* ffmpeg with no shell in front of it, so nothing in a file name is ever
+     * expanded.  The scale argument keeps its single quotes because ffmpeg
+     * passes this string to the filter-graph parser, which is what the quotes
+     * protect the commas inside min() from - and cmd.exe never treated a
+     * single quote as quoting either, so the encoder already received them
+     * this way. */
+    const char *encoder_argv[] = {
+        "ffmpeg", "-y", "-i", in_bytes, "-vf",
+        "scale='min(480,iw)':'min(480,ih)':force_original_aspect_ratio=decrease",
+        "-q:v", "5", output, NULL
+    };
+    const int status = zuuned_run_no_shell(encoder_argv);
+    free(in_bytes);
+#else
     char *in_arg = shell_quote_dup(in_bytes);
     free(in_bytes);
     char *out_arg = shell_quote_dup(output);
@@ -464,6 +470,7 @@ char *zune_arm_photo(const char *input_path)
     }
 
     int status = system(cmd);
+#endif
     if (status != 0 || access(output, F_OK) != 0) {
         fprintf(stderr, "[libzune] photo prepare FAILED: %s\n", input_path);
         return NULL;

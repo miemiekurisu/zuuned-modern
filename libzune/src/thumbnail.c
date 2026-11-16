@@ -18,36 +18,6 @@
 #define ZUUNED_TMPDIR "/tmp/"
 #endif
 
-#ifdef _WIN32
-/* Method 2 asks system() to run a command, and system() runs whatever shell the
- * platform keeps behind it: /bin/sh on POSIX, cmd.exe on Windows.  cmd.exe does
- * not treat a single quote as quoting — it is an ordinary character, so a path
- * with a space in it splits into several arguments — and "2>/dev/null" is not a
- * redirect there either, it is a file named "dev\null" created under whatever the
- * current directory happens to be.  A cmd line built with POSIX syntax therefore
- * fails every time.
- *
- * cmd.exe quotes with double quotes and doubles an embedded one.  Refuse rather
- * than truncate: a path that does not fit is a path the resize cannot be
- * trusted with, and the caller's answer is the same "no thumbnail" it gets for
- * any other Method 2 failure. */
-static int shell_quote_path(char *out, size_t out_len, const char *path) {
-    size_t o = 0;
-    if (out_len < 3) return -1;
-    out[o++] = '"';
-    for (const char *p = path; *p; p++) {
-        if (*p == '"' && o + 3 > out_len) return -1;
-        if (*p == '"') out[o++] = '"';
-        if (o + 2 >= out_len) return -1;
-        out[o++] = *p;
-    }
-    if (o + 2 > out_len) return -1;
-    out[o++] = '"';
-    out[o] = '\0';
-    return 0;
-}
-#endif
-
 /* ---- Album art (set) ---- */
 
 int zune_brand(ZuneDevice *dev, uint32_t item_id,
@@ -135,23 +105,21 @@ int zune_grab_photo_thumb(ZuneDevice *dev, uint32_t item_id,
     snprintf(tmp, sizeof(tmp), "%szunelinux-photo-%u", ZUUNED_TMPDIR, item_id);
     ret = mtp_get_object_to_file(&dev->ptp, item_id, tmp);
     if (ret == 0) {
-        char cmd[1024];
-#ifdef __APPLE__
-        /* macOS: sips — preserve aspect ratio, fit within 200x200 */
-        snprintf(cmd, sizeof(cmd),
-                 "sips --resampleHeightWidthMax 200 --setProperty format jpeg '%s' --out '%s' 2>/dev/null",
-                 tmp, cache_path);
-#elif defined(_WIN32)
-        /* Windows: same ffmpeg command, spelled for cmd.exe.  ffmpeg must be
-         * reachable on PATH — the app bundles no copy, so on a machine without
-         * one Method 2 fails the same way it always did and only the
-         * representative sample (Method 1) produces a thumbnail. */
-        char in_q[512], out_q[512];
-        /* cache_path arrives as UTF-8 and cmd.exe reads this line with the ANSI
-         * code page, so the name ffmpeg writes has to be re-spelled or it
-         * publishes a thumbnail no caller will ever find.  tmp needs nothing: it
-         * is ZUUNED_TMPDIR plus a number, and that directory was built in the
-         * code page already. */
+#ifdef _WIN32
+        /* Same ffmpeg, started with argv and no shell in front of it, so
+         * nothing a device object is named can be expanded into something
+         * else - see zuuned_run_no_shell.  There is no command-line room check
+         * here any more because there is no command line to overflow: the only
+         * name that can fail is one the system code page cannot spell, and that
+         * is what the NULL from zuuned_narrow_path_for_shell() already means.
+         *
+         * cache_path arrives as UTF-8 and the child decodes its arguments with
+         * the ANSI code page, so the name ffmpeg writes has to be re-spelled or
+         * it publishes a thumbnail no caller will ever find.  tmp needs nothing:
+         * it is ZUUNED_TMPDIR plus a number, and that directory was built in the
+         * code page already.  ffmpeg must be reachable on PATH - the app bundles
+         * no copy - so on a machine without one Method 2 fails the same way it
+         * always did and only the representative sample produces a thumbnail. */
         char *out_bytes = zuuned_narrow_path_for_shell(cache_path);
         if (!out_bytes) {
             fprintf(stderr, "[libzune] no code-page spelling for the thumbnail"
@@ -159,28 +127,22 @@ int zune_grab_photo_thumb(ZuneDevice *dev, uint32_t item_id,
             remove(tmp);
             return -1;
         }
-        int fit = shell_quote_path(in_q, sizeof(in_q), tmp) == 0
-               && shell_quote_path(out_q, sizeof(out_q), out_bytes) == 0;
+        {
+            const char *thumb_argv[] = {
+                "ffmpeg", "-y", "-i", tmp, "-vf",
+                "scale=200:200:force_original_aspect_ratio=decrease",
+                out_bytes, NULL
+            };
+            ret = zuuned_run_no_shell(thumb_argv);
+        }
         free(out_bytes);
-        if (!fit) {
-            fprintf(stderr,
-                    "[libzune] thumbnail path too long for cmd line %u\n", item_id);
-            remove(tmp);
-            return -1;
-        }
-        int used = snprintf(cmd, sizeof(cmd),
-                            "ffmpeg -y -i %s -vf "
-                            "scale=200:200:force_original_aspect_ratio=decrease "
-                            "%s >nul 2>&1",
-                            in_q, out_q);
-        /* A cmd.exe command line has a hard ceiling of its own; a truncated one
-         * would launch ffmpeg with half an argument list and report a resize
-         * failure that is really a path length. */
-        if (used < 0 || (size_t)used >= sizeof(cmd)) {
-            fprintf(stderr, "[libzune] thumbnail command too long for %u\n", item_id);
-            remove(tmp);
-            return -1;
-        }
+#else
+        char cmd[1024];
+#ifdef __APPLE__
+        /* macOS: sips — preserve aspect ratio, fit within 200x200 */
+        snprintf(cmd, sizeof(cmd),
+                 "sips --resampleHeightWidthMax 200 --setProperty format jpeg '%s' --out '%s' 2>/dev/null",
+                 tmp, cache_path);
 #else
         /* Linux: use ffmpeg */
         snprintf(cmd, sizeof(cmd),
@@ -190,6 +152,7 @@ int zune_grab_photo_thumb(ZuneDevice *dev, uint32_t item_id,
                  tmp, cache_path);
 #endif
         ret = system(cmd);
+#endif
         remove(tmp);
 
         if (ret == 0) {

@@ -194,6 +194,48 @@ service and the POSIX-only install rules are skipped on Windows, and
 shared translation unit through `posix_shim.h`, so libzune and the transcode
 layer keep the POSIX surface they expect without `#ifdef` sprawl.
 
+### Warning level and hardening switches
+
+The 2026-11-16 audit round found defects a warning level would have said out loud
+before a person had to read the tree: a `return` where the enclosing loop plainly
+continued, an allocation failure that an encoder path answered by writing a short file.
+`CMakeLists.txt:186` therefore offers three MSVC-only switches, and every one of them
+defaults to the boring value:
+
+| Switch | Default | What it adds |
+| --- | --- | --- |
+| `ZUUNED_MSVC_WARNING_LEVEL` | `default` | `/W3`, `/W4` or `/Wall`; `default` appends no flag at all |
+| `ZUUNED_WARNINGS_AS_ERRORS` | `OFF` | `/WX` |
+| `ZUUNED_CONTROL_GUARD` | `OFF` | `/guard:cf` on the compile and the link of every target here |
+
+```
+cmake --build build       # exactly the command line the released artifact was built with
+cmake -DZUUNED_MSVC_WARNING_LEVEL=4 -DZUUNED_WARNINGS_AS_ERRORS=ON build
+```
+
+Nothing is folded into `CMAKE_BUILD_TYPE`, and the defaults append nothing, for two
+reasons that are both about honesty rather than taste. The released Windows artifact is
+built from the bare configure line, so a reviewer reproducing it must not have to know
+which switches a developer happens to like; and the flags are `if(MSVC)`-only because
+nobody on this machine can compile the Linux or macOS line, so a warning GCC or Clang
+starts treating as an error would break a build that cannot be tested here. A default
+that this machine cannot verify is not a default.
+
+Configure reports what it chose, so a build log says which binary it is:
+
+```
+-- Zuuned hardening: warning level default, warnings as errors OFF, control guard OFF
+```
+
+Two things stay open on purpose. `/WX` does not pass today: a clean build reports three
+warnings that predate this round - `libzune/src/transcode.c:99`, `:161` and `:286`
+(`C4047`, in the dead `popen` helpers nothing calls), `src/DeviceWorker.cpp:513`
+(`C4477`, a `fprintf` whose argument does not match its conversion) and
+`transcode/transcodetool.c:293` (`C4090`). Turning `/WX` into a default means clearing those
+first, not silencing them. And AddressSanitizer has never been run in this repository,
+so nothing here claims it; the audit's request for a sanitizer job in CI is recorded as
+an open item in `docs/audits/CODE_AUDIT_RESPONSE_2026-11-16.md`, not as something done.
+
 ### Package it for another Windows machine
 
 The build tree runs where the toolchain lives: it contains no Qt DLL at all,

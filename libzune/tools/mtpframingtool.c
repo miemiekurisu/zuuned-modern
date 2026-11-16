@@ -34,6 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <time.h>
 
 #ifdef _WIN32
 #include <io.h>
@@ -157,6 +158,63 @@ static int mock_close(zune_usb_handle_t *h)
     return ZUNE_USB_OK;
 }
 
+/* Scripted bulk-IN responses.
+ *
+ * A device that puts a huge uint32 in front of a dozen bytes is only a
+ * memory bug if the caller sizes its array from the count without
+ * checking it, so proving the check means handing mtp.c a data container
+ * that lies.  The mock cannot do that from the bare OK response alone, so
+ * a read now pops from this queue first - and only when a case filled it.
+ * The queue is empty for every case that does not arm it, which leaves the
+ * default answer every existing check depends on exactly as it was, and
+ * each scripted case clears it again before it returns.
+ */
+#define SCRIPT_MAX 8
+
+typedef struct {
+    uint8_t *data;
+    uint32_t len;
+} script_step;
+
+static script_step g_script[SCRIPT_MAX];
+static int g_script_n;       /* steps queued            */
+static int g_script_next;    /* steps handed out        */
+static int g_script_extra;   /* reads the default answered */
+static int g_script_fault;   /* a step could not be set */
+static int g_reads;          /* bulk_in reads observed  */
+
+static int script_push(const uint8_t *data, uint32_t len)
+{
+    if (g_script_n >= SCRIPT_MAX) {
+        g_script_fault = 1;
+        return 0;
+    }
+    g_script[g_script_n].data = (uint8_t *)malloc(len ? len : 1u);
+    if (!g_script[g_script_n].data) {
+        g_script_fault = 1;
+        return 0;
+    }
+    if (len)
+        memcpy(g_script[g_script_n].data, data, len);
+    g_script[g_script_n].len = len;
+    g_script_n++;
+    return 1;
+}
+
+static void script_clear(void)
+{
+    for (int i = 0; i < g_script_n; i++) {
+        free(g_script[i].data);
+        g_script[i].data = NULL;
+        g_script[i].len = 0;
+    }
+    g_script_n = 0;
+    g_script_next = 0;
+    g_script_extra = 0;
+    g_script_fault = 0;
+    g_reads = 0;
+}
+
 /* Every transaction the framing tool runs ends in a bare 12-byte OK
  * response; ptp_recv_response_timeout() checks container type and code only. */
 static int mock_bulk_read(zune_usb_handle_t *h, uint8_t endpoint,
@@ -164,6 +222,22 @@ static int mock_bulk_read(zune_usb_handle_t *h, uint8_t endpoint,
                           uint32_t *actual_length, uint32_t timeout_ms)
 {
     (void)h; (void)endpoint; (void)timeout_ms;
+    g_reads++;
+
+    /* A scripted container, if this case armed one.  Clamped to what the
+     * caller asked for, so a mistake in a test cannot write past the
+     * buffer ptp.c handed it. */
+    if (g_script_next < g_script_n) {
+        script_step *st = &g_script[g_script_next++];
+        uint32_t give = st->len > length ? length : st->len;
+        if (give)
+            memcpy(data, st->data, give);
+        *actual_length = give;
+        return ZUNE_USB_OK;
+    }
+    if (g_script_n)
+        g_script_extra++;
+
     if (length < PTP_CONTAINER_HDR_SIZE)
         return ZUNE_USB_ERROR;
     data[0] = 12; data[1] = 0; data[2] = 0; data[3] = 0;
@@ -441,6 +515,164 @@ static void run_case(ptp_session_t *s, zune_usb_handle_t *h, mock_state *mem,
 }
 
 /* ===================================================================
+ * Device-controlled counts
+ * =================================================================== */
+
+/* Little-endian store: the mirror of le32() above. */
+static void put_le32(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)(v & 0xFFu);
+    p[1] = (uint8_t)((v >> 8) & 0xFFu);
+    p[2] = (uint8_t)((v >> 16) & 0xFFu);
+    p[3] = (uint8_t)((v >> 24) & 0xFFu);
+}
+
+/* One PTP data container: 12-byte header, a uint32 count, then nvals
+ * uint32 values.  The count is what the device claims and is deliberately
+ * free to disagree with nvals, because a lying count is the whole input a
+ * hostile player needs.  Returns the container length, which is the byte
+ * count of one bulk_in read. */
+static uint32_t data_container(uint8_t *buf, uint32_t count,
+                               const uint32_t *vals, int nvals)
+{
+    uint32_t payload = 4u + (uint32_t)nvals * 4u;
+    uint32_t total = (uint32_t)PTP_CONTAINER_HDR_SIZE + payload;
+
+    put_le32(buf, total);
+    buf[4] = (uint8_t)(PTP_CT_DATA & 0xFF);
+    buf[5] = (uint8_t)((PTP_CT_DATA >> 8) & 0xFF);
+    for (int i = 6; i < PTP_CONTAINER_HDR_SIZE; i++)
+        buf[i] = 0;
+    put_le32(buf + PTP_CONTAINER_HDR_SIZE, count);
+    for (int i = 0; i < nvals; i++)
+        put_le32(buf + PTP_CONTAINER_HDR_SIZE + 4 + (uint32_t)i * 4u, vals[i]);
+    return total;
+}
+
+/* One scripted data phase for one of the two calls whose count used to be
+ * able to wrap the byte calculation.
+ *
+ *   refs:   0 = mtp_get_storage_ids, 1 = mtp_get_object_references
+ *   count:  the uint32 the container advertises
+ *   honest: 1 when count matches the values that follow it, 0 when it lies
+ *
+ * An honest count has to succeed and hand the values back.  Without that
+ * control a refusal proves nothing: it could just as well mean the mock
+ * never produced a readable data container at all. */
+static void run_count_case(ptp_session_t *s, int refs, const char *name,
+                           uint32_t count, const uint32_t *vals, int nvals,
+                           int honest)
+{
+    uint8_t container[64];
+    uint32_t total = data_container(container, count, vals, nvals);
+    uint32_t *out = NULL;
+    int n = -7;
+    int rc;
+    int base = checks_failed;
+    clock_t t0;
+    double ms;
+    char msg[192];
+
+    script_clear();
+    script_push(container, total);
+    snprintf(msg, sizeof(msg), "%s count 0x%08X: scripted data phase armed",
+             name, count);
+    check(!g_script_fault, msg);
+
+    t0 = clock();
+    if (refs)
+        rc = mtp_get_object_references(s, 0x08000001u, &out, &n);
+    else
+        rc = mtp_get_storage_ids(s, &out, &n);
+    ms = (double)(clock() - t0) * 1000.0 / (double)CLOCKS_PER_SEC;
+
+    if (!honest) {
+        /* The arithmetic the fix removed, done the same unsigned way, so a
+         * case cannot pass by testing a payload the old guard rejected
+         * anyway: 4 + n * 4 has to land below the payload length here. */
+        uint32_t old_guard = 4u + count * 4u;
+        const char *why = "payload the pre-fix guard accepted";
+        snprintf(msg, sizeof(msg), "%s count 0x%08X: %s", name, count, why);
+        check(old_guard < total - (uint32_t)PTP_CONTAINER_HDR_SIZE, msg);
+        snprintf(msg, sizeof(msg), "%s count 0x%08X: refused", name, count);
+        check(rc != 0, msg);
+        why = "refused without publishing an array";
+        snprintf(msg, sizeof(msg), "%s count 0x%08X: %s", name, count, why);
+        check(out == NULL && n == 0, msg);
+        why = "refused at once, not after a four gigabyte malloc and scan";
+        snprintf(msg, sizeof(msg), "%s count 0x%08X: %s", name, count, why);
+        check(ms < 2000.0, msg);
+    } else {
+        const char *why = "honest payload accepted";
+        snprintf(msg, sizeof(msg), "%s count 0x%08X: %s", name, count, why);
+        check(rc == 0, msg);
+        why = "reports the scripted number of values";
+        snprintf(msg, sizeof(msg), "%s count 0x%08X: %s", name, count, why);
+        check(n == nvals, msg);
+        for (int i = 0; out && i < n && i < nvals; i++) {
+            snprintf(msg, sizeof(msg),
+                     "%s count 0x%08X: value %d is the scripted 0x%08X",
+                     name, count, i, vals[i]);
+            check(out[i] == vals[i], msg);
+        }
+    }
+
+    /* The read sequence ptp.c actually asked for, measured rather than
+     * assumed.  A container that arrives complete costs ptp_recv_data()
+     * one read, and ptp_recv_response_timeout() then takes another - which
+     * is the mock default answer, so one read past the queue is the whole
+     * transaction and the queued container was not read twice. */
+    snprintf(msg, sizeof(msg),
+             "%s count 0x%08X: reads %d total, %d scripted, %d default",
+             name, count, g_reads, g_script_next, g_script_extra);
+    check(g_reads == 2 && g_script_next == 1 && g_script_extra == 1, msg);
+
+    free(out);
+    script_clear();   /* leave the mock as the other cases found it */
+
+    if (checks_failed > base)
+        printf("  ^^ in case %s count=0x%08X\n", name, count);
+}
+
+/* How many reads does one data phase really cost?  ptp_recv_data() takes a
+ * first read for the header and keeps reading until the container is whole,
+ * so a device that sends the header on its own - the split mode this stack
+ * auto-detects for a Zune - costs the case a second scripted step. Counting
+ * it is what makes the one-read claim above an observation. */
+static void run_split_reads(ptp_session_t *s, const uint32_t *vals, int nvals)
+{
+    uint8_t header[PTP_CONTAINER_HDR_SIZE];
+    uint8_t payload[64];
+    uint32_t payload_len = 4u + (uint32_t)nvals * 4u;
+    uint32_t *out = NULL;
+    int n = 0;
+    int rc;
+    char msg[192];
+
+    put_le32(header, (uint32_t)PTP_CONTAINER_HDR_SIZE + payload_len);
+    header[4] = (uint8_t)(PTP_CT_DATA & 0xFF);
+    header[5] = (uint8_t)((PTP_CT_DATA >> 8) & 0xFF);
+    for (int i = 6; i < PTP_CONTAINER_HDR_SIZE; i++)
+        header[i] = 0;
+    put_le32(payload, (uint32_t)nvals);
+    for (int i = 0; i < nvals; i++)
+        put_le32(payload + 4 + (uint32_t)i * 4u, vals[i]);
+
+    script_clear();
+    script_push(header, (uint32_t)PTP_CONTAINER_HDR_SIZE);
+    script_push(payload, payload_len);
+    rc = mtp_get_storage_ids(s, &out, &n);
+    check(rc == 0 && n == nvals && out && out[nvals - 1] == vals[nvals - 1],
+          "GetStorageIDs split header/data: a container in two reads parses");
+    snprintf(msg, sizeof(msg),
+             "GetStorageIDs split header/data: reads %d total, %d scripted,"
+             " %d default", g_reads, g_script_next, g_script_extra);
+    check(g_reads == 3 && g_script_next == 2 && g_script_extra == 1, msg);
+    free(out);
+    script_clear();
+}
+
+/* ===================================================================
  * Main
  * =================================================================== */
 
@@ -547,6 +779,46 @@ int main(void)
                   "MTP entry point reports real per-chunk progress");
             remove(g_tmp);
         }
+    }
+
+    /* Device-controlled uint32 counts.  mtp_get_storage_ids() and
+     * mtp_get_object_references() used to size the array with
+     * len < 4 + n * 4, and that sum wraps once n passes 2^30, so any
+     * payload at all cleared the guard and the count went straight into
+     * malloc(n * 4).  Both now compare n against (len - 4) / 4, the rule
+     * mtp_get_object_handles() and mtp_get_props_supported() already
+     * followed.  Every hostile container is paired with the same length
+     * of payload carrying an honest count, so a refusal cannot be the
+     * mock failing to produce a readable data phase.
+     */
+    {
+        mock_state scratch;
+        uint8_t hostile[64];
+        uint8_t honest[64];
+        static const uint32_t two_ids[2] = { 0x00020001u, 0x00030002u };
+        static const uint32_t two_refs[2] = { 0x08000001u, 0x08000002u };
+
+        memset(&scratch, 0, sizeof(scratch));
+        wlog_init(&scratch.log);
+        h.backend_data = &scratch;
+
+        check(data_container(hostile, 0xFFFFFFFFu, two_ids, 2) ==
+                  data_container(honest, 2u, two_ids, 2),
+              "GetStorageIDs hostile and honest payloads are equal length");
+        check(data_container(hostile, 0xFFFFFFFFu, two_refs, 2) ==
+                  data_container(honest, 2u, two_refs, 2),
+              "GetObjectReferences hostile and honest payloads are equal len");
+
+        run_count_case(&s, 0, "GetStorageIDs", 0xFFFFFFFFu, two_ids, 2, 0);
+        run_count_case(&s, 0, "GetStorageIDs", 0x40000000u, two_ids, 2, 0);
+        run_count_case(&s, 0, "GetStorageIDs", 2u, two_ids, 2, 1);
+        run_count_case(&s, 1, "GetObjectReferences", 0xFFFFFFFFu, two_refs, 2, 0);
+        run_count_case(&s, 1, "GetObjectReferences", 0x40000000u, two_refs, 2, 0);
+        run_count_case(&s, 1, "GetObjectReferences", 2u, two_refs, 2, 1);
+        run_split_reads(&s, two_ids, 2);
+
+        wlog_free(&scratch.log);
+        h.backend_data = &mem;
     }
 
     wlog_free(&mem.log);

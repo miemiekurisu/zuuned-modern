@@ -442,6 +442,17 @@ static QString stageNativeAudio(const QString &source, const QString &suffix,
 
 SyncEngine::~SyncEngine() {
     m_bookPreparationCancel->store(true);
+    // main() drains the global pool through a scope guard before the QML
+    // engine takes this singleton away, so this join waits for nothing that
+    // was not already being waited for at exit.  It is here because the
+    // guarantee belongs to the class that owns the work, not to the order of
+    // statements in one function: those callables read a QPointer of this
+    // object from their own thread, and that is only sound while this object
+    // is certainly alive.  A cancel flag is set first, and a cancelled
+    // transcode returns early, which is what keeps the wait short.
+    for (QFuture<void> &work : m_backgroundWork)
+        work.waitForFinished();
+    m_backgroundWork.clear();
     cleanupCurrentTemp(QString());
 }
 
@@ -789,6 +800,15 @@ void SyncEngine::clearInflight() {
     if (!m_interruptedSend.isEmpty()) return;
     QFile::remove(inflightPath());
     m_activeRecoveryRecord.clear();
+}
+
+// Finished futures carry no result worth keeping, so the list holds at
+// worst the jobs still running plus one.
+void SyncEngine::trackBackgroundWork(const QFuture<void> &work) {
+    for (int i = m_backgroundWork.size() - 1; i >= 0; --i)
+        if (m_backgroundWork.at(i).isFinished())
+            m_backgroundWork.removeAt(i);
+    m_backgroundWork.append(work);
 }
 
 void SyncEngine::retainFailedInflight(quint32 itemId) {
@@ -1189,11 +1209,14 @@ void SyncEngine::refreshPodcastCleanupPreview() {
     for (const auto &value : m_device->podcastEpisodesList()) {
         const auto row = value.toMap();
         const auto id = row.value("itemId").toUInt();
-        if (!id || id == 0xffffffffu || ids.contains(id)) return;
+        // Skip the row, do not abandon the preview: this loop already answers
+        // every other filter with continue, and one unnamed or repeated device
+        // object says nothing about the episodes beside it.
+        if (!id || id == 0xffffffffu || ids.contains(id)) continue;
         ids.insert(id);
         if (!row.value("sourceKnown").toBool()) continue;
         const auto key = qMakePair(row.value("feedUrl").toString(), row.value("sourceUrl").toString());
-        if (key.first.isEmpty() || key.second.isEmpty() || sources.contains(key)) return;
+        if (key.first.isEmpty() || key.second.isEmpty() || sources.contains(key)) continue;
         sources.insert(key, row);
     }
     QVariantList preview;
@@ -1206,7 +1229,7 @@ void SyncEngine::refreshPodcastCleanupPreview() {
         const auto live = sources.value(key);
         if (!live.value("playedKnown").toBool() || !live.value("played").toBool()) continue;
         const auto id = live.value("itemId").toUInt();
-        if (matched.contains(id) || candidate.value("spokenId").toString().isEmpty()) return;
+        if (matched.contains(id) || candidate.value("spokenId").toString().isEmpty()) continue;
         matched.insert(id);
         candidate["itemId"] = id;
         candidate["deviceTitle"] = live.value("title");
@@ -1949,7 +1972,7 @@ void SyncEngine::prepareEntry(int idx) {
                     preparedOwner->clear(); // engine now owns output or already removed it
                 }, Qt::QueuedConnection);
     });
-    Q_UNUSED(discard);
+    trackBackgroundWork(discard);
 }
 
 void SyncEngine::onSpokenPrepared(const QString &token, const QVariantList &items, const QString &failure) {
@@ -2499,6 +2522,7 @@ void SyncEngine::dispatchVideoSend(const PreparedVideo &pv) {
     emit workerSyncNotify(title, int(m_entries.size()) + pv.idx,
                           m_totalCount);
     m_syncPhase = QStringLiteral("sending");   // W2
+    m_currentVideoWireName = wireName;  // the failure branch names the same object
     markInflightVideo(wireName, title); // B2: filename survives title changes
     emit workerSendVideo(pv.entryId, pv.path, wireName, title, metagenre,
                          e.value(QStringLiteral("description")).toString(),
@@ -2575,7 +2599,7 @@ void SyncEngine::prepareVideoEntry(int idx, bool isRetry) {
                                                      error, isRetry);
                 }, Qt::QueuedConnection);
     });
-    Q_UNUSED(discard);
+    trackBackgroundWork(discard);
 }
 
 void SyncEngine::onVideoPrepareFinished(const QString &entryId,
@@ -2634,10 +2658,36 @@ void SyncEngine::onVideoPrepareFinished(const QString &entryId,
 
 void SyncEngine::onVideoSendDone(const QString &entryId, bool ok,
                                  quint32 itemId, const QString &autopsyName) {
-    clearInflight();   // B2: the wire object is complete
+    // B2 evidence before verdict.  A reply that no longer belongs to the run
+    // in flight has nothing to say about the marker, and reaching past this
+    // check deleted the only record of a truncated object every time a late
+    // answer arrived.  The audio and photo handlers both test staleness
+    // first for exactly that reason; video was the one that did not.
     if (entryId != m_currentEntryId || !m_isSyncing || !m_inVideoPhase
         || !m_videoSending)
         return;
+
+    // A failed send that already reached an object id left a partial object on
+    // the player -- DeviceWorker reports the real id in precisely that case --
+    // so the marker survives the failure.  Video markers are keyed by the wire
+    // filename and never carry a recovery record, which is why
+    // retainFailedInflight() has nothing to retain for this category; holding
+    // the in-session pair is the same claim in the shape video owns, and it
+    // reaches the same purge path at startup.  Cancelling is not tidiness:
+    // the marker file has one slot, so the next send would overwrite the only
+    // evidence of the object this failure produced.
+    if (ok || itemId == 0) {
+        clearInflight();   // B2: the wire object is complete
+    } else {
+        m_interruptedVideoFile = m_currentVideoWireName;
+        m_interruptedSend = m_currentName;
+        if (m_interruptedSend.isEmpty())
+            m_interruptedSend = m_interruptedVideoFile;
+        m_interruptedRecoveryStatus
+            = UiText::tr("Transfer failed. Review recovery before sending more media.");
+        emit interruptedSendChanged();
+        m_cancelled = true;
+    }
 
     // Live free-space accounting, then clean the transcoded temp.
     if (ok && m_device && !m_currentSendPath.isEmpty())

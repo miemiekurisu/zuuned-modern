@@ -370,11 +370,26 @@ int zune_snap_thumb(const char *video_path, const char *output_path)
 {
     if (!video_path || !output_path) return -1;
 
-    /* Build shell command with escaped paths.
-     * -ss 10        seek 10s in (skip black intro frames)
+    /* -ss 10        seek 10s in (skip black intro frames)
      * -vf scale=200:-1   200px wide, auto height
      * -frames:v 1   one frame only
-     * -q:v 2        JPEG quality */
+     * -q:v 2        JPEG quality
+     *
+     * Windows runs ffmpeg from argv with no shell in front of it, which is both
+     * the injection fix (cmd.exe expands %VAR% inside single quotes, so neither
+     * of these quotes was ever a quote there) and the reason the POSIX quoting
+     * stops being wrong on its own: a single-quoted command line fails on
+     * cmd.exe every time, so this function could never produce a frame here.
+     * The bytes go out as the caller named them, and zuuned_run_no_shell()
+     * decodes them with the same code page the shell used to, so a name means
+     * the same file and no name is expanded into someone else's. */
+#ifdef _WIN32
+    const char *thumb_argv[] = {
+        "ffmpeg", "-y", "-ss", "10", "-i", video_path, "-vf", "scale=200:-1",
+        "-frames:v", "1", "-q:v", "2", output_path, NULL
+    };
+    int ret = zuuned_run_no_shell(thumb_argv);
+#else
     char cmd[2048];
     snprintf(cmd, sizeof(cmd),
         "ffmpeg -y -ss 10 -i '%s' -vf \"scale=200:-1\" "
@@ -382,6 +397,7 @@ int zune_snap_thumb(const char *video_path, const char *output_path)
         video_path, output_path);
 
     int ret = system(cmd);
+#endif
     if (ret != 0) {
         fprintf(stderr, "[libzune] thumbnail generation failed for: %s\n",
                 video_path);

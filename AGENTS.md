@@ -3140,3 +3140,59 @@ build: `tests\win-compat` 204 checks / 0 failures / 0 skips, `librarytool paths`
 own instance was holding the attached player, and a second instance in an isolated profile would
 have contended for its interface. The app relaunched on the new binary browsed the HD read-only
 and answered 9 albums with its own storage numbers. Nothing has been listened to.
+
+**2026-11-17 someone else read the tree, and percent turned out not to be quotable.**
+`docs/audits/CODE_AUDIT_2026-11-16.md` is that read; `docs/audits/CODE_AUDIT_RESPONSE_2026-11-16.md`
+is the finding-by-finding answer, and it is where the disagreements live, so read both rather than
+a summary of either. All confirmed findings are implemented. A-12 was false and stays false on
+evidence: the eight `system()` calls in `libzune/src/device.c:31-46` sit inside a block comment that
+opens near `:26` and closes at `:50`, which is what a grep without context cannot see - verify a
+finding against the conditional or comment it is inside before "fixing" it. A-13 and A-14 are
+declined with their conditions written down: `/WX` cannot be a default while three pre-existing
+warnings stand (`libzune/src/transcode.c:99/161/286` in dead `popen` helpers, `src/DeviceWorker.cpp:513`
+`C4477`, `transcode/transcodetool.c:293` `C4090`), ASan has never once run here so nothing claims it, and
+splitting 140-170 KB translation units waits until there are state-machine tests to catch the split
+going wrong. The three hardening switches (`CMakeLists.txt:186`) all default to appending nothing,
+because the released artifact is built from the bare configure line and a default this machine cannot
+compile is not a default; configure prints the choice, and `BUILDING.md` says why.
+
+**The one that matters on Windows: there is no shell in front of ffmpeg any more.**
+A-09 read as a quoting gap and is really a parser this code does not control: `cmd.exe` expands
+`%VAR%` inside double quotes exactly as it does outside them, doubling a `"` protects the argument
+from the program and not from the shell that reads the line first, and percent has no command-line
+escape at all, so a photo named `%PATH%.jpg` reached the encoder under a name nobody chose.
+`zuuned_run_no_shell(argv)` (`compat/win/wincompat.c:1680`, `compat/win/posix_shim.h:505`) widens
+with `CP_ACP` - not UTF-8, because those are the bytes `cmd.exe` used to decode and changing them
+would silently change which file a name means - writes the line under the `CommandLineToArgvW`
+rules, puts one inheritable `NUL` behind all three child handles so silence means what `>nul 2>&1`
+meant, and `CreateProcessW`s with `CREATE_NO_WINDOW`, which is also the end of a console window
+flashing for every transferred picture. Users: `libzune/src/photo.c:432`, `libzune/src/thumbnail.c:136`,
+`libzune/src/util.c:391`. `shell_quote_path()` is deleted, `shell_quote_dup()` is `#ifndef _WIN32`,
+`SHELL_QUIET` is POSIX-only again, the avfilter keeps its single quotes because those belong to
+ffmpeg's filter-graph parser, and every live `system()` in the tree is now inside an `#else`.
+
+**That fix closed a hardware gate as a side effect, and only because the log was counted.**
+The 19 launches of this sitting's `tests\win-usability` run each auto-connected to the Zune HD and
+logged `[libzune] resized full file for thumbnail` 51 times across 17 of them, with `all photo thumbnail
+methods failed` zero times; that line only prints when `zuuned_run_no_shell()` returned 0, so the ffmpeg
+resize branch - recorded here since 2026-10-21 as failing on `cmd.exe` on every call - has now worked 51
+times against real photo objects on a player.
+Photo thumbnail generation on Windows is measured, not compiled. The `all thumbnail methods failed`
+lines that still appear are `libzune/src/thumbnail.c:69`, which never shells out, i.e. the known
+`get_representative_sample` defect. Storage read back at 10,525,163,520 and 15,543,730,176 bytes on
+the same launches, which is what makes the new `libzune/src/mtp.c:419` length bound a check that
+accepts a real player rather than only a crafted one - and the audit found a second site of the same
+defect at `mtp.c:1198` that its own write-up missed.
+
+**Counters, and the number to quote.** Against one `--clean-first` relink (352/352): `mtpframingtool`
+1285 / 0, `librarytool paths` ALL PASS 73, `tests\win-compat` 204 / 0 / 0, `tests\privacy` 19 / 0,
+i18n `AUDIT=ok`, and `tests\win-usability` `launches=19 checks=157 failures=0 skips=0 killed=0`
+`OVERALL=ok`. That last run supersedes the 2026-11-16 paragraph above saying the usability gate was
+not run and that `launches=17 checks=95` still stood; the device was free this time, so the harness
+ran. **Proven versus never measured, unchanged where it counts:** nothing was written, deleted or
+read back off a player this sitting - the device evidence is a re-read inside the closed
+library-read and now photo-thumbnail gates - audio has never been heard, WPD is untested because this
+player is bound to WinUSB, deletion/spoken/video categories and every non-Pavo model stay open, and
+the A-02 interrupted-video recovery and A-03 background-thread join are compile-verified with
+measured neighbours rather than measured. The Linux and macOS lines are unchanged by construction,
+which here means unverified, not verified.

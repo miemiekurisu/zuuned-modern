@@ -412,7 +412,11 @@ int mtp_get_storage_ids(ptp_session_t *s, uint32_t **ids, int *count)
     }
 
     uint32_t n = le32_unpack(data);
-    if (len < 4 + n * 4) {
+    /* Subtract before comparing so a device-controlled count cannot wrap the
+     * byte calculation.  Storage ids are uint32, so 4 + n * 4 overflows once n
+     * passes 2^30, and the old guard then passed for any payload at all.  This
+     * is the rule get_object_handles and get_props_supported already follow. */
+    if (n > (len - 4) / 4) {
         fprintf(stderr, "[mtp] get_storage_ids: truncated (count=%u, len=%u)\n", n, len);
         free(data);
         return -1;
@@ -1188,7 +1192,10 @@ int mtp_get_object_references(ptp_session_t *s, uint32_t handle,
     }
 
     uint32_t n = le32_unpack(data);
-    if (len < 4 + n * 4) {
+    /* Same overflow, and a hotter path: every album, playlist and track
+     * resolution asks the device this, so one fabricated count is read as a
+     * huge reference array before anything else gets a say. */
+    if (n > (len - 4) / 4) {
         fprintf(stderr, "[mtp] get_object_references: truncated "
                 "(count=%u, len=%u)\n", n, len);
         free(data);

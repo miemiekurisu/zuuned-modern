@@ -165,6 +165,56 @@ if(MSVC)
     add_link_options("/PDBALTPATH:%_OBJNAME%")
 endif()
 
+# ---- opt-in build hardening -----------------------------------------------
+#
+# Every switch here is OFF, and that is load-bearing rather than timid: the
+# released Windows artifact is built from the bare configure line, so a hardening
+# switch must not be able to change what somebody who downloaded it runs.  With
+# the defaults nothing is appended to any compile or link command at all, which
+# is what "the artifact is unchanged" means in this file.
+#
+# They exist because the 2026-11-16 audit round found defects a warning level
+# would have said out loud before a human had to - a `return` where the enclosing
+# loop plainly continued, an allocation whose failure an encoder path answered by
+# writing a short file - and because the honest answer to "was that the last
+# one?" is a compiler switch, not another reading pass over the same tree.
+#
+# MSVC only, and deliberately not wired into CMAKE_BUILD_TYPE: the Linux and
+# macOS lines stay byte-identical by construction, since nothing here has been
+# compiled by those compilers and a warning they start emitting would break a
+# build nobody can run on this machine.
+option(ZUUNED_WARNINGS_AS_ERRORS "MSVC /WX: make every warning a build error" OFF)
+option(ZUUNED_CONTROL_GUARD "MSVC /guard:cf control-flow guard for every target in this project" OFF)
+set(ZUUNED_MSVC_WARNING_LEVEL "default" CACHE STRING
+    "MSVC warning level: default (what cl.exe chooses), 3, 4, or all")
+set_property(CACHE ZUUNED_MSVC_WARNING_LEVEL PROPERTY STRINGS default 3 4 all)
+
+if(MSVC)
+    set(ZUUNED_MSVC_WARNING_FLAGS "")
+    if(ZUUNED_MSVC_WARNING_LEVEL STREQUAL "4")
+        set(ZUUNED_MSVC_WARNING_FLAGS /W4)
+    elseif(ZUUNED_MSVC_WARNING_LEVEL STREQUAL "all")
+        set(ZUUNED_MSVC_WARNING_FLAGS /Wall)
+    elseif(ZUUNED_MSVC_WARNING_LEVEL STREQUAL "3")
+        set(ZUUNED_MSVC_WARNING_FLAGS /W3)
+    endif()
+    if(ZUUNED_WARNINGS_AS_ERRORS)
+        list(APPEND ZUUNED_MSVC_WARNING_FLAGS /WX)
+    endif()
+    # Appended only when something was actually chosen, so the default
+    # configuration produces the command line it produced before.
+    if(ZUUNED_MSVC_WARNING_FLAGS)
+        add_compile_options(${ZUUNED_MSVC_WARNING_FLAGS})
+    endif()
+    if(ZUUNED_CONTROL_GUARD)
+        add_compile_options(/guard:cf)
+        add_link_options(/guard:cf)
+    endif()
+    message(STATUS "Zuuned hardening: warning level ${ZUUNED_MSVC_WARNING_LEVEL},"
+                   " warnings as errors ${ZUUNED_WARNINGS_AS_ERRORS},"
+                   " control guard ${ZUUNED_CONTROL_GUARD}")
+endif()
+
 qt_standard_project_setup(REQUIRES 6.8)
 qt_policy(SET QTP0004 NEW)
 include(packaging/CheckQmlImports.cmake)

@@ -1615,6 +1615,165 @@ char *zuuned_narrow_path_for_shell(const char *path)
     errno = EILSEQ;
     return NULL;
 }
+/* The length one argv element takes once it is quoted for CreateProcessW.
+ *
+ * This is the exact inverse of the rule the CRT argv parser (and
+ * CommandLineToArgvW, which implements the same one) reverses: a run of
+ * backslashes is literal unless a double quote follows it or the argument ends
+ * there, in which case it has to double, because otherwise the backslashes
+ * would escape the very quote that closes the argument.  Every element goes out
+ * quoted, which costs two characters and retires the empty-argument case that
+ * would otherwise have to be special-cased. */
+static size_t quoted_argument_wchars(const wchar_t *arg)
+{
+    size_t length = 2;   /* the opening and the closing quote */
+    size_t backslashes = 0;
+    for (const wchar_t *c = arg; ; ++c) {
+        if (*c == L'\\') { ++backslashes; ++length; continue; }
+        if (*c == L'\0') { length += backslashes; break; }
+        if (*c == L'"') { length += backslashes + 2; backslashes = 0; continue; }
+        length += backslashes;
+        backslashes = 0;
+        ++length;
+    }
+    return length;
+}
+
+/* Write what quoted_argument_wchars() measured, and hand back the new end. */
+static wchar_t *write_quoted_argument(wchar_t *out, const wchar_t *arg)
+{
+    size_t backslashes = 0;
+    *out++ = L'"';
+    for (const wchar_t *c = arg; ; ++c) {
+        if (*c == L'\\') { *out++ = L'\\'; ++backslashes; continue; }
+        if (*c == L'\0') {
+            while (backslashes > 0) { *out++ = L'\\'; --backslashes; }
+            break;
+        }
+        if (*c == L'"') {
+            while (backslashes > 0) { *out++ = L'\\'; --backslashes; }
+            *out++ = L'\\';
+            *out++ = L'"';
+            continue;
+        }
+        while (backslashes > 0) { *out++ = L'\\'; --backslashes; }
+        *out++ = *c;
+    }
+    *out++ = L'"';
+    return out;
+}
+
+/* Run one program with no shell anywhere in front of it.
+ *
+ * The bytes here are code-page bytes on purpose.  Every caller hands either an
+ * ASCII literal or the result of zuuned_narrow_path_for_shell(), and CP_ACP is
+ * what cmd.exe decoded before, so this conversion recovers exactly the wide
+ * string the child used to be handed through the shell.  Making it UTF-8 here
+ * would be a quiet change of which file a name means, in the middle of a fix
+ * whose whole claim is that nothing else moved.
+ *
+ * The wait is unbounded because system() was unbounded; a hung encoder wedged
+ * the calling thread then and does now, and this function is only ever reached
+ * from a worker.  CREATE_NO_WINDOW is the one deliberate improvement: a GUI
+ * process has no console, so system() allocated a fresh one for cmd.exe and the
+ * user watched a window flash for every picture. */
+int zuuned_run_no_shell(const char *const argv[])
+{
+    wchar_t **wide = NULL;
+    wchar_t *line = NULL;
+    int argc = 0;
+    int filled = 0;
+    int index = 0;
+    int result = -1;
+    size_t length = 1;
+    DWORD exit_code = 0;
+    HANDLE nul = INVALID_HANDLE_VALUE;
+    STARTUPINFOW startup;
+    PROCESS_INFORMATION process;
+
+    if (!argv || !argv[0]) {
+        errno = EINVAL;
+        return -1;
+    }
+    while (argv[argc]) ++argc;
+
+    wide = (wchar_t **)calloc((size_t)argc, sizeof(wchar_t *));
+    if (!wide) { errno = ENOMEM; return -1; }
+
+    for (; filled < argc; ++filled) {
+        /* No MB_ERR_INVALID_CHARS: the input may be code-page bytes, and an
+         * unmappable byte becomes whatever CP_ACP makes of it, which is again
+         * precisely what the shell made of it. */
+        const int chars = MultiByteToWideChar(CP_ACP, 0, argv[filled], -1, NULL, 0);
+        if (chars <= 0) goto done;
+        wide[filled] = (wchar_t *)malloc((size_t)chars * sizeof(wchar_t));
+        if (!wide[filled]) { errno = ENOMEM; goto done; }
+        if (MultiByteToWideChar(CP_ACP, 0, argv[filled], -1,
+                                wide[filled], chars) <= 0)
+            goto done;
+        length += quoted_argument_wchars(wide[filled]) + 1;   /* separator or NUL */
+    }
+
+    line = (wchar_t *)malloc(length * sizeof(wchar_t));
+    if (!line) { errno = ENOMEM; goto done; }
+    {
+        wchar_t *cursor = line;
+        for (index = 0; index < argc; ++index) {
+            if (index) *cursor++ = L' ';
+            cursor = write_quoted_argument(cursor, wide[index]);
+        }
+        *cursor = L'\0';
+    }
+
+    /* One inheritable NUL behind all three standard handles, so the encoder
+     * output goes where the redirect used to put it and a child that reads
+     * standard input sees end of file rather than a console it has no business
+     * touching.  If even NUL cannot be opened the run still happens with the
+     * inherited handles, which is the old behaviour, rather than a picture
+     * refused because a handle could not be made. */
+    {
+        SECURITY_ATTRIBUTES inherit;
+        inherit.nLength = sizeof(inherit);
+        inherit.lpSecurityDescriptor = NULL;
+        inherit.bInheritHandle = TRUE;
+        nul = CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE,
+                          FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit,
+                          OPEN_EXISTING, 0, NULL);
+    }
+
+    memset(&startup, 0, sizeof(startup));
+    startup.cb = sizeof(startup);
+    memset(&process, 0, sizeof(process));
+    if (nul != INVALID_HANDLE_VALUE) {
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdInput = nul;
+        startup.hStdOutput = nul;
+        startup.hStdError = nul;
+    }
+
+    if (!CreateProcessW(NULL, line, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL,
+                        NULL, &startup, &process)) {
+        fprintf(stderr, "[wincompat] cannot start %s (error %lu)\n",
+                argv[0], (unsigned long)GetLastError());
+        errno = ENOENT;
+        goto done;
+    }
+
+    WaitForSingleObject(process.hProcess, INFINITE);
+    if (GetExitCodeProcess(process.hProcess, &exit_code))
+        result = (exit_code == STILL_ACTIVE) ? 0 : (int)exit_code;
+    else
+        result = -1;
+
+done:
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
+    for (index = 0; index < filled; ++index) free(wide[index]);
+    free(wide);
+    free(line);
+    return result;
+}
 
 /* ---- process start ----
  * Binary stdio is not cosmetic: the default text mode translates CRLF and stops

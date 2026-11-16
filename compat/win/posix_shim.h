@@ -481,6 +481,29 @@ int zuuned_mkstemp(char *templat);
  * name has no spelling in the active code page at all. */
 char *zuuned_narrow_path_for_shell(const char *path);
 
+/* ---- run a program without a shell ----
+ * system() on Windows means cmd.exe, and cmd.exe expands %VAR% inside double
+ * quotes exactly as it does outside them.  Doubling a double quote is the
+ * correct escape for the argument parser of the program being run and no
+ * escape at all for the shell that reads the line first, and percent has no
+ * cmd.exe escape in the first place.  A file or album name that spells
+ * %PATH% therefore reached the encoder as the environment value in place of
+ * the name the caller chose.  No quoting scheme fixes that, so do not run the
+ * shell.
+ *
+ * argv is NULL-terminated and argv[0] is the program name, resolved by
+ * CreateProcessW search (PATH included, which is how cmd.exe found it too).
+ * Each element arrives as the bytes that program own argument parser should
+ * read: for a path that is the output of zuuned_narrow_path_for_shell(),
+ * because those are the bytes cmd.exe used to decode back into the file.
+ * Standard input, output and error are wired to NUL, which is where the
+ * "2>/dev/null" and ">nul 2>&1" this replaces put the encoder chatter.
+ * Returns the child exit code, 0 for success as system() reported it, or -1
+ * when the program could not be started.  Blocks until it exits, as system()
+ * did, and shows no console window.
+ */
+int zuuned_run_no_shell(const char *const argv[]);
+
 #ifdef __cplusplus
 }
 #endif

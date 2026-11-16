@@ -156,11 +156,15 @@ builds a command line.  It quoted both paths with single quotes and redirected w
 `2>/dev/null`.  `cmd.exe` does not treat `'` as a quote character and takes
 `2>/dev/null` as "redirect stderr to a file named dev/null", so on Windows that
 branch failed on every single call whatever it was pointed at, and did so silently -
-the return code was checked, the reason was not.  It now has a `_WIN32` branch
-(`libzune/src/thumbnail.c:144`): double quotes with each inner quote doubled by
-`shell_quote_path()` (`libzune/src/thumbnail.c:34`), which refuses to emit anything
+the return code was checked, the reason was not.  It was given a `_WIN32` branch:
+double quotes with each inner quote doubled by a helper that refused to emit anything
 rather than emit a truncated command line, and `>nul 2>&1`.  The Linux and macOS
-command strings are byte-for-byte what they were.
+command strings stayed byte-for-byte what they were.  **Superseded on 2026-11-17, and
+read it as what was found then:** doubling quotes cannot protect a command line that a
+shell expands `%VAR%` inside the quotes of, `shell_quote_path()` is deleted, and that
+branch starts ffmpeg with argv and no shell at all - see the 2026-11-17 section at the
+end of this file, which is also the first time this branch is known to have ever worked
+on Windows.
 
 **An m3u line is a claim about a file, not a string equal to a `filepath`.**
 `LibraryService::importPlaylistM3U()` (`src/LibraryService.cpp:2220`) compared each
@@ -1605,3 +1609,101 @@ pretending otherwise would put an unverified claim in the tree.
   Neither loses or corrupts data; both simply report less than Linux does.
 - One Windows device, one family.  Every device statement here is a Pavo Zune HD
   statement.
+
+## Audit round of 2026-11-16, closed 2026-11-17: no shell in front of a name you did not choose
+
+`docs/audits/CODE_AUDIT_2026-11-16.md` holds the findings as they were written and
+`docs/audits/CODE_AUDIT_RESPONSE_2026-11-16.md` answers them one at a time, including
+the finding that turned out not to be true and the one that was deliberately declined.
+Only the parts of that round that are statements about this platform belong here, and
+they belong here because one of them closed a gate that had been open since the first
+Windows thumbnail.
+
+**Percent is not quotable, so quoting was never the fix.**
+A-09 was written as "`%VAR%` expands inside the quotes, and the quoting helper only
+handles `\"`". Reading it against `cmd.exe` semantics says more: `cmd.exe` expands an
+environment variable inside double quotes exactly as it does outside them, doubling a
+`"` protects the argument from the program being run and not from the shell that reads
+the line first, and there is no escape for percent at all - `%%` is a batch-file
+artifact, not an escape on a command line. A Zune photo named `%PATH%.jpg`, or a video
+named `%TEMP%.wmv`, therefore reached the encoder under a name nobody chose. Nothing a
+quoting function emits makes a device-supplied file name inert, because the expansion
+happens in a parser this code does not control. So the fix is subtraction: on Windows
+there is no shell in front of ffmpeg any more.
+
+**`zuuned_run_no_shell()` is one `CreateProcessW` with an argv it builds itself.**
+Declared `compat/win/posix_shim.h:505`, implemented `compat/win/wincompat.c:1680`. It
+widens each argument with `MultiByteToWideChar(CP_ACP, ...)` and writes the command
+line with the quoting rules `CommandLineToArgvW` reverses - wrap in `"`, double an
+inner `"`, and double a run of backslashes only where it abuts a quote - then starts
+the program directly. Three details are load-bearing rather than incidental:
+
+- The bytes are code-page bytes, not UTF-8, because that is what `cmd.exe` decoded
+  before. A UTF-8 argv here would quietly change which file a name means, in the middle
+  of a fix whose entire claim is that nothing else moved.
+- One inheritable `NUL` goes behind all three child standard handles, which is where
+  the old `>nul 2>&1` put the encoder output and what makes a child that reads standard
+  input see end of file instead of a console it has no business touching. If even `NUL`
+  cannot be opened the run still happens with inherited handles - the old behaviour -
+  rather than refusing a picture over a handle.
+- `CREATE_NO_WINDOW`. A GUI process has no console, so `system()` allocated a fresh one
+  for `cmd.exe` and the user watched a window flash for every photo transferred. The
+  wait stays unbounded because `system()` was unbounded; these calls only happen on a
+  worker, and inventing a timeout would be a second behaviour change in one fix.
+
+It returns the child exit code, so callers judge exactly what they judged before, or -1
+when the program could not be started.
+
+**Three call sites, one helper deleted, and one set of quotes that stays.**
+`libzune/src/photo.c:432`, `libzune/src/thumbnail.c:136` and `libzune/src/util.c:391`
+now build an argv array and call it. `shell_quote_path()` - the Windows half of the
+2026-10-21 "double the quotes" fix, which this round found to be unfixable as stated -
+is deleted; `shell_quote_dup()` is `#ifndef _WIN32` and says in its comment that
+Windows having no version of it is the finding, not an omission; `SHELL_QUIET` is back
+to being the POSIX `2>/dev/null` alone. The `scale='min(480,iw)':'min(480,ih)'` filter
+keeps its single quotes on purpose: ffmpeg hands that string to its own filter-graph
+parser, which is what the quotes protect the commas inside `min()` from, and `cmd.exe`
+never treated a single quote as quoting either, so the encoder already received them
+this way. The POSIX and macOS command strings are byte-for-byte what they were.
+
+**Measured on a player, and it is the first Windows evidence that branch has.**
+The 2026-11-17 `tests\win-usability` run - 19 instrumented launches, each in its own
+profile, each auto-connecting to a Zune HD that holds photo objects - logged
+`[libzune] resized full file for thumbnail` 51 times, from 17 of those launches, and
+`all photo thumbnail methods failed` zero times. That line is emitted only at
+`libzune/src/thumbnail.c:159`, which `_WIN32` reaches only when
+`zuuned_run_no_shell()` returned 0. The single-quoted command line that this file
+already recorded as failing on `cmd.exe` on every call therefore worked 51 times on
+real device photos - the ffmpeg resize branch is now
+proven on Windows, where before this sitting its Windows behaviour was only ever
+compiled. ffmpeg itself is not bundled and stays a download (see `BUILDING.md`); its
+absence is what makes these methods fail as a group, which is the pre-existing
+behaviour, not something this change introduced. The separate
+`all thumbnail methods failed` lines that do still appear come from
+`libzune/src/thumbnail.c:69`, which never shells out at all; they are the known
+`get_representative_sample` defect and are untouched.
+
+**Not done on purpose, so nobody mistakes them for oversights.**
+
+- `libzune/src/transcode.c:99`, `:161` and `:286` still call `popen()`. Nothing in the
+  tree calls those functions - `transcode/libav_transcode.c` replaced the ffmpeg shell
+  outs years ago - and they are the entire source of the three C4047 warnings that show
+  up on a clean build. Deleting dead code is a separate change from closing an audit.
+- Child output goes to `NUL`, so a failing encoder is silent. That mirrors `>nul
+  2>&1`, which was equally silent, and it is the first thing to lift when a transfer
+  needs debugging rather than a defect to fix now.
+- Percent still goes out unescaped in the one place a shell is still involved: nowhere.
+  The live `system()` calls in the tree are now only inside `#else` branches -
+  `libzune/src/photo.c:472`, `libzune/src/thumbnail.c:154`, `libzune/src/util.c:399` -
+  plus the commented-out block in `libzune/src/device.c` and the dead `popen` sites.
+  Verified by reading to the end of each conditional rather than by grepping a line.
+
+**Counters for the relinked build carrying all of this** (`cmake --build build
+--clean-first`, 352/352): `mtpframingtool` 1285 checks 0 failures (was 1245 - the new
+bounds have cases), `librarytool paths` ALL PASS 73, `tests\win-compat` 204 checks 0
+failures 0 skips, `tests\win-usability`
+`launches=19 checks=157 failures=0 skips=0 killed=0` `OVERALL=ok`, `tests\privacy`
+19 checks 0 failures, i18n audit `AUDIT=ok`, and `devicetool` `VERDICT=agree` with the
+devnode at `os_problem=0`. Configure prints `Zuuned hardening: warning level default,
+warnings as errors OFF, control guard OFF`, so the command line a released artifact is
+built with appends nothing.
