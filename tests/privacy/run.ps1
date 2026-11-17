@@ -210,6 +210,37 @@ try {
         if ($c) { Note ($c.ToString() + ' under ' + $p + ' - ' + $why[$p]) }
     }
 
+    # ----------------------------------------- pixels, which no amount of byte reading sees
+    Step 'what the byte reader cannot see'
+    # Every identity verdict above is a search through bytes, so a name painted into a
+    # screenshot is invisible to it: the friendly name of the player that was plugged in
+    # while the README shots were taken is exactly that kind of name.  The mask and the
+    # proof of the mask live in one Python file, which also refuses an undeclared
+    # screenshot, so a page added later cannot pass by having been forgotten.
+    $redactor = Join-Path $PSScriptRoot 'redact_readme_screenshots.py'
+    if (-not (Test-Path -LiteralPath $redactor)) {
+        Fail 'redact_readme_screenshots.py is missing, so no screenshot was looked at'
+    } else {
+        $py = $null
+        foreach ($c in @('python', 'python3', 'py')) {
+            $found = Get-Command $c -ErrorAction SilentlyContinue
+            if ($found) { $py = $found.Source; break }
+        }
+        if (-not $py) {
+            Fail 'no python on PATH, so the published screenshots were never read as pixels'
+        } else {
+            $seen = @(& $py $redactor --check 2>&1)
+            $readable = @($seen | Where-Object { ('' + $_) -match '^masked=' } | Select-Object -First 1)
+            if ($LASTEXITCODE -eq 0 -and $readable) {
+                Pass ('the published screenshots hold no name, path or photograph where they are' +
+                    ' masked (' + ('' + $readable).Trim() + ')')
+            } else {
+                Fail ('a published screenshot shows identity a text gate cannot read: ' +
+                    ((@($seen | Select-Object -First 3) | ForEach-Object { ('' + $_).Trim() }) -join ' / '))
+            }
+        }
+    }
+
     # ---------------------------------------------------- names, then bytes, then count
     Step 'identity in names and bytes'
     $named = New-Object System.Collections.Generic.List[string]

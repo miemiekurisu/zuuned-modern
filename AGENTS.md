@@ -3290,3 +3290,33 @@ No database was hand-edited. Counters on the relinked build: `vanish`/`paths`/`n
 `ALL PASS`, `tests\win-compat` 204 / 0 / 0, `tests\privacy` 19 / 0, i18n `AUDIT=ok`,
 `tests\win-usability` `launches=19 checks=159 failures=0 skips=0 killed=0`. No device claim was added:
 the only hardware traffic was the app's own auto-connect browse inside the gate's isolated profiles.
+
+**2026-11-17 a person’s name in thirty published pictures, and a privacy gate that can finally see
+one:** there was nothing to push, so "mind the privacy" was read as a question about what is already
+public. `tests/privacy/run.ps1` reads every tracked byte and had been green, and it was both right and
+useless here: a name painted into a PNG is not bytes. `docs/readme-screenshots` is captured from the
+real library and the real player by an explicit decision, so the device panel at the right of every
+page painted the friendly name this bench’s player was given - a person’s name, in 30 of 32
+pictures - `photo-library.png` carried one real photograph, and `settings-library.png` printed four
+watch-folder paths. `tests/privacy/reviewed-media.txt` had the set recorded as reviewed against a
+narrower question, "is there a serial or a hex GUID", which was and remains true and was never about
+the name. `docs/releases/BETA_WINDOWS_2026-11-08.md` then did the worse thing and quoted the name in
+prose, in the very paragraph written to rule out a leak - which is the difference between an identity a
+needle list can match and an identity an author declines to type. So the identity is covered rather than
+deleted, with a block mosaic, and the covering is checked instead of remembered:
+`tests/privacy/redact_readme_screenshots.py` declares 40 regions over 30 files, `--apply` is idempotent
+and prints how much pixel detail it destroyed (9,600 px per name band, 4,584 px for the photograph) so a
+region declared over empty background admits it, and `--check` proves each region is still one colour per
+8x8 block - a property testable without knowing what the picture used to say. `run.ps1` runs `--check` as
+a step, fails when python is missing because a skipped privacy check must not look like a clean one, and
+refuses a screenshot nobody declared, so a seventeenth page cannot pass by being forgotten. The two
+`welcome` shots are exempt because that page has no device panel: a mask over nothing is a fake mask.
+Measured rather than eyeballed after the mask, the path column of `settings-library.png` keeps zero
+residual bright rows outside the masked bands in either language, and `tests\privacy` is 20 checks / 0
+failures - the counter moved because a check exists that did not. Originals stay in an untracked scratch
+copy so the mask is reversible without touching history. Three boundaries. History is not repaired: the
+original pixels are still in `git log`, the only erasure on a public repository is a rewrite plus a force
+push, and that belongs to the owner. Real album and artist names, and the third-party album artwork
+around them, stay in the music pages as the documented cost of publishing real screenshots. And no
+application gate was re-run because no C++, QML or build file changed - the privacy gate is the whole
+evidence here, and no device claim moves.

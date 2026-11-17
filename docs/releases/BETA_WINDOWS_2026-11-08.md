@@ -156,15 +156,21 @@ can render a serial at all - the `Serial` row under `This Zune`
 (`qml/SettingsPage.qml:1755`) - both of which sit below the visible fold in
 `settings-device.png` in each language, where the page is scrolled to its top and the
 `This Zune` heading is the last thing on screen. Everywhere else the player appears as
-its friendly name `Kurisus ZuneHD` beside `Zune HD · 16GB`, `97%` and
-`4.7 GB used · 10.8 GB free`: a label the owner typed into the device and the same
-identity the repository is published under, not a serial number, and no
-8-4-4-4-12 hex GUID appears in any shot. `deviceService.deviceSerial` is bound on the
+its friendly name - the label the owner
+typed into the player, which here is a person's name - beside `Zune HD · 16GB`, `97%`
+and `4.7 GB used · 10.8 GB free`: an identity, not a serial number, and no 8-4-4-4-12
+hex GUID appears in any shot. That name is no longer quoted in this record, and as of
+2026-11-17 it is not in the pictures either: the name band of the device panel is masked in
+every shot that paints it, and `tests/privacy/redact_readme_screenshots.py` proves on each
+privacy run that the mask is still there. Typing the name into the paragraph that ruled out
+a leak was itself the leak, which is the difference between an identity a text gate can
+match and an identity an author declines to write down. `deviceService.deviceSerial` is bound on the
 spoken-media device pages (`qml/DeviceSpokenPage.qml:15`) but only as a key that refuses
 a stale request, never as text. `settings-library.png` has its watch-folder home path
 masked in both languages. What remains outside proof is stated rather than glossed: this
-is a person reading 32 images, and any later screenshot has to be read the same way
-before it is committed.
+a person reading 32 images plus a machine check of the masked regions: a later
+screenshot has to be declared in `tests/privacy/redact_readme_screenshots.py`, which refuses
+one nobody declared, and read by eye for anything the declared regions do not cover.
 
 ## What this artifact does not prove
 

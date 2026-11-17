@@ -2558,12 +2558,17 @@ because here those lines are build and device evidence. Green 2026-11-08, re-run
 checks, 0 failures`: 90 reviewed pictures, 96 files skipped as binary, 158 drive-letter lines - the counter first printed 38, because its pattern asked for a drive letter at the end of a line and this markdown ends its lines with a carriage return; the figure counts the lines this page itself quotes. It found
 one real tracked offender the first time it ran - `libzune/.DS_Store`, which records which files a
 folder held - now untracked, with `.gitignore` refusing it and `Thumbs.db` beside it. It was tested by
-staging a file that names a real account and watching the gate fail with exit 1. **Known open, and
-deliberately not swept under the prefix list:** 32 screenshots under `docs/readme-screenshots/` were
-captured from the real library on this machine, and pixels show a device name and real music paths.
-Pixels are not readable by this or any text gate; a replacement wants an isolated profile over a
-generated fixture, and the device-page ones want the player unplugged. The git history keeps the
-originals either way, and rewriting it belongs to the owner of the repository.
+staging a file that names a real account and watching the gate fail with exit 1. **Closed
+2026-11-17, and the way it closed is the point:** those same pixels were audited rather than excused.
+The device panel paints the friendly name the owner typed into the player - a person's name, in thirty
+of the thirty-two pictures - `photo-library.png` carried one real photograph of somebody's fish tank,
+and `settings-library.png` printed four watch-folder paths in plain text.  Pixels still cannot be read
+as bytes, so the answer is not a text rule: `tests/privacy/redact_readme_screenshots.py` owns those 40
+regions, covers each with a flat 8x8 block mosaic, and proves on every privacy run that the mosaic is
+still there - which means a screenshot re-taken over a mask fails the gate instead of quietly
+un-masking it, and a screenshot nobody declared fails too.  What this does not undo is stated below and
+stays true: the git history keeps the original pixels, and rewriting it belongs to the owner of the
+repository.
 
 **No device claim moves, and the artifact is not evidence about a player.** The `-Release` smoke launch
 browsed the attached Pavo read-only, exactly as the preview run and every usability run before it did,
@@ -3948,3 +3953,34 @@ lookup gate is a network-behaviour change proved from logs, not from a packet ca
 half of it is untouched.  The podcast and audiobook categories are still unread in both directions on
 this platform, `purgeSpokenItems` has never run here, every model but this Pavo stays unproven, and
 Linux and macOS are unchanged by construction - which on this machine means unverified, not verified.
+
+**2026-11-17 the person's name in thirty pictures, and a gate that can finally see it.**  Nothing was
+left to push, so "mind the privacy" was taken as a question about what is already public rather than
+about the next commit.  `tests/privacy/run.ps1` reads every tracked byte and had been green for weeks,
+and it was right and incomplete: a name painted into a PNG is not bytes.  `docs/readme-screenshots` is
+published from the real library and the real player on purpose, and the device panel on the right of
+every page therefore painted `the friendly name this bench's player was given`, which is a person's
+name; the photos page carried one real photograph; and Settings -> Library printed four watch-folder
+paths.  The manifest in `tests/privacy/reviewed-media.txt` had recorded the set as reviewed against a
+narrower question - is there a serial or a hex GUID - which was and stays true, and was never about the
+name.  So the identity is covered with a block mosaic rather than deleted, in 30 of the 32 pictures, and
+`tests/privacy/redact_readme_screenshots.py` is both the mask and the proof of the mask: 40 declared
+regions, each verified to be one flat colour per 8x8 block, which is a property testable without
+knowing what the picture used to say.  `--apply` is idempotent and prints how much pixel detail it
+destroyed (9,600 px per name band, 4,584 px for the photograph), so a region declared over empty
+background admits it instead of posing as a mask.  The gate step fails when python is absent, because a
+skipped privacy check and a clean one must not look the same.  Two `welcome` shots are exempt because
+that page has no device panel, and a mask over nothing is a fake mask.  Measured, not eyeballed:
+after the mask, the path column of `settings-library.png` holds zero residual bright rows outside the
+masked bands in either language.  `tests\privacy` is now 20 checks / 0 failures - one step, and the
+counter moved because a check exists that did not exist.  Originals stay outside the tree in an
+untracked scratch copy, so the mask is reversible without touching history.
+
+**What this sitting did not do, in order of how much it matters.**  History is not repaired: every
+original pixel is still in `git log`, and on a public repository the only erasure is a rewrite plus a
+force push, which belongs to the owner and was not attempted.  The music pages still show real album
+and artist names, and the album art in them is third-party copyrighted artwork - both are the
+documented choice behind publishing real screenshots, and both are untouched here.  No C++, no QML, no
+build file changed, so no application gate was re-run and no Windows counter on this page moved; the
+only gate evidence is the privacy gate.  And no device claim moves: nothing in this sitting opened,
+wrote to or read from a player.
