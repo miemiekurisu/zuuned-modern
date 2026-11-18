@@ -4018,7 +4018,36 @@ not a paste, not a screenshot. And three comments in the new code stated a refer
 budget that does not exist, a session GUID "announced over SSDP" that is in fact presented
 in a PTP/IP init packet); they are corrected in the same commit as the page that explains
 them, in [WIRELESS_SYNC.md](WIRELESS_SYNC.md). `tests\win-compat` is 204 checks / 0 failures
-/ 0 skips against this build, and says nothing about the wireless code: that gate compiles
-`compat/win/` beside its own probe and never links libzune. `tests\win-usability` was not
-re-run, because the application was in the user's hands on the real profile and the fresh
-`zuuned.exe` is what it is running.
+**2026-11-18, later the same evening: the wireless listener was seen on Windows, and the
+player refused to be found.**  The same Pavo, its Sync switch worked by hand on the device,
+and nothing in this repository holding a socket.  Two things this platform had never seen.
+`mtpz_device_rsa_modulus()` captured the player's RSA public key from a real Pavo, which
+confirms a key scan that until tonight was an inference; and TCP 15740 completed a handshake
+against the player's LAN address, which is the first PTP/IP listener anything here has ever
+reached.  One `INIT_COMMAND_REQUEST` was written in the spelling the protocol page documents
+and drew no reply inside six seconds - one attempt, with the port gone before the variant
+battery could run, so that is a closed loop and an empty read, not a protocol result.  Two
+negatives carry more weight than that non-result.  A listener joined `239.255.255.250:1900`
+for 900 seconds on the LAN where the player was associated and the access points' own SSDP
+traffic was visible - the control that makes the silence mean something - and no `Zune/2.0`
+`NOTIFY` arrived, active `M-SEARCH` included.  And the player's Sync switch turned out to be
+the listener's power button: off closed 15740 and dropped the ARP entry within seconds, and
+on produced, in the most recent attempt, an association that fell over and came back unable
+to obtain a DHCP lease.  So wireless on this platform dials an address the user types rather
+than waiting for an announcement, and a real transport has to be waiting when that window
+opens, because a probe that waits six seconds loses a window that lasts seconds.
+[WIRELESS_SYNC.md](WIRELESS_SYNC.md) carries the record, the consequences and the access-point
+checklist that follows; no value naming the partnership, the player or the network is in this
+repository.
+
+**No Windows claim moves because of any of it.**  This is not an authentication, not a write,
+not a sync, and not one byte of object data crossed the network; the closed list on this page
+is exactly as the paragraph above left it, and wireless sync enters it as an **open** item -
+no Zune has ever synced wirelessly anywhere, on any platform, in this tree.  That the current
+failure is an access point declining to hold a legacy 802.11b/g station is likewise not
+evidence about libzune, and it cannot be proved *not* to be one until the association holds,
+which is the first thing the next sitting has to do.  No application gate moved: nothing in
+C++, QML or a build file changed, so `tests\win-compat` keeps the 204 / 0 / 0 it earned
+earlier today, and re-running a gate whose inputs did not move would only restate a number.
+`tests\privacy` is the exception and was re-run, because it reads every tracked byte and the
+two pages edited here are tracked bytes.

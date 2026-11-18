@@ -12,19 +12,23 @@ came back is recorded under Status in
 "What has actually been asked of a player" - withheld in part, because the values name
 a partnership and name the access points in this building.  **No pairing write has ever
 been made.**  Neither `0xD401` nor `0xD220` has been written from this tree, no access
-point has been enrolled, wireless sync has never been switched on, and no PTP/IP
-connection has been made.  Every wire *shape* here is derived from the reference
-implementations named in [UPSTREAMS.md](../UPSTREAMS.md); where this tree has its own
-observation it says so, and where it does not, the sentence is the references' reading
-of somebody else's capture.  Read this paragraph before quoting any byte offset below
-to someone who is about to plug a player in.
+point has been enrolled, and wireless sync has never been switched on by this software.
+One PTP/IP connection has since been opened - to a player whose Sync switch a person had
+already turned on by hand, from a throwaway script that lives outside this repository, and
+it drew no answer. "The first network sitting (2026-11-18)" is that whole record, and it is
+also why this page no longer assumes a player announces itself.  Every wire *shape* here is
+derived from the reference implementations named in [UPSTREAMS.md](../UPSTREAMS.md); where
+this tree has its own observation it says so, and where it does not, the sentence is the
+references' reading of somebody else's capture.  Read this paragraph before quoting any
+byte offset below to someone who is about to plug a player in.
 
 
 The licence position, the two pinned clones, the provenance gap in one of them, and
 the three parts of them deliberately left where they are:
 [UPSTREAMS.md](../UPSTREAMS.md).  Device evidence in general belongs to
-[WINDOWS_PORT.md](WINDOWS_PORT.md) for Windows; nothing on this page is device
-evidence at all.
+[WINDOWS_PORT.md](WINDOWS_PORT.md) for Windows.  The one kind of device evidence this page
+carries is the set of network observations of 2026-11-18, which are Windows observations
+about one Pavo on one access point and travel no further than that sentence.
 
 ## What the arrangement actually is
 
@@ -498,8 +502,11 @@ transfer with a body runs `START_DATA` (transaction id, total size), then `DATA`
 
 ### Finding the player without knowing its address
 
-The player announces itself, so a host does not need to be told where it is.  Measured
-in `XuneSyncLibrary` `lib/src/ssdp_discovery.h:61-64` and
+The reference claims the player announces itself, so a host does not need to be told where
+it is.  **One real Zune HD refused to support that, and the design has to live with it**:
+see "The first network sitting (2026-11-18)".  An implementation that waits for an
+announcement waits forever on this player, so the address comes from the user.  What the
+reference recorded, in `XuneSyncLibrary` `lib/src/ssdp_discovery.h:61-64` and
 `lib/src/ssdp_discovery.cpp`:
 
 - a `NOTIFY` to `239.255.255.250:1900`, accepted only when it contains `NOTIFY *`
@@ -575,7 +582,7 @@ What it answered:
 
 | command | what it puts on the wire | outcome |
 | --- | --- | --- |
-| `status` | `GETPROP` on `0xD401`, `0xD220`, `0xD221`, `0xD225`, `0xD21C`, `0xD217` | all six answered. A partner GUID and a session GUID came back and are withheld here: they identify this partnership and this machine |
+| `status` | `GETPROP` on `0xD401`, `0xD220`, `0xD221`, `0xD225`, `0xD21C`, `0xD217` | all six answered. A partner GUID and a session GUID came back and are withheld here: they identify this partnership and this machine. The MTPZ authentication ahead of those reads also captured the player's RSA public key, which is the first real Pavo to confirm the shape `mtpz_device_rsa_modulus()` scans for, and the tool's verdict was `hd-paired` |
 | `guid` | `GETPROP` on `0xD221` | answered, with the same value `status` reported |
 | `scan` | vendor `0x9225`, no params | answered with a blob that lists the access points in range. It is not repeated here, because an SSID list is a map of where the user lives and works |
 | `pair` | `SETPROP` on `0xD401` and `0xD220` | **never run.** The player used for the reads went into a state where every bulk OUT timed out before `pair` was attempted, and it has not been available since |
@@ -589,8 +596,10 @@ Three things that table does not license anyone to say.
   parses it: the three security words are located by an inference about where a name sits
   inside a record, so a wrong offset is quite capable of reporting a network as WPA.
 - Nothing here has ever been switched **on**. This software has not enabled the player's
-  wireless sync, so the PTP/IP half of the design has no evidence at all, in either
-  direction.
+  wireless sync. When the radio and the 15740 listener did come up, a person pressed Sync
+  on the player and a script outside this repository watched the result, so the PTP/IP half
+  of the design now has evidence about **a listener** and still no evidence at all about
+  **a protocol**.
 
 No log, pcap, or capture file of any of it lives in the repository: `wirelesstool`
 prints to stdout, and the values it prints are exactly the kind that must not be
@@ -656,18 +665,126 @@ reviewer should read.
   `0xD401` or `0xD220`: after `disable` the player still holds the partnership, which
   matches the reference and is worth knowing before anyone calls it a factory reset.
 
+## The first network sitting (2026-11-18)
+
+One Pavo Zune HD, one access point, Windows as the host, and the player's own Sync switch
+worked by hand.  **Nothing in this repository took part in any of it**: this tree opens no
+socket, so every packet below was written by a throwaway script that lives outside the
+repository - which is also where its output stays, because what it prints is exactly the
+material that must not be committed.  No address, GUID, serial, MAC, network name or
+friendly name appears in this section.
+
+Five measurements, and the order is the argument.
+
+1. **The player's RSA key came off the cable.** The `status` run that read the six vendor
+   properties also reported that `mtpz_device_rsa_modulus()` had captured the player's
+   public key.  It is the first time that extraction has touched a real Pavo, and it
+   confirms the shape it scans for - a `01 00 80` marker, a public exponent, an odd low
+   byte - which until this sitting was an inference from the reference and nothing more.
+2. **A partnership already existed.** `0xD401` named a partner and `0xD220` named a
+   session, and the verdict was `hd-paired`, on a player to which `pair`, `wifi`, `full`
+   and `disable` have never been sent.  A Zune that once sat on a machine running the
+   Microsoft software therefore arrives already holding the credential this design wants,
+   and a partner GUID on screen is not evidence that anything here wrote it.
+3. **With the cable gone the player was a host.** Associated, on power, screen awake: it
+   answered ARP, it answered ICMP with TTL 128, and TCP 15740 completed a handshake.  That
+   is the listener this design assumes, seen for the first time on this platform.
+4. **One init, no answer.** An `INIT_COMMAND_REQUEST` was written to that connection in
+   exactly the spelling this page documents - sixteen GUID bytes in textual order, host
+   name UTF-16LE with its terminator, trailing `0x00010000`.  The connection was accepted
+   and nothing came back within six seconds.  That is **one** attempt.  It does not show
+   the version word wrong, or the GUID order wrong, or the player refusing third-party
+   hosts: the variants that would separate those answers were ready but never sent, because
+   by then the port had closed.
+5. **The player never announced itself.** A listener joined `239.255.255.250:1900` for 900
+   seconds while the player was associated, on the same LAN and in the same window as SSDP
+   traffic from the access points - which is the control that makes the silence mean
+   something.  Not one `NOTIFY` from a `Zune/2.0` server arrived, and an active `M-SEARCH`
+   never saw one either.  Discovery as the references describe it is unusable against this
+   player in this state, so **the address comes from the user**.
+
+Then the control that explains the rest.
+
+**The player's Sync switch is the listener's power button.**  Turning Sync off closed 15740
+within seconds and took the player out of the ARP table in the same moment.  Pressing Sync
+again ran `connecting to network` and, once, reached `connected` - and that `connected` was
+an association with no listener behind it: 15740 refused, ICMP silent.  Letting the screen
+go dark closed the port again.  In the most recent sitting the same gesture got worse in a
+way the user can reproduce at will: tapping Wireless connects and holds, and tapping Sync
+drops the association, fails to rejoin, and ends with the player unable to obtain a lease.
+
+Three consequences, in the order they change the design.
+
+- **Discovery is out, an address is in.**  Settings takes an IP, because a host that waits
+  for an announcement waits forever.
+- **The window is short and it is not free.**  The listener is open only while the player is
+  associated, awake and syncing, and pressing Sync is the very moment a legacy 802.11b/g
+  client is likeliest to be thrown off a modern access point.  A client has to be waiting
+  already or arrive inside about a second.  Every throwaway probe that opens a connection,
+  waits six seconds and gives up loses the race it was entered to win, which is the
+  strongest argument on this page for a real transport in `libzune/src/` instead of scripts.
+- **The dropped association is not this software's doing.**  No process here holds a socket,
+  sends a packet, or can deauthenticate a station, so whatever ended that association is
+  between the player's radio and the access point.  Microsoft's own guidance for wireless
+  sync assumes an access point the user configures: the access point must be the DHCP server
+  with DHCP enabled, an address reserved for the player is recommended, and where MAC
+  filtering is in use the player's MAC has to be on the list - which the player itself shows
+  at Settings, Wireless, Information.  **It associated and answered on this network earlier
+  the same evening**, so the access point is capable of it; what is left is association
+  reliability, not a closed door.
+
+What this sitting does not license.  No sync has been negotiated, not one object has moved
+over the network, the write half of the vendor API is still unrun, and one INIT with no
+reply is a closed loop and an empty read, not a protocol result.  It is a Windows
+observation about one Pavo on one access point: it may not be carried to Linux, to another
+model, or to every network.
+
+### What the access point has to do
+
+The association failure recorded above is outside this software, and the fix belongs to the
+network.  It is written down here because whoever sits down with a Zune HD next will meet it
+long before they meet any byte of this protocol.  The first four bullets are Microsoft's
+published requirements for wireless sync between the Zune software and a player; the rest is
+what an 802.11b/g station from 2006 needs from an access point of this decade, and none of
+that has been measured by this tree - it is guidance, not evidence.
+
+- The access point must be the DHCP server, with DHCP enabled.  A player that cannot get a
+  lease cannot be dialled, which is precisely where the user now stands.
+- Reserve an address for the player.  The player shows its own MAC at Settings, Wireless,
+  Information, and where MAC filtering is in use that address has to be permitted.
+- Keep it on 2.4 GHz.  A Zune HD is 802.11b/g, and 802.11b/g is the first thing a modern
+  access point turns off or quietly de-prioritises.
+- Give the old client nothing modern: WPA2-PSK with AES and **not** WPA3 or a mixed
+  WPA2/WPA3 mode; protected management frames (802.11w, PMF) off or optional, never
+  required; mode set to 802.11b/g/n mixed rather than n-only or ax-only; 20 MHz channel
+  width; a fixed channel; band steering and merged dual-band single-SSID behaviour off; a
+  separate SSID for the player if the access point will carve one out.
+- Leave the two ends in sight of each other: no AP or client isolation, and nothing on the
+  router blocking TCP 15740.
+
+The honest frame for all of it is that this player associated, held a lease, answered ARP and
+ICMP and opened its listener on this access point earlier the same evening.  The access point
+is therefore capable, and what fails is the re-association that pressing Sync performs - the
+exact moment a legacy station tends to get deauthenticated.  A dedicated b/g/n WPA2-only
+SSID is the usual cure, and until the association holds there is nothing here worth
+connecting to.
+
 ## What a first run has to settle
 
-Ordered by how much of the design each answer moves. The `status`, `guid` and `scan`
-rows have been asked and answered; everything below still needs a player on the end of a
-cable, and the player used so far is the one that stopped answering its bulk OUT
-endpoint, so the next attempt starts with a power cycle.
+Ordered by how much of the design each answer moves.  The `status`, `guid` and `scan` rows
+have been asked and answered - twice on the cable as of 2026-11-18 - and the network sitting
+of the same date moved items 1, 8 and 10 without closing any of them.  Everything below that
+still needs a player on the end of a cable needs the power cycle that precedes every cable
+session.
 
 1. Do `0xD401` and `0xD220` accept a write and give the same value back, in the spelling
    `guid_to_mtp_string()` produces? Phase 1 rests entirely on that read-back, and it is
    the one thing `status` has not yet been able to answer, because nothing has written
-   them. Re-running `status` after `pair` is the whole test: the partner GUID it prints
-   must be the one the tool generated.
+   them. The network sitting of 2026-11-18 sharpened this rather than answering it: the
+   player named a partner and a session before any write had ever been attempted, so
+   *presence* proves nothing - the Microsoft software may have written it years ago. The
+   test is a **change**: `pair` generates a GUID, so the partner value `status` prints
+   afterwards must differ from the one it printed before and must equal the new one.
 2. Whether the short phase 1 is sufficient. The reference also clears `0xD225`, writes
    the bare `0xD21C` byte, writes three sync counters and closes with `0x9224`,
    `0xD217` x3, `0x9217`, `0x9227` and `0x9218`; this tree sends none of that. A player
@@ -694,9 +811,29 @@ endpoint, so the next attempt starts with a power cycle.
    the question every item above is circling, and which cannot be answered from the PC
    alone: it needs someone to look at Settings, Wireless, Sync on the player.
 8. Whether the session GUID really is laid into a PTP/IP init packet in plain textual
-   order - a question that cannot be asked until the transport in this tree exists.
+   order. One attempt in the spelling this page documents drew no answer inside six
+   seconds, which is one accepted connection and an empty read, not a result: the variant
+   battery - no trailing version word, empty host name, no name field at all, mixed endian
+   as a control, `PROBE_REQUEST` for liveness - was written but never sent, because the
+   port closed first. Only a transport that can sit and wait on an address can ask this.
+9. Whether the trailing `0x00010000` belongs in the init payload at all, and whether the
+   reserved field before the opcode is `0` or `1`. Both are disagreements between the two
+   references, both are unmeasured, and the first is now the leading suspect for a listener
+   that accepts a connection and says nothing - which is precisely why it has to be settled
+   by A/B against a live player rather than argued from a document again.
+10. Whether 15740 is open while the player is *not* syncing. Every sighting this tree has
+    sits inside a syncing window, and turning Sync off closed the port within seconds. If
+    the port really is Sync-gated then a wireless sync this application starts on its own is
+    impossible by design and the user has to press a button on the player - a product
+    decision, so it needs a measurement and not an assumption.
+11. Whether the player will hold an association on a network configured the way Microsoft's
+    own wireless-sync guidance requires: the access point as DHCP server with DHCP enabled,
+    an address reserved for the player, and the player's MAC permitted wherever filtering is
+    on. The most recent sitting ended with the player unable to obtain a lease after pressing
+    Sync, and until it holds an association there is nothing to connect to.
 
 Until those have answers the summary stays the one at the top of this page. The read half
-has been asked and answered; the write half exists as careful transcription, and the
-player has never been asked.
+has been asked twice and answered twice; the write half exists as careful transcription and
+the player has never been asked; and the network half has been touched once, by a script,
+with the port shutting before the interesting half of the question could be put.
 
