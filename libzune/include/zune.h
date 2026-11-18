@@ -809,6 +809,88 @@ int zune_dump_raw(ZuneDeviceHandle dev, const char *output_path);
  * Use this to discover unknown fields and descriptor mappings. */
 int zune_infiltrate_deep(ZuneDeviceHandle dev);
 
+/* ---- Wireless Sync (Zune HD Wi-Fi) ---- */
+/* Protocol shapes checked against XuneSyncLibrary (GNU LGPL-2.1) and the
+ * android-file-transfer-linux fork it vendors (GNU LGPL-2.1-or-later); see
+ * UPSTREAMS.md and docs/WIRELESS_SYNC.md. No line of either is in this tree.
+ * Everything here runs over the ordinary USB MTP session and needs MTPZ
+ * authentication first, because the Wi-Fi passphrase is encrypted with the
+ * device RSA public key that only the authenticated handshake reveals. */
+
+/* What the player currently says about wireless sync.  Every `answers_*` is
+ * whether that property replied at all, which is how a caller tells "this
+ * model has no Wi-Fi" from "this model has Wi-Fi and is not paired". */
+typedef struct {
+    int answers_partner;           /* 0xD401 - the stored partnership */
+    int answers_pc_session;        /* 0xD220 - who may connect wirelessly */
+    int answers_wireless_session;  /* 0xD221 - the GUID PTP/IP must present */
+    int answers_partner_slot;      /* 0xD225 */
+    int answers_sync_flags;        /* 0xD21C */
+    int answers_probe;             /* 0xD217 - a Zune HD answers this */
+    int has_device_key;            /* RSA modulus captured this session */
+    char partner_guid[40];
+    char session_guid[40];
+} ZuneWirelessStatus;
+
+/* Read the pairing state without changing anything.  Returns 0 on success. */
+int zune_wireless_status(ZuneDeviceHandle dev, ZuneWirelessStatus *out);
+
+/* Allocate a fresh random RFC 4122 version-4 UUID, braced and upper case, in
+ * the exact form MTP stores a GUID. Caller frees with free(). */
+char *zune_wireless_new_partner_guid(void);
+
+/* Pair this PC with the player over USB so it will accept a wireless
+ * session.  partner_guid is a name this PC keeps and re-presents; driver_tag
+ * and friendly_name are optional descriptive strings and may be NULL; a tag
+ * longer than 58 characters is shortened, never dropped.  On success
+ * guid_out receives the GUID that was written - what a caller stores and
+ * re-presents, not something read off the player.  Returns 0 only once the
+ * player has taken both writes and given both back. */
+int zune_wireless_pair_sync(ZuneDeviceHandle dev, const char *partner_guid,
+        const char *driver_tag, const char *friendly_name,
+        char *guid_out, size_t guid_out_len);
+
+/* Read the wireless session GUID the device advertises on the network.
+ * out_len must be at least 38. Returns 0 on success. */
+int zune_wireless_read_session_guid(ZuneDeviceHandle dev, char *out,
+        size_t out_len);
+
+/* Ask the player for its own Wi-Fi scan result.  out receives a malloc'd
+ * copy of the raw payload and out_len its size; caller frees.  This is one
+ * GETDATA with no polling loop behind it: a Zune HD answered it in a single
+ * round trip, so the call is bounded only by the PTP layer's own timeout, and
+ * a caller budgeting against a poll budget is budgeting against something
+ * that does not exist.  Returns 0 on success. */
+int zune_wireless_scan_wifi(ZuneDeviceHandle dev, uint8_t **out,
+        uint32_t *out_len);
+
+/* Enrol one access point.  ssid is at most 32 bytes and password at most 58
+ * characters, both ASCII - longer than that is refused rather than trimmed,
+ * because a trimmed key enrols as a wrong one.  The scheme is what the
+ * player's own scan named for that SSID, falling back to WPA2-PSK, and the
+ * passphrase is encrypted under the player's own RSA public key, which means
+ * the session has to have been MTPZ-authenticated or there is no key to use.
+ * Returns 0 only when the player took the profile and answered the closing
+ * reads; a refusal there is reported as an unconfirmed enrolment. */
+int zune_wireless_set_wifi_network(ZuneDeviceHandle dev, const char *ssid,
+        const char *password);
+
+/* Phase 2 by itself: subsystem up, this host named in the partner slot,
+ * access point enrolled, wireless mode left on.  It does NOT establish the
+ * sync partnership - zune_wireless_pair_sync() writes 0xD401 and has to have
+ * run, and this call asks the player whether its partnership record names a
+ * partner before it will set anything up.  session_guid_out, when asked for,
+ * receives 0xD221: the GUID a PTP/IP init packet has to present.  That is not
+ * what the player advertises over SSDP, which is a device UUID derived from
+ * its MAC address; the two are different values with different jobs.
+ * Returns 0 on success. */
+int zune_wireless_pair_wifi(ZuneDeviceHandle dev, const char *ssid,
+        const char *password, const char *partner_guid,
+        char *session_guid_out, size_t out_len);
+
+/* Forget the wireless pairing on the player.  Returns 0 on success. */
+int zune_wireless_disable(ZuneDeviceHandle dev);
+
 /* ---- Error Handling ---- */
 
 /* Borrowed thread-local error message. Some failure paths only log, and success

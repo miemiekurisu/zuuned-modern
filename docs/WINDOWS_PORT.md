@@ -3984,3 +3984,41 @@ documented choice behind publishing real screenshots, and both are untouched her
 build file changed, so no application gate was re-run and no Windows counter on this page moved; the
 only gate evidence is the privacy gate.  And no device claim moves: nothing in this sitting opened,
 wrote to or read from a player.
+
+**2026-11-18 the wireless half of a Zune HD joins the tree, and it is read-only on the
+wire.**  A Zune HD is the only Zune with Wi-Fi, and host-to-player sync over the user's own
+access point became a feature worth implementing; `libzune/src/wireless.c` and its
+`wirelesstool` driver are now in the build (`CMakeLists.txt:301`, target at
+`CMakeLists.txt:648-653`), and this is the first time any of that code has been compiled on
+this platform: `cmake --build build --clean-first` finished `EXITCODE=0`. Against one Pavo
+on the cable, `status` and `guid` read `0xD401`, `0xD220`, `0xD221`, `0xD225`, `0xD21C` and
+`0xD217` back, and the vendor `0x9225` scan returned a list of the access points in range.
+Those values name a partnership, a machine and a place, so they are not in this repository
+and will not be; [WIRELESS_SYNC.md](WIRELESS_SYNC.md) is where the finding lives, and it is
+the page to read for what each code means.
+
+What that buys and what it does not. It is Windows evidence of Zune *vendor* properties
+outside the MTPZ and ZMDB paths this port already had, and the first vendor operation
+here that returns data at all. It is not an authentication, not a write, and not a sync.
+No `SETPROP` has been made to any of those properties; `pair`, `wifi`, `full` and `disable`
+have never been run; the player's radio has never been turned on by this software; and PTP/IP
+over TCP 15740 is still a design in a document with no transport in the tree. **No gate on
+this page's closed list moves because of it, and no open one closes.** The player that
+answered went into the bulk-OUT wedge recorded under 2026-10-21 before the write half was
+attempted, and it has not been reachable since, so the next run of this feature begins with
+a power cycle - and that is a fact about the order of events, not evidence that wireless
+code caused anything, because the same wedge was measured on a build with no wireless code
+in it.
+
+Two habits this sitting is worth keeping. The evidence-gathering tool for this feature
+prints partnership GUIDs and a Wi-Fi scan to stdout, which is precisely the material that
+must never be committed, so nothing from a `wirelesstool` run goes in the tree - not a log,
+not a paste, not a screenshot. And three comments in the new code stated a reference's
+*record* as this tree's *observation* ("both writes are accepted by a real Zune HD", a poll
+budget that does not exist, a session GUID "announced over SSDP" that is in fact presented
+in a PTP/IP init packet); they are corrected in the same commit as the page that explains
+them, in [WIRELESS_SYNC.md](WIRELESS_SYNC.md). `tests\win-compat` is 204 checks / 0 failures
+/ 0 skips against this build, and says nothing about the wireless code: that gate compiles
+`compat/win/` beside its own probe and never links libzune. `tests\win-usability` was not
+re-run, because the application was in the user's hands on the real profile and the fresh
+`zuuned.exe` is what it is running.

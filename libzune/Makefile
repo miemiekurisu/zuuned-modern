@@ -66,7 +66,8 @@ SRCS     := $(SRCDIR)/device.c \
             $(SRCDIR)/search.c \
             $(SRCDIR)/ptp.c \
             $(SRCDIR)/mtp.c \
-            $(SRCDIR)/mtpz.c
+            $(SRCDIR)/mtpz.c \
+            $(SRCDIR)/wireless.c
 
 # ---- Platform-specific USB backend + dependencies ----
 

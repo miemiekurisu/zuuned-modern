@@ -47,6 +47,23 @@ static unsigned char *MTPZ_MODULUS         = NULL;
 static unsigned char *MTPZ_PRIVATE_KEY     = NULL;
 static char          *MTPZ_CERTIFICATES    = NULL;
 
+/* The player's own RSA-1024 modulus, little-endian as the device sends it,
+ * captured during the handshake - see mtpz_validate_handshake_response().
+ * Consumed only by wireless.c, to encrypt a Wi-Fi passphrase. */
+static unsigned char MTPZ_device_rsa[128];
+static int           MTPZ_device_rsa_valid = 0;
+
+/* `out` may be NULL, which asks only whether the key is there.  The public
+ * status probe does exactly that and must not disturb the captured bytes. */
+int mtpz_device_rsa_modulus(unsigned char *out)
+{
+    if (!MTPZ_device_rsa_valid)
+        return -1;
+    if (out)
+        memcpy(out, MTPZ_device_rsa, 128);
+    return 0;
+}
+
 /* ===================================================================
  * Utility: strip trailing newline/CR from fgets result
  * =================================================================== */
@@ -1733,6 +1750,33 @@ mtpz_validate_handshake_response(ptp_session_t *session, unsigned char *random, 
     unsigned char *machash_data = (unsigned char *)malloc(machash_length);
     memcpy(machash_data, act_reader, machash_length);
     act_reader += machash_length;
+
+    /* The player's own RSA-1024 public key rides inside this decrypted
+     * payload, and the wireless pairing needs it: the Wi-Fi passphrase is
+     * sent to the device RSA-encrypted under THIS key, not under anything
+     * from the desktop software, so no Microsoft secret is involved.
+     *
+     * It is found by shape rather than by offset. The marker 01 00 80 is
+     * the length prefix of the key blob (exponent 0x0100, 0x80 = 128-byte
+     * modulus) and the modulus that follows is little-endian, which the
+     * odd low byte confirms - an RSA modulus is always odd. Recorded here
+     * because nothing in the handshake needs it; only wireless does. */
+    if (!MTPZ_device_rsa_valid) {
+        unsigned char *scan = act_msg;
+        for (unsigned int off = 0; off + 3 + 128 <= 832; off++) {
+            if (scan[off] == 0x01 && scan[off + 1] == 0x00 && scan[off + 2] == 0x80 &&
+                (scan[off + 3] & 1)) {
+                memcpy(MTPZ_device_rsa, scan + off + 3, 128);
+                MTPZ_device_rsa_valid = 1;
+                fprintf(stderr, "[mtpz] device RSA modulus captured "
+                                "(wireless pairing can encrypt a passphrase)\n");
+                break;
+            }
+        }
+        if (!MTPZ_device_rsa_valid)
+            fprintf(stderr, "[mtpz] no device RSA modulus in the handshake "
+                            "payload - wireless Wi-Fi setup will refuse\n");
+    }
 
     *calculatedHash = machash_data;
 

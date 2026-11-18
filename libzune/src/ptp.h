@@ -86,6 +86,32 @@ extern "C" {
 #define MTP_OC_WMDRMPD_EndTrustedAppSession             0x9216
 
 /* ===================================================================
+ * Zune wireless-sync vendor operations
+ *
+ * None of these appear in any public Microsoft header. They are what
+ * the Zune desktop software sends to arm the wireless stack; see
+ * docs/WIRELESS_SYNC.md. Cross-checked against XuneSyncLibrary (GNU LGPL-2.1)
+ * and the android-file-transfer-linux fork it vendors (GNU LGPL-2.1-or-later).
+ * The request shapes came across and no source line did - see UPSTREAMS.md.
+ * =================================================================== */
+
+#define MTP_OC_Zune_Op9217                    0x9217  /* p1 - SyncDeviceDB, NOT part of pairing. This tree sent it once, inside a close-out no reference accounts for: the device answered malformed and stopped answering bulk OUT in the same sitting. Correlation, not a proven cause */
+#define MTP_OC_Zune_Op9218                    0x9218  /* p1,p2,p3 - DB-sync companion of 0x9217, same caution */
+#define MTP_OC_Zune_Op9219                    0x9219  /* p1,p2,p3 - timed tick */
+#define MTP_OC_Zune_Op9215                    0x9215  /* no params */
+#define MTP_OC_Zune_Op9224                    0x9224  /* no params, returns data */
+#define MTP_OC_Zune_Op9225                    0x9225  /* WiFi scan - returns the network list */
+#define MTP_OC_Zune_Op9226                    0x9226  /* no params */
+#define MTP_OC_Zune_Op9227                    0x9227  /* carries a network profile; the 4-byte "init" form is answered 0x2002 on purpose */
+#define MTP_OC_Zune_Op9228                    0x9228  /* p1 - post-WiFi step */
+#define MTP_OC_Zune_Op922B                    0x922B  /* p1,p2,p3 plus a 260-byte payload - subsystem gate */
+#define MTP_OC_Zune_Op922C                    0x922C  /* PPP handshake bytes */
+#define MTP_OC_Zune_Op922D                    0x922D  /* PPP handshake bytes */
+#define MTP_OC_Zune_Op922F                    0x922F  /* no params. The reference reads a payload from it when reading ZMDB state and sends it with no data phase when unwinding wireless sync; this tree only ever sends it bare */
+#define MTP_OC_Zune_Op9230                    0x9230  /* p1: 1 = enable, 2 = disable wireless sync */
+#define MTP_OC_Zune_Op9231                    0x9231  /* 258-byte zero request - network subsystem init */
+
+/* ===================================================================
  * PTP Response Codes
  * =================================================================== */
 
@@ -150,6 +176,18 @@ extern "C" {
  * =================================================================== */
 
 #define MTP_DPC_SessionInitiatorInfo    0xD406
+
+/* ---- Zune pairing and wireless-sync properties ---- */
+
+#define MTP_DPC_Zune_SyncFlags           0xD21C  /* 1 byte */
+#define MTP_DPC_Zune_PCSessionGUID       0xD220  /* partner allowed to connect wirelessly */
+#define MTP_DPC_Zune_WirelessSessionGUID 0xD221  /* GUID a PTP/IP INIT must present */
+#define MTP_DPC_Zune_PartnerGUID         0xD225  /* null GUID clears the stored partner */
+#define MTP_DPC_Zune_SyncCounterA        0xD229  /* 4 bytes */
+#define MTP_DPC_Zune_SyncCounterB        0xD22A  /* 4 bytes */
+#define MTP_DPC_Zune_SyncCounterC        0xD230  /* 8 bytes */
+#define MTP_DPC_Zune_SyncPartner         0xD401  /* the partnership record */
+#define MTP_DPC_Zune_DeviceFriendlyName  0xD402
 
 /* ===================================================================
  * MTP Object Format Codes

@@ -32,6 +32,14 @@ int mtpz_keys_available(void);
  * Returns 0 on success, -1 on failure. */
 int mtpz_handshake(ptp_session_t *session);
 
+/* The player's RSA-1024 modulus (128 bytes, little-endian) as it arrived
+ * inside the authenticated handshake payload. Returns 0 and fills `out`
+ * once a handshake has run on a device that supplied one; -1 otherwise.
+ * The wireless Wi-Fi passphrase is RSA-encrypted under this key, which is
+ * why it outlives the handshake.  `out` may be NULL to ask only whether a
+ * handshake on this device actually supplied a key. */
+int mtpz_device_rsa_modulus(unsigned char *out);
+
 #ifdef __cplusplus
 }
 #endif

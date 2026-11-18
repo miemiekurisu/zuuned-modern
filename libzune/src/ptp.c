@@ -993,8 +993,23 @@ int ptp_transaction(ptp_session_t *s,
 
     /* ---- Phase 2: Data (optional) ---- */
     if (flags & PTP_DP_SENDDATA) {
+        /* A transport with explicit data-phase packets has to open the
+         * phase before the first payload byte and close it before the
+         * response is read. Bulk backends leave these hooks NULL. */
+        if (s->usb->backend->begin_send_data &&
+            s->usb->backend->begin_send_data(s->usb, send_len) < 0) {
+            fprintf(stderr, "[ptp] transaction 0x%04X: begin data phase failed\n",
+                    opcode);
+            return -1;
+        }
         if (ptp_send_data(s, opcode, send_data, send_len) < 0) {
             fprintf(stderr, "[ptp] transaction 0x%04X: send data phase failed\n",
+                    opcode);
+            return -1;
+        }
+        if (s->usb->backend->end_send_data &&
+            s->usb->backend->end_send_data(s->usb) < 0) {
+            fprintf(stderr, "[ptp] transaction 0x%04X: end data phase failed\n",
                     opcode);
             return -1;
         }
@@ -1006,6 +1021,12 @@ int ptp_transaction(ptp_session_t *s,
         uint8_t *data = NULL;
         uint32_t len = 0;
 
+        if (s->usb->backend->begin_get_data &&
+            s->usb->backend->begin_get_data(s->usb) < 0) {
+            fprintf(stderr, "[ptp] transaction 0x%04X: open receive phase failed\n",
+                    opcode);
+            return -1;
+        }
         int recv_ret = ptp_recv_data(s, &data, &len);
         if (recv_ret == -2) {
             /* Device sent RESPONSE instead of DATA — data phase was skipped.
@@ -1079,9 +1100,19 @@ int ptp_transaction_send_file(ptp_session_t *s,
         return -1;
     }
 
+    if (s->usb->backend->begin_send_data &&
+        s->usb->backend->begin_send_data(s->usb, send_len) < 0) {
+        fprintf(stderr, "[ptp] send_file 0x%04X: begin data phase failed\n", opcode);
+        return -1;
+    }
     ptp_source_init_file(&src, fp, send_len);
     if (ptp_send_data_source(s, opcode, &src, progress, userdata) < 0) {
         fprintf(stderr, "[ptp] send_file 0x%04X: send data phase failed\n", opcode);
+        return -1;
+    }
+    if (s->usb->backend->end_send_data &&
+        s->usb->backend->end_send_data(s->usb) < 0) {
+        fprintf(stderr, "[ptp] send_file 0x%04X: end data phase failed\n", opcode);
         return -1;
     }
 

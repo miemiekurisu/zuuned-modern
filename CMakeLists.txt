@@ -298,6 +298,7 @@ if(WIN32)
         libzune/src/ptp.c
         libzune/src/mtp.c
         libzune/src/mtpz.c
+        libzune/src/wireless.c
         libzune/src/usb_libusb.c
     )
     target_compile_definitions(libzune_build PRIVATE USE_LIBAV)
@@ -637,6 +638,19 @@ if(WIN32)
     # the PnP manager, which keeps the device-side surface where it can be audited.
     target_link_libraries(zuuned_presence PUBLIC cfgmgr32)
 endif()
+
+# Wireless-sync gate (wirelesstool).  A Zune HD pairs over the cable and then
+# speaks PTP/IP over Wi-Fi, and the first question is whether a given player
+# answers the wireless properties at all.  This asks headlessly, in one
+# process, without a profile or a window, so the answer can be recorded.
+# Opens a real device handle - unlike every other gate in this file, which is
+# why it is a tool the operator runs and not something a script asserts on.
+add_executable(wirelesstool src/wirelesstool.cpp)
+target_include_directories(wirelesstool PRIVATE ${LIBZUNE_DIR}/include)
+target_link_libraries(wirelesstool PRIVATE ${LIBZUNE_A} ${ZUUNED_WINCOMPAT}
+    ${LIBUSB_LIBRARIES} ${ZUUNED_SYSTEM_LIBS})
+add_dependencies(wirelesstool libzune_build)
+zuuned_long_paths(wirelesstool)
 
 add_executable(devicetool src/devicetool.cpp)
 target_link_libraries(devicetool PRIVATE zuuned_presence Qt6::Core ${LIBUSB_LIBRARIES}

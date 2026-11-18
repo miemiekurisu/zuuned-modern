@@ -88,6 +88,21 @@ struct zune_usb_backend {
      * reset — Reset the USB device.
      */
     int (*reset)(zune_usb_handle_t *handle);
+
+    /* ---- Optional data-phase boundaries ------------------------------
+     *
+     * NULL on every bulk backend, and a bulk transport never sees them.
+     * USB can infer a data phase from the container header and ends it at
+     * a short packet, but a transport that has to announce the phase on
+     * its own wire - PTP/IP carries START_DATA and END_DATA packets that
+     * are not inside any container - cannot recover that boundary from a
+     * byte stream, so ptp.c names it instead. total is the exact payload
+     * size for the send direction; for the get direction the device
+     * announces the size, so it is the transport that learns it.
+     */
+    int (*begin_send_data)(zune_usb_handle_t *handle, uint64_t total);
+    int (*end_send_data)(zune_usb_handle_t *handle);
+    int (*begin_get_data)(zune_usb_handle_t *handle);
 };
 
 /* ---- USB handle ---- */

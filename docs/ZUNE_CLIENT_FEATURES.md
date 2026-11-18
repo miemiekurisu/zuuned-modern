@@ -260,9 +260,14 @@ shut down, or on material Microsoft never published, and no client can restore t
   a Zune HD.
 - Sharing the library to other PCs and to Xbox 360 through Windows Media Player
   Sharing - a different dead ecosystem, and out of scope for a Zune manager.
-- Wireless sync between two players (2.2), buying music from the radio (3.0), and the
+- Wireless sync **between two players** (2.2), buying music from the radio (3.0), and the
   Messenger now-playing broadcast. Each of those was this client talking to a Microsoft
-  endpoint or to another client inside the same social system.
+  endpoint or to another client inside the same social system. The first of the three needs
+  splitting rather than dismissing: player-to-player sync and the Microsoft end of it are
+  out of scope, but a Zune HD will also sync with a host of this kind over the user's own
+  access point, which needs neither a Microsoft endpoint nor a social system. That one is
+  in progress and is not out of scope - [WIRELESS_SYNC.md](WIRELESS_SYNC.md) carries what
+  has actually been asked of a player and what has not.
 
 One line in that list is a real judgement call rather than a dead service: CD ripping.
 It was never a Zune protocol feature, so it is missing here because nobody has built it,
